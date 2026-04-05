@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import {
   Flex,
   Box,
@@ -9,27 +9,30 @@ import {
   Avatar,
   Badge,
 } from "@radix-ui/themes";
-import { useSTT, type STTTranscript } from "../../hooks/useSTT";
+import { useAssistant, type ChatMessage } from "../../hooks/useAssistant";
+import AgentActionLog from "../../components/AgentActionLog";
 import SettingsPanel from "./SettingsPanel";
 
 function PageChat() {
   const {
-    isLoaded,
+    isVADLoaded,
     isRecording,
     isSpeaking,
-    transcripts,
     volumeRef,
     wsStatus,
     isConnected,
+    messages,
+    isAssistantThinking,
     language,
     setLanguage,
-    modelSize,
-    setModelSize,
     startRecording,
     stopRecording,
-  } = useSTT();
+    sendTextMessage,
+    cancelGeneration,
+  } = useAssistant();
 
-  const [selectedDeviceId, setSelectedDeviceId] = React.useState<
+  const [inputText, setInputText] = useState("");
+  const [selectedDeviceId, setSelectedDeviceId] = useState<
     string | undefined
   >(undefined);
 
@@ -41,52 +44,94 @@ function PageChat() {
         viewport.scrollTo({ top: viewport.scrollHeight, behavior: "smooth" });
       }, 50);
     }
-  }, [transcripts, isSpeaking]);
+  }, [messages, isSpeaking, isAssistantThinking]);
 
-  const renderBubble = (t: STTTranscript) => {
-    const isProcessing = !t.isFinal;
-    const isEmpty = !t.text || t.text.trim() === "";
-    const isSkipped = t.isFinal && isEmpty;
+  const handleSendText = () => {
+    if (!inputText.trim() || !isConnected) return;
+    sendTextMessage(inputText);
+    setInputText("");
+  };
 
-    // Không hiển thị các đoạn bị skip (silence / empty)
-    if (isSkipped) return null;
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSendText();
+    }
+  };
+
+  const renderMessage = (msg: ChatMessage) => {
+    const isUser = msg.role === "user";
+    const isEmpty = !msg.text || msg.text.trim() === "";
+    const isProcessing = msg.isStreaming;
+
+    // Skip empty finalized user messages (silence)
+    if (isUser && !isProcessing && isEmpty && !msg.audioUrl) return null;
 
     return (
-      <Flex key={t.id} justify="end" mb="4">
+      <Flex
+        key={msg.id}
+        justify={isUser ? "end" : "start"}
+        mb="4"
+        gap="2"
+      >
+        {/* Assistant avatar (left) */}
+        {!isUser && (
+          <Avatar
+            fallback="SK"
+            size="2"
+            radius="full"
+            color="cyan"
+            style={{ flexShrink: 0 }}
+          />
+        )}
+
         <Flex
           direction="column"
-          align="end"
+          align={isUser ? "end" : "start"}
           style={{ maxWidth: "75%" }}
         >
           <Box
             p="3"
             style={{
-              backgroundColor: "var(--indigo-9)",
-              color: "white",
+              backgroundColor: isUser ? "var(--indigo-9)" : "var(--gray-3)",
+              color: isUser ? "white" : "var(--gray-12)",
               borderRadius: "20px",
-              borderBottomRightRadius: "4px",
+              ...(isUser
+                ? { borderBottomRightRadius: "4px" }
+                : { borderBottomLeftRadius: "4px" }),
               boxShadow: "0 1px 2px rgba(0,0,0,0.1)",
             }}
           >
-            {/* Audio player */}
-            {t.audioUrl && (
-              <Box mb={t.text ? "2" : "0"}>
+            {/* Audio player for voice messages */}
+            {isUser && msg.audioUrl && (
+              <Box mb={msg.text ? "2" : "0"}>
                 <audio
-                  src={t.audioUrl}
+                  src={msg.audioUrl}
                   controls
                   style={{
                     height: "32px",
                     width: "100%",
                     maxWidth: "220px",
-                    filter:
-                      "invert(1) hue-rotate(180deg) brightness(1.5)",
+                    filter: isUser
+                      ? "invert(1) hue-rotate(180deg) brightness(1.5)"
+                      : "none",
                   }}
                 />
               </Box>
             )}
 
-            {/* Transcript text or processing indicator */}
-            {isProcessing ? (
+            {/* Agent action log */}
+            {!isUser && msg.agentActions && msg.agentActions.length > 0 && (
+              <Box mb={msg.text ? "2" : "0"} style={{ maxWidth: "100%", minWidth: "250px" }}>
+                <AgentActionLog
+                  actions={msg.agentActions}
+                  isThinking={msg.isStreaming || false}
+                />
+              </Box>
+            )}
+
+            {/* Message text */}
+            {isProcessing && isEmpty ? (
               <Text
                 size="2"
                 style={{
@@ -103,76 +148,68 @@ function PageChat() {
                     width: "6px",
                     height: "6px",
                     borderRadius: "50%",
-                    backgroundColor: "white",
+                    backgroundColor: isUser ? "white" : "var(--indigo-9)",
                     animation: "pulse 1s infinite",
                   }}
                 />
-                Đang nhận dạng...
+                {isUser ? "Recognizing..." : "Thinking..."}
               </Text>
             ) : (
               <Text size="2" style={{ whiteSpace: "pre-wrap" }}>
-                {t.text}
+                {msg.text}
+                {/* Streaming cursor for assistant */}
+                {!isUser && isProcessing && (
+                  <span
+                    style={{
+                      display: "inline-block",
+                      width: "2px",
+                      height: "14px",
+                      backgroundColor: "var(--indigo-9)",
+                      marginLeft: "2px",
+                      animation: "pulse 0.8s infinite",
+                      verticalAlign: "text-bottom",
+                    }}
+                  />
+                )}
               </Text>
             )}
           </Box>
 
-          {/* Metadata footer */}
-          <Flex gap="2" align="center" mt="1" wrap="wrap">
-            <Text size="1" color="gray">
-              {t.timestamp.toLocaleTimeString([], {
-                hour: "2-digit",
-                minute: "2-digit",
-              })}
-            </Text>
-
-            {t.isFinal && t.language && (
-              <Badge
-                size="1"
-                variant="surface"
-                color="gray"
-                style={{ fontSize: "10px" }}
-              >
-                {t.language.toUpperCase()}
-                {t.languageProb !== undefined &&
-                  ` ${(t.languageProb * 100).toFixed(0)}%`}
-              </Badge>
-            )}
-
-            {t.isFinal && t.processingTime !== undefined && (
-              <Text size="1" color="gray" style={{ fontSize: "10px" }}>
-                ⚡ {t.processingTime.toFixed(2)}s
-              </Text>
-            )}
-
-            {isProcessing && (
-              <Text
-                size="1"
-                color="indigo"
-                style={{ animation: "pulse 1.5s infinite" }}
-              >
-                Đang dịch...
-              </Text>
-            )}
-          </Flex>
+          {/* Timestamp */}
+          <Text size="1" color="gray" mt="1">
+            {msg.timestamp.toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+            })}
+          </Text>
         </Flex>
 
-        <Avatar fallback="ME" size="2" radius="full" ml="2" color="indigo" />
+        {/* User avatar (right) */}
+        {isUser && (
+          <Avatar
+            fallback="ME"
+            size="2"
+            radius="full"
+            color="indigo"
+            style={{ flexShrink: 0 }}
+          />
+        )}
       </Flex>
     );
   };
 
   return (
     <Flex style={{ height: "100%", width: "100%" }}>
-      {/* Cột Trái: Giao diện Chat */}
+      {/* Left column: Chat interface */}
       <Flex direction="column" style={{ flex: 1, position: "relative" }}>
-        {/* Vùng Body */}
+        {/* Chat body */}
         <ScrollArea
           type="auto"
           scrollbars="vertical"
           style={{ flex: 1, padding: "24px 16px" }}
         >
           <Flex direction="column" justify="end" style={{ minHeight: "100%" }}>
-            {transcripts.length === 0 && !isSpeaking && (
+            {messages.length === 0 && !isSpeaking && (
               <Flex
                 align="center"
                 justify="center"
@@ -181,24 +218,24 @@ function PageChat() {
                 gap="3"
                 style={{ opacity: 0.6 }}
               >
-                <Text size="8">💬</Text>
-                <Text color="gray">Khu vực Chat trống.</Text>
+                <Text size="8">Shore</Text>
+                <Text color="gray">AI Assistant ready.</Text>
                 <Text size="2" color="gray">
-                  Bấm phím Microphone bên dưới để rảnh tay nói chuyện!
+                  Type a message or press the microphone to talk.
                 </Text>
                 {!isConnected && (
                   <Badge color="orange" variant="soft" size="1">
-                    ⚠ Backend chưa kết nối — Hãy chạy server trước
+                    Backend not connected -- start the server first
                   </Badge>
                 )}
               </Flex>
             )}
 
-            {transcripts.map(renderBubble)}
+            {messages.map(renderMessage)}
 
-            {/* Bong bóng báo đang thu âm */}
+            {/* Speaking indicator */}
             {isSpeaking && (
-              <Flex justify="end" mb="4">
+              <Flex justify="end" mb="4" gap="2">
                 <Flex
                   direction="column"
                   align="end"
@@ -227,9 +264,9 @@ function PageChat() {
                           animation: "pulse 1s infinite",
                         }}
                       >
-                        🎙️
-                      </span>{" "}
-                      Đang ghi âm đoạn hội thoại...
+                        *
+                      </span>
+                      Recording...
                     </Text>
                   </Box>
                 </Flex>
@@ -237,15 +274,17 @@ function PageChat() {
                   fallback="ME"
                   size="2"
                   radius="full"
-                  ml="2"
                   color="indigo"
+                  style={{ flexShrink: 0 }}
                 />
               </Flex>
             )}
+
+            {/* Agent action log rendered inline inside chat bubbles now */}
           </Flex>
         </ScrollArea>
 
-        {/* Vùng Input ở đáy */}
+        {/* Input area */}
         <Box
           p="3"
           style={{
@@ -255,13 +294,18 @@ function PageChat() {
         >
           <Flex gap="3" align="center">
             <TextField.Root
-              placeholder="Bạn có muốn gõ bàn phím không? (Tạm ẩn lúc VAD)..."
+              placeholder="Type a message..."
               size="3"
               style={{ flex: 1, borderRadius: "20px" }}
-              disabled
+              value={inputText}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                setInputText(e.target.value)
+              }
+              onKeyDown={handleKeyDown}
+              disabled={!isConnected}
             />
 
-            {/* Nút Microphone */}
+            {/* Microphone button */}
             <IconButton
               size="3"
               color={isRecording ? "red" : "indigo"}
@@ -272,51 +316,68 @@ function PageChat() {
                   ? stopRecording()
                   : startRecording(selectedDeviceId)
               }
-              disabled={!isLoaded}
+              disabled={!isVADLoaded}
               style={{
                 width: "44px",
                 height: "44px",
-                cursor: isLoaded ? "pointer" : "wait",
+                cursor: isVADLoaded ? "pointer" : "wait",
                 transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
                 boxShadow: isRecording ? "0 0 15px var(--red-9)" : "none",
               }}
-              title={isRecording ? "Dừng Microphone" : "Bật Míc"}
+              title={isRecording ? "Stop mic" : "Start mic"}
             >
               <span style={{ fontSize: "20px" }}>
-                {isRecording ? "⏹️" : "🎤"}
+                {isRecording ? "||" : "Mic"}
               </span>
             </IconButton>
 
-            {/* Nút Gửi */}
-            <IconButton
-              size="3"
-              color="indigo"
-              variant="solid"
-              radius="full"
-              style={{ width: "44px", height: "44px", cursor: "pointer" }}
-              disabled
-            >
-              <span style={{ fontSize: "18px", paddingLeft: "2px" }}>✈️</span>
-            </IconButton>
+            {/* Send / Cancel button */}
+            {isAssistantThinking ? (
+              <IconButton
+                size="3"
+                color="red"
+                variant="soft"
+                radius="full"
+                style={{ width: "44px", height: "44px", cursor: "pointer" }}
+                onClick={cancelGeneration}
+                title="Cancel generation"
+              >
+                <span style={{ fontSize: "18px" }}>X</span>
+              </IconButton>
+            ) : (
+              <IconButton
+                size="3"
+                color="indigo"
+                variant="solid"
+                radius="full"
+                style={{ width: "44px", height: "44px", cursor: "pointer" }}
+                onClick={handleSendText}
+                disabled={!inputText.trim() || !isConnected}
+              >
+                <span style={{ fontSize: "18px", paddingLeft: "2px" }}>
+                  &gt;
+                </span>
+              </IconButton>
+            )}
           </Flex>
 
-          {/* Trạng thái Loading */}
-          {!isLoaded && (
+          {/* Loading indicator */}
+          {!isVADLoaded && (
             <Text
               size="1"
               color="orange"
               mt="2"
               style={{ display: "block", textAlign: "center" }}
             >
-              Đang khởi động cụm Module VAD AI dưới nền...
+              Loading VAD model...
             </Text>
           )}
         </Box>
       </Flex>
 
-      {/* Cột Phải: Settings Panel */}
+      {/* Right column: Settings */}
       <SettingsPanel
-        isLoaded={isLoaded}
+        isLoaded={isVADLoaded}
         isRecording={isRecording}
         volumeRef={volumeRef}
         selectedDeviceId={selectedDeviceId || "default"}
@@ -334,8 +395,7 @@ function PageChat() {
         isConnected={isConnected}
         language={language}
         onLanguageChange={setLanguage}
-        modelSize={modelSize}
-        onModelSizeChange={setModelSize}
+        isAssistantThinking={isAssistantThinking}
       />
     </Flex>
   );

@@ -1,90 +1,109 @@
 """
-STT Service sử dụng Faster-Whisper
-Chạy inference trên CPU (hoặc GPU nếu có CUDA).
+STT Service using HuggingFace Transformers (Whisper).
+No ctranslate2 dependency -- uses PyTorch directly.
 
-Model được load 1 lần duy nhất khi server khởi động,
-tái sử dụng cho tất cả các request (singleton).
+Model is loaded once at server startup and reused for all requests (singleton).
 """
 
 import threading
-from typing import Optional, List
+from typing import Optional
 import asyncio
 import time
 import numpy as np
-from faster_whisper import WhisperModel
+import torch
+from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, pipeline
 
-# ─── Cấu hình mặc định ───
+# ─── Default config ───
 
-# Model sizes: tiny, base, small, medium, large-v1, large-v2, large-v3, large-v3-turbo
-SUPPORTED_MODELS = [
-    "tiny", "base", "small", "medium", 
-    "large-v1", "large-v2", "large-v3", "large-v3-turbo"
-]
+SUPPORTED_MODELS = {
+    "tiny": "openai/whisper-tiny",
+    "base": "openai/whisper-base",
+    "small": "openai/whisper-small",
+    "medium": "openai/whisper-medium",
+    "large-v3": "openai/whisper-large-v3",
+    "large-v3-turbo": "openai/whisper-large-v3-turbo",
+}
 
 MODEL_SIZE = "base"
-COMPUTE_TYPE = "int8"
-DEVICE = "cpu"
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+TORCH_DTYPE = torch.float16 if DEVICE == "cuda" else torch.float32
 
 
 class STTService:
     """
-    Service quản lý mô hình Faster-Whisper cho Speech-To-Text.
-    Hỗ trợ thay đổi model size linh hoạt.
+    Service managing Whisper model via HuggingFace Transformers for Speech-To-Text.
+    Supports dynamic model size switching.
     """
 
     def __init__(
         self,
         model_size: str = MODEL_SIZE,
         device: str = DEVICE,
-        compute_type: str = COMPUTE_TYPE,
     ):
         self.model_size = model_size
         self.device = device
-        self.compute_type = compute_type
-        self.model: Optional[WhisperModel] = None
+        self.torch_dtype = torch.float16 if device == "cuda" else torch.float32
+        self.pipe = None
         self._is_loaded = False
         self._lock = threading.Lock()
 
     def load_model(self, model_size: Optional[str] = None) -> None:
         """
-        Load mô hình Whisper vào bộ nhớ. 
-        Nếu model_size khác với model hiện tại, tiến hành giải phóng cũ và nạp mới.
+        Load Whisper model into memory.
+        If model_size differs from current, release old model and load new one.
         """
-        target_model = model_size or self.model_size
-        
-        # Kiểm tra model hợp lệ
-        if target_model not in SUPPORTED_MODELS:
-            print(f"[STT] Cảnh báo: Model '{target_model}' không nằm trong danh sách hỗ trợ. Dùng '{MODEL_SIZE}' thay thế.")
-            target_model = MODEL_SIZE
+        target_size = model_size or self.model_size
+
+        if target_size not in SUPPORTED_MODELS:
+            print(f"[STT] Warning: Model '{target_size}' not supported. Using '{MODEL_SIZE}'.")
+            target_size = MODEL_SIZE
+
+        model_id = SUPPORTED_MODELS[target_size]
 
         with self._lock:
-            # Nếu đã load và đúng size → bỏ qua
-            if self._is_loaded and target_model == self.model_size and self.model is not None:
-                print(f"[STT] Model '{target_model}' đã được load và sẵn sàng.")
+            if self._is_loaded and target_size == self.model_size and self.pipe is not None:
+                print(f"[STT] Model '{target_size}' already loaded and ready.")
                 return
 
-            print(f"[STT] {'Đang chuyển đổi' if self._is_loaded else 'Đang tải'} model sang '{target_model}' "
-                  f"(device={self.device}, compute={self.compute_type})...")
+            print(f"[STT] {'Switching' if self._is_loaded else 'Loading'} model to '{target_size}' "
+                  f"({model_id}, device={self.device})...")
 
-            # Giải phóng model cũ (Python GC sẽ tự thu hồi khi reference = None)
-            self.model = None
+            # Release old model
+            self.pipe = None
             self._is_loaded = False
-            self.model_size = target_model
+            self.model_size = target_size
+
+            if self.device == "cuda":
+                torch.cuda.empty_cache()
 
             start = time.time()
             try:
-                self.model = WhisperModel(
-                    self.model_size,
-                    device=self.device,
-                    compute_type=self.compute_type,
+                model = AutoModelForSpeechSeq2Seq.from_pretrained(
+                    model_id,
+                    torch_dtype=self.torch_dtype,
+                    low_cpu_mem_usage=True,
+                    use_safetensors=True,
                 )
+                model.to(self.device)
+
+                processor = AutoProcessor.from_pretrained(model_id)
+
+                self.pipe = pipeline(
+                    "automatic-speech-recognition",
+                    model=model,
+                    tokenizer=processor.tokenizer,
+                    feature_extractor=processor.feature_extractor,
+                    torch_dtype=self.torch_dtype,
+                    device=self.device,
+                )
+
                 elapsed = time.time() - start
                 self._is_loaded = True
-                print(f"[STT] Model '{self.model_size}' đã sẵn sàng! (tải trong {elapsed:.1f}s)")
+                print(f"[STT] Model '{self.model_size}' ready! (loaded in {elapsed:.1f}s)")
             except Exception as e:
-                print(f"[STT] Lỗi khi load model: {e}")
+                print(f"[STT] Error loading model: {e}")
                 self._is_loaded = False
-                raise e
+                raise
 
     @property
     def is_loaded(self) -> bool:
@@ -93,76 +112,68 @@ class STTService:
     def transcribe(
         self,
         audio: np.ndarray,
-        language: str = "vi",
-        beam_size: int = 5,
-        temperature: float = 0.0,
-        initial_prompt: Optional[str] = None,
+        language: str = "en",
+        **kwargs,
     ) -> dict:
         """
-        Chạy STT trên đoạn audio (đồng bộ).
+        Run STT on an audio segment (synchronous).
         """
-        if not self._is_loaded or self.model is None:
-            # Cố gắng load mặc định nếu chưa có
+        if not self._is_loaded or self.pipe is None:
             self.load_model()
-            if self.model is None:
-                raise RuntimeError("Không thể khởi động Model STT.")
+            if self.pipe is None:
+                raise RuntimeError("Cannot start STT model.")
 
-        # Nếu language = "auto", để Whisper tự detect
-        lang_param = None if language == "auto" else language
+        # Build generate_kwargs
+        generate_kwargs = {}
+        if language and language != "auto":
+            generate_kwargs["language"] = language
+            generate_kwargs["task"] = "transcribe"
 
-        with self._lock: # Đảm bảo không transcribe khi đang đổi model
-            segments, info = self.model.transcribe(
-                audio,
-                language=lang_param,
-                beam_size=beam_size,
-                temperature=temperature,
-                initial_prompt=initial_prompt,
-                vad_filter=False,
-                word_timestamps=False,
+        with self._lock:
+            result = self.pipe(
+                {"raw": audio, "sampling_rate": 16000},
+                return_timestamps=True,
+                generate_kwargs=generate_kwargs,
             )
 
-            # Lấy toàn bộ segments (generator → list)
-            segment_list = []
-            full_text_parts = []
+        # Parse result
+        text = result.get("text", "").strip()
+        chunks = result.get("chunks", [])
 
-            for seg in segments:
-                segment_list.append({
-                    "start": round(seg.start, 2),
-                    "end": round(seg.end, 2),
-                    "text": seg.text.strip(),
-                })
-                full_text_parts.append(seg.text.strip())
+        segments = []
+        for chunk in chunks:
+            ts = chunk.get("timestamp", (0, 0))
+            segments.append({
+                "start": round(ts[0], 2) if ts[0] is not None else 0,
+                "end": round(ts[1], 2) if ts[1] is not None else 0,
+                "text": chunk.get("text", "").strip(),
+            })
 
-        full_text = " ".join(full_text_parts)
+        # Detect language (from generate_kwargs or fallback)
+        detected_language = language if language != "auto" else "unknown"
 
         return {
-            "text": full_text,
-            "language": info.language,
-            "language_prob": round(info.language_probability, 3),
-            "segments": segment_list,
+            "text": text,
+            "language": detected_language,
+            "language_prob": 1.0 if language != "auto" else 0.0,
+            "segments": segments,
             "model": self.model_size,
         }
 
     async def transcribe_async(
         self,
         audio: np.ndarray,
-        language: str = "vi",
-        beam_size: int = 5,
-        temperature: float = 0.0,
-        initial_prompt: Optional[str] = None,
+        language: str = "en",
+        **kwargs,
     ) -> dict:
-        """
-        Wrapper async cho transcribe().
-        """
+        """Async wrapper for transcribe()."""
         loop = asyncio.get_event_loop()
         result = await loop.run_in_executor(
             None,
             lambda: self.transcribe(
                 audio=audio,
                 language=language,
-                beam_size=beam_size,
-                temperature=temperature,
-                initial_prompt=initial_prompt,
+                **kwargs,
             ),
         )
         return result

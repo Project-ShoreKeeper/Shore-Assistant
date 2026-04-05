@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from "react";
 import { Flex, Box, Text, Select, Separator, Badge } from "@radix-ui/themes";
-import type { WebSocketStatus } from "../../services/websocket.service";
-import { STT_LANGUAGES, STT_MODELS } from "../../constants/stt.constant";
+import type { WebSocketStatus } from "../../services/chat-websocket.service";
+import { STT_LANGUAGES } from "../../constants/stt.constant";
 
 export interface SettingsPanelProps {
   isLoaded: boolean;
@@ -9,18 +9,13 @@ export interface SettingsPanelProps {
   volumeRef: React.RefObject<number>;
   onDeviceChange?: (deviceId: string) => void;
   selectedDeviceId?: string;
-  // WebSocket props
   wsStatus: WebSocketStatus;
   isConnected: boolean;
-  // Language props
   language: string;
   onLanguageChange?: (lang: string) => void;
-  // Model props
-  modelSize: string;
-  onModelSizeChange?: (size: string) => void;
+  isAssistantThinking?: boolean;
 }
 
-// Hàm helper hiển thị badge màu cho WebSocket status
 function getWsStatusDisplay(status: WebSocketStatus) {
   switch (status) {
     case "OPEN":
@@ -47,8 +42,7 @@ export default function SettingsPanel({
   wsStatus,
   language,
   onLanguageChange,
-  modelSize,
-  onModelSizeChange,
+  isAssistantThinking,
 }: SettingsPanelProps) {
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [ramUsage, setRamUsage] = useState<number | null>(null);
@@ -58,17 +52,19 @@ export default function SettingsPanel({
   const historyRef = useRef<number[]>(new Array(50).fill(0));
 
   useEffect(() => {
-    navigator.mediaDevices
-      .getUserMedia({ audio: true })
-      .then((stream) => {
-        navigator.mediaDevices.enumerateDevices().then((d) => {
-          setDevices(d.filter((device) => device.kind === "audioinput"));
+    if (navigator.mediaDevices?.getUserMedia) {
+      navigator.mediaDevices
+        .getUserMedia({ audio: true })
+        .then((stream) => {
+          navigator.mediaDevices.enumerateDevices().then((d) => {
+            setDevices(d.filter((device) => device.kind === "audioinput"));
+          });
+          stream.getTracks().forEach((track) => track.stop());
+        })
+        .catch((err) => {
+          console.warn("Could not get devices", err);
         });
-        stream.getTracks().forEach((track) => track.stop());
-      })
-      .catch((err) => {
-        console.warn("Could not get devices", err);
-      });
+    }
 
     const ramInterval = setInterval(() => {
       const perf = performance as any;
@@ -137,10 +133,10 @@ export default function SettingsPanel({
           weight="bold"
           style={{ textTransform: "uppercase", letterSpacing: "1px" }}
         >
-          Description
+          Shore Assistant
         </Text>
         <Text size="2" color="gray" mt="2" style={{ display: "block" }}>
-          A playground for testing Shore STT
+          Voice AI with LLM, Tools & Vision
         </Text>
       </Box>
 
@@ -155,25 +151,9 @@ export default function SettingsPanel({
         >
           Settings
         </Text>
-        <Flex justify="between" mt="3">
-          <Text size="2" color="gray">
-            Room
-          </Text>
-          <Text size="2" style={{ color: "var(--indigo-9)" }}>
-            shore-stt-local
-          </Text>
-        </Flex>
-        <Flex justify="between" mt="2">
-          <Text size="2" color="gray">
-            Participant
-          </Text>
-          <Text size="2" style={{ color: "var(--gray-9)" }}>
-            user-identity
-          </Text>
-        </Flex>
 
         {/* Language Selector */}
-        <Flex justify="between" align="center" mt="2">
+        <Flex justify="between" align="center" mt="3">
           <Text size="2" color="gray">
             Language
           </Text>
@@ -209,41 +189,14 @@ export default function SettingsPanel({
           </Select.Root>
         </Flex>
 
-        {/* Model Selector */}
+        {/* LLM Model info */}
         <Flex justify="between" align="center" mt="2">
           <Text size="2" color="gray">
-            Model
+            LLM
           </Text>
-          <Select.Root
-            value={modelSize}
-            onValueChange={onModelSizeChange}
-            size="1"
-          >
-            <Select.Trigger
-              variant="soft"
-              style={{
-                backgroundColor: "var(--gray-3)",
-                color: "var(--gray-12)",
-                border: "none",
-                maxWidth: "120px",
-              }}
-            />
-            <Select.Content
-              position="popper"
-              style={{
-                backgroundColor: "var(--color-panel-solid)",
-                color: "var(--gray-12)",
-              }}
-            >
-              <Select.Group>
-                {STT_MODELS.map((m) => (
-                  <Select.Item key={m.value} value={m.value}>
-                    {m.label}
-                  </Select.Item>
-                ))}
-              </Select.Group>
-            </Select.Content>
-          </Select.Root>
+          <Text size="2" style={{ color: "var(--indigo-9)" }}>
+            Qwen2.5-14B
+          </Text>
         </Flex>
       </Box>
 
@@ -306,6 +259,24 @@ export default function SettingsPanel({
             }}
           >
             {isRecording ? "TRUE" : "FALSE"}
+          </Text>
+        </Flex>
+
+        {/* Agent status */}
+        <Flex justify="between" mt="2">
+          <Text size="2" color="gray">
+            Agent
+          </Text>
+          <Text
+            size="2"
+            style={{
+              color: isAssistantThinking
+                ? "var(--orange-10)"
+                : "var(--gray-9)",
+              fontWeight: "500",
+            }}
+          >
+            {isAssistantThinking ? "THINKING" : "IDLE"}
           </Text>
         </Flex>
 

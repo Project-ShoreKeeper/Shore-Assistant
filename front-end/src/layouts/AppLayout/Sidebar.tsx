@@ -5,8 +5,8 @@ export default function Sidebar() {
   const location = useLocation();
 
   const navItems = [
-    { label: "Home (VAD Test)", path: "/" },
-    { label: "Chatbot", path: "/chat" },
+    { label: "VAD Test", path: "/" },
+    { label: "Assistant", path: "/chat" },
   ];
 
   return (
@@ -22,7 +22,7 @@ export default function Sidebar() {
     >
       <Box mb="6">
         <Text weight="bold" size="5" color="indigo">
-          Shore STT
+          Shore Assistant
         </Text>
       </Box>
 

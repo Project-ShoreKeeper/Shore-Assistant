@@ -2,9 +2,15 @@
  * Cấu hình cho module STT
  */
 
+// Auto-detect backend host from browser URL (works with Tailscale, localhost, etc.)
+const BACKEND_HOST = `${window.location.hostname}:8000`;
+const WS_PROTOCOL = window.location.protocol === "https:" ? "wss:" : "ws:";
+
 // WebSocket URL kết nối tới Backend STT Server
-// Trong production, thay bằng env variable hoặc reverse proxy
-export const STT_WS_URL = "ws://localhost:8000/ws/audio";
+export const STT_WS_URL = `${WS_PROTOCOL}//${BACKEND_HOST}/ws/audio`;
+
+// WebSocket URL for the unified chat endpoint (STT + LLM + TTS)
+export const CHAT_WS_URL = `${WS_PROTOCOL}//${BACKEND_HOST}/ws/chat`;
 
 // Ngôn ngữ mặc định cho STT
 export const STT_DEFAULT_LANGUAGE = "en";

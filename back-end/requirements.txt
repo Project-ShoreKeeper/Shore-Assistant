@@ -4,5 +4,31 @@ python-multipart>=0.0.6
 pydantic-settings>=2.0.3
 websockets>=11.0.3
 numpy>=1.24.0
-faster-whisper>=1.0.0
 
+# STT (Whisper via Transformers) - PyTorch CUDA 12.9 for RTX 5060 Ti
+# Install torch separately first:
+#   pip install torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu129
+transformers @ git+https://github.com/huggingface/transformers.git
+accelerate @ git+https://github.com/huggingface/accelerate.git
+bitsandbytes
+datasets
+peft @ git+https://github.com/huggingface/peft.git
+trl @ git+https://github.com/huggingface/trl.git
+
+# LLM Agent
+langgraph>=0.4.0
+langchain-core>=0.3.0
+httpx>=0.27.0
+
+# TTS (Kokoro - local, offline)
+kokoro>=0.9.0
+soundfile>=0.13.0
+
+# Web search & scraping
+ddgs>=8.0.0
+readability-lxml>=0.8.0
+lxml>=5.0.0
+
+# Vision / Screen capture
+mss>=9.0.0
+Pillow>=10.0.0

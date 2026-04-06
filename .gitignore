@@ -21,3 +21,9 @@ Thumbs.db
 # Logs / debug
 faulthandler.txt
 *.log
+
+# Plans
+PLAN_*.md
+
+# Runtime data (memory, scheduler)
+back-end/data/

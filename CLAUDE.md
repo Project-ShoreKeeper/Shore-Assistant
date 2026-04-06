@@ -141,8 +141,14 @@ All backend config via environment variables or `.env` file in `back-end/`:
 ## Backlog
 
 - [ ] Client-side screen capture — use `getDisplayMedia` in browser, send image over WebSocket for vision analysis
-- [ ] Conversation memory — persist history to disk so context survives server restarts
+- [x] Conversation memory — persist history to disk so context survives server restarts
 - [ ] Wake word detection — trigger VAD only on a keyword (e.g. "Hey Shore")
 - [ ] Tool result streaming — show tool output progressively in the agent log
 - [ ] Voice selection UI — let user pick Kokoro voice from settings panel
 - [ ] Multi-language TTS — auto-detect language from LLM response and switch Kokoro voice
+
+### Proactive Agent (Event Loop)
+- [ ] Scheduled tasks — "remind me in 10 minutes", "check X every hour" (background timer + task queue)
+- [ ] Background monitoring — watch files, processes, or logs and notify on changes
+- [ ] Proactive notifications — push alerts to frontend over WebSocket without user prompt (e.g. "build finished")
+- [ ] Deferred goals — multi-step plans the agent works through over time, persisted to disk

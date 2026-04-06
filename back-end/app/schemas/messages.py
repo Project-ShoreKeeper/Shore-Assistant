@@ -19,6 +19,7 @@ class ServerMessageType(str, Enum):
     TTS_END = "tts_end"
     STATUS = "status"
     ERROR = "error"
+    NOTIFICATION = "notification"
 
 
 class AgentActionType(str, Enum):
@@ -109,3 +110,11 @@ class StatusMessage(BaseModel):
 class ErrorMessage(BaseModel):
     type: Literal["error"] = "error"
     message: str
+
+
+class NotificationMessage(BaseModel):
+    type: Literal["notification"] = "notification"
+    task_id: str
+    task_type: str
+    message: str
+    timestamp: float

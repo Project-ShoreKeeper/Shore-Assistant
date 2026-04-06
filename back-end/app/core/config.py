@@ -10,10 +10,14 @@ class Settings(BaseSettings):
     SAMPLE_RATE: int = 16000
     AUDIO_CHANNELS: int = 1
 
+    # STT
+    STT_ENABLED: bool = False
+
     # Ollama LLM
     OLLAMA_BASE_URL: str = "http://localhost:11434"
-    OLLAMA_MODEL: str = "qwen2.5:14b"
+    OLLAMA_MODEL: str = "gemma4-e4b"
     OLLAMA_TIMEOUT: int = 120
+    OLLAMA_NUM_CTX: int = 8192
 
     # Vision (hot-swap)
     VISION_MODEL: str = "qwen2.5vl:7b"
@@ -22,6 +26,22 @@ class Settings(BaseSettings):
     PIPER_PATH: str = "piper"
     PIPER_MODEL: str = ""
     TTS_SAMPLE_RATE: int = 22050
+
+    # Conversation Memory
+    MEMORY_DIR: str = "data/memory"
+    MEMORY_MAX_TURNS: int = 20
+
+    # Persona
+    PERSONA: str = "kuudere"  # "base" or "kuudere"
+
+    # Scheduler
+    SCHEDULER_TASKS_FILE: str = "data/scheduled_tasks.json"
+    SCHEDULER_PENDING_FILE: str = "data/pending_notifications.json"
+
+    # Tool Retriever
+    TOOL_RETRIEVER_MODEL: str = "all-MiniLM-L6-v2"
+    TOOL_RETRIEVER_TOP_K: int = 3
+    TOOL_RETRIEVER_THRESHOLD: float = 0.3
 
     class Config:
         env_file = ".env"

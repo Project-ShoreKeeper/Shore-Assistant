@@ -3,6 +3,7 @@
 import os
 from datetime import datetime
 from langchain_core.tools import tool
+from app.services.memory_service import memory_service
 
 
 @tool
@@ -30,6 +31,15 @@ def read_file(file_path: str) -> str:
         return content
     except Exception as e:
         return f"Error reading file: {e}"
+
+
+@tool
+def clear_memory() -> str:
+    """Clear the conversation memory. Use when the user asks to forget previous conversations or start fresh."""
+    cleared = memory_service.clear(session_id="default")
+    if cleared:
+        return "Conversation memory cleared. Starting fresh."
+    return "No conversation memory to clear."
 
 
 @tool

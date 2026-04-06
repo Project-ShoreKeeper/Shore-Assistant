@@ -5,11 +5,15 @@ Handles the full pipeline: audio/text input -> STT -> Agent -> LLM streaming -> 
 
 import asyncio
 import re
+import uuid
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from app.services.stt_service import stt_service
 from app.services.agent_service import agent_service
 from app.services.tts_service import tts_service
+from app.services.memory_service import memory_service
+from app.services.connection_manager import connection_manager
+from app.services.notification_service import notification_service
 from app.core.config import settings
 import numpy as np
 import json
@@ -18,6 +22,26 @@ import time
 router = APIRouter()
 
 SAMPLE_RATE = 16000
+
+# Friendly spoken names for tools (used by TTS instead of raw tool names)
+_TOOL_SPOKEN_NAMES = {
+    "get_system_time": "the clock",
+    "read_file": "the file reader",
+    "list_directory": "the directory listing",
+    "clear_memory": "memory clear",
+    "search_web": "web search",
+    "web_scrape": "the web scraper",
+    "capture_screen": "screen capture",
+    "analyze_screen": "screen analysis",
+    "set_reminder": "the reminder system",
+    "set_scheduled_task": "the scheduler",
+    "cancel_task": "task cancellation",
+    "list_tasks": "the task list",
+}
+
+
+def _tool_spoken_name(tool_name: str) -> str:
+    return _TOOL_SPOKEN_NAMES.get(tool_name, tool_name.replace("_", " "))
 
 
 @router.websocket("/ws/chat")
@@ -40,16 +64,12 @@ async def websocket_chat(websocket: WebSocket):
       - {"type": "status"|"error", ...}   -- Status/error messages
     """
     await websocket.accept()
-    print("[Chat WS] Client connected")
 
     # Per-connection state
-    conversation_history: list[dict] = []
-    session_config = {
-        "language": "en",
-        "tts_enabled": True,
-    }
-    is_cancelled = False
+    session_id = str(uuid.uuid4())[:8]
+    print(f"[Chat WS] Client connected (session: {session_id})")
 
+    # Register send functions for proactive notifications
     async def send_json_safe(data: dict):
         try:
             await websocket.send_json(data)
@@ -62,20 +82,43 @@ async def websocket_chat(websocket: WebSocket):
         except Exception:
             pass
 
+    connection_manager.register(send_json_safe, send_binary_safe)
+
+    # Load persisted history
+    persisted = memory_service.load(session_id="default")
+    conversation_history: list[dict] = [
+        {"role": m["role"], "content": m["content"]} for m in persisted
+    ]
+    if conversation_history:
+        print(f"[Chat WS] Loaded {len(conversation_history)} messages from memory")
+
+    session_config = {
+        "language": "en",
+        "tts_enabled": True,
+    }
+    is_cancelled = False
+
     def sanitize_for_tts(text: str) -> str:
-        """Strip content that edge-tts cannot synthesize."""
-        # Remove tool call blocks
-        text = re.sub(r"```tool\s*\n?.*?\n?```", "", text, flags=re.DOTALL)
-        # Remove code blocks
+        """Strip content that TTS cannot synthesize."""
+        # Remove any code blocks (```anything```)
         text = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
+        # Remove partial/unclosed code blocks
+        text = re.sub(r"```.*", "", text, flags=re.DOTALL)
+        # Remove raw JSON fragments
+        text = re.sub(r"\{.*?\}", "", text, flags=re.DOTALL)
         # Remove URLs
         text = re.sub(r"https?://\S+", "", text)
         # Remove markdown bold/italic markers
         text = re.sub(r"\*{1,3}(.*?)\*{1,3}", r"\1", text)
         # Remove markdown links [text](url)
         text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)
+        # Replace ellipsis with a comma pause (Kokoro handles commas better)
+        text = re.sub(r"\.{2,}", ",", text)
+        text = re.sub(r"…", ",", text)
         # Collapse whitespace
         text = re.sub(r"\s+", " ", text).strip()
+        # Remove leading comma/punctuation
+        text = re.sub(r"^[,\s]+", "", text)
         return text
 
     async def tts_worker(sentence_queue: asyncio.Queue):
@@ -95,21 +138,22 @@ async def websocket_chat(websocket: WebSocket):
                 break
 
             try:
-                tts_service.set_voice_for_language(
-                    session_config.get("language", "en")
-                )
+                async with notification_service.tts_lock:
+                    tts_service.set_voice_for_language(
+                        session_config.get("language", "en")
+                    )
 
-                # Send tts_start only once for the entire response
-                if not started:
-                    await send_json_safe({
-                        "type": "tts_start",
-                        "sample_rate": tts_service.sample_rate,
-                        "format": "pcm_s16le",
-                    })
-                    started = True
+                    # Send tts_start only once for the entire response
+                    if not started:
+                        await send_json_safe({
+                            "type": "tts_start",
+                            "sample_rate": tts_service.sample_rate,
+                            "format": "pcm_s16le",
+                        })
+                        started = True
 
-                async for chunk in tts_service.synthesize_stream_pcm(sentence):
-                    await send_binary_safe(chunk)
+                    async for chunk in tts_service.synthesize_stream_pcm(sentence):
+                        await send_binary_safe(chunk)
 
             except Exception as e:
                 print(f"[Chat WS] TTS error: {type(e).__name__}: {e!r}")
@@ -125,8 +169,18 @@ async def websocket_chat(websocket: WebSocket):
         """Run the full agent pipeline and stream results to the client."""
         nonlocal is_cancelled
 
-        # Add user message to conversation history
-        conversation_history.append({"role": "user", "content": user_text})
+        is_notification = source == "notification"
+
+        print(f"\n[Chat WS] >>>>>> run_agent_pipeline <<<<<<")
+        print(f"[Chat WS] User text: {user_text[:200]}")
+        print(f"[Chat WS] Source: {source}")
+        print(f"[Chat WS] History length BEFORE append: {len(conversation_history)}")
+
+        # Don't persist notification prompts as user messages
+        if not is_notification:
+            conversation_history.append({"role": "user", "content": user_text})
+            memory_service.append(session_id="default", role="user", content=user_text)
+            print(f"[Chat WS] History length AFTER append: {len(conversation_history)}")
 
         # Set up TTS sentence queue if TTS is enabled
         tts_enabled = session_config.get("tts_enabled", True)
@@ -135,6 +189,9 @@ async def websocket_chat(websocket: WebSocket):
 
         if tts_enabled:
             tts_task = asyncio.create_task(tts_worker(sentence_queue))
+
+        # Track whether current LLM response contains a tool call
+        tts_suppressed = False
 
         try:
             async for event in agent_service.run(user_text, conversation_history):
@@ -148,22 +205,55 @@ async def websocket_chat(websocket: WebSocket):
 
                 await send_json_safe(event)
 
-                # Feed completed sentences to TTS (skip unspeakable content)
+                # When a tool call is detected, speak a friendly line
+                # instead of the raw JSON block
+                if tts_enabled and event.get("type") == "agent_action":
+                    if event.get("action") == "tool_call":
+                        tool_name = event.get("tool", "a tool")
+                        friendly = _tool_spoken_name(tool_name)
+                        await sentence_queue.put(f"Let me use {friendly}.")
+                        tts_suppressed = False  # Reset for next LLM round
+
+                # Feed completed sentences to TTS (skip tool-call content)
                 if tts_enabled and event.get("type") == "llm_sentence":
-                    clean = sanitize_for_tts(event["text"])
-                    if clean:
-                        await sentence_queue.put(clean)
+                    if not tts_suppressed:
+                        clean = sanitize_for_tts(event["text"])
+                        if clean:
+                            # Check if this sentence is starting a tool block
+                            if "```" in event["text"] or event["text"].strip().startswith("{") or '"tool"' in event["text"]:
+                                tts_suppressed = True
+                            else:
+                                await sentence_queue.put(clean)
 
-                # When LLM completes, save to conversation history
+                # Reset suppression when a new LLM round starts
+                if event.get("type") == "agent_action" and event.get("action") == "thinking":
+                    tts_suppressed = False
+
+                # When LLM completes, save to conversation history and persist
                 if event.get("type") == "llm_complete":
-                    conversation_history.append({
-                        "role": "assistant",
-                        "content": event["text"],
-                    })
+                    assistant_text = event["text"]
+                    print(f"[Chat WS] LLM complete — response length: {len(assistant_text)}")
+                    print(f"[Chat WS] LLM complete — preview: {assistant_text[:200]}")
 
-                    # Keep history manageable (last 20 exchanges)
-                    if len(conversation_history) > 40:
-                        conversation_history[:] = conversation_history[-40:]
+                    # Don't save empty responses to history/memory
+                    if not assistant_text.strip():
+                        print(f"[Chat WS] WARNING: Empty response — NOT saving to history")
+                    else:
+                        conversation_history.append({
+                            "role": "assistant",
+                            "content": assistant_text,
+                        })
+                        memory_service.append(
+                            session_id="default",
+                            role="assistant",
+                            content=assistant_text,
+                        )
+                    print(f"[Chat WS] History length after response: {len(conversation_history)}")
+
+                    # Keep in-memory history manageable
+                    max_messages = settings.MEMORY_MAX_TURNS * 2
+                    if len(conversation_history) > max_messages:
+                        conversation_history[:] = conversation_history[-max_messages:]
 
         except Exception as e:
             print(f"[Chat WS] Agent error: {e}")
@@ -176,6 +266,16 @@ async def websocket_chat(websocket: WebSocket):
             if tts_task:
                 await sentence_queue.put(None)
                 await tts_task
+
+    # Register agent callback for proactive notifications
+    async def run_notification(prompt: str):
+        """Run a notification prompt through the full agent pipeline."""
+        await run_agent_pipeline(prompt, source="notification")
+
+    notification_service.set_agent_callback(run_notification)
+
+    # Drain any notifications that fired while disconnected
+    await notification_service.drain_pending()
 
     try:
         while True:
@@ -206,6 +306,15 @@ async def websocket_chat(websocket: WebSocket):
                         is_cancelled = True
                         print("[Chat WS] Generation cancel requested")
 
+                    elif msg_type == "clear_memory":
+                        conversation_history.clear()
+                        memory_service.clear("default")
+                        print("[Chat WS] Memory cleared")
+                        await send_json_safe({
+                            "type": "status",
+                            "message": "Memory cleared",
+                        })
+
                     else:
                         print(f"[Chat WS] Unknown message type: {msg_type}")
 
@@ -217,6 +326,13 @@ async def websocket_chat(websocket: WebSocket):
 
             # ─── Binary messages (Audio from VAD) ───
             elif "bytes" in message:
+                if not settings.STT_ENABLED:
+                    await send_json_safe({
+                        "type": "error",
+                        "message": "STT is disabled",
+                    })
+                    continue
+
                 audio_bytes = message["bytes"]
                 start_time = time.time()
 
@@ -288,3 +404,6 @@ async def websocket_chat(websocket: WebSocket):
             "type": "error",
             "message": f"Server error: {str(e)}",
         })
+    finally:
+        notification_service.clear_agent_callback()
+        connection_manager.unregister()

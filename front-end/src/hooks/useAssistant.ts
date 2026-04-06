@@ -15,8 +15,12 @@ export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   text: string;
+  thinkingText?: string;
+  isThinkingPhase?: boolean;
   audioUrl?: string;
   isStreaming?: boolean;
+  isNotification?: boolean;
+  taskId?: string;
   timestamp: Date;
   agentActions?: AgentAction[];
 }
@@ -232,6 +236,59 @@ export function useAssistant(): UseAssistantReturn {
           break;
         }
 
+        case "llm_thinking_token": {
+          // Stream thinking tokens into the assistant message's thinkingText
+          setMessages((prev) => {
+            const lastMsg = prev[prev.length - 1];
+            if (lastMsg?.role === "assistant" && lastMsg.isStreaming) {
+              const updated = [...prev];
+              updated[updated.length - 1] = {
+                ...lastMsg,
+                thinkingText: msg.accumulated,
+                isThinkingPhase: true,
+              };
+              return updated;
+            } else {
+              // Create new assistant message in thinking phase
+              const id =
+                Date.now().toString(36) +
+                Math.random().toString(36).slice(2, 7);
+              streamingMsgIdRef.current = id;
+              return [
+                ...prev,
+                {
+                  id,
+                  role: "assistant",
+                  text: "",
+                  thinkingText: msg.accumulated,
+                  isThinkingPhase: true,
+                  isStreaming: true,
+                  timestamp: new Date(),
+                },
+              ];
+            }
+          });
+          break;
+        }
+
+        case "llm_thinking_done": {
+          // Mark thinking phase as complete
+          setMessages((prev) => {
+            const lastMsg = prev[prev.length - 1];
+            if (lastMsg?.role === "assistant" && lastMsg.isStreaming) {
+              const updated = [...prev];
+              updated[updated.length - 1] = {
+                ...lastMsg,
+                thinkingText: msg.text,
+                isThinkingPhase: false,
+              };
+              return updated;
+            }
+            return prev;
+          });
+          break;
+        }
+
         case "llm_token": {
           // Create or update the streaming assistant message
           setMessages((prev) => {
@@ -242,6 +299,7 @@ export function useAssistant(): UseAssistantReturn {
               updated[updated.length - 1] = {
                 ...lastMsg,
                 text: msg.accumulated,
+                isThinkingPhase: false,
               };
               return updated;
             } else {
@@ -326,6 +384,26 @@ export function useAssistant(): UseAssistantReturn {
 
         case "status": {
           console.log("[Chat] Status:", msg.message);
+          break;
+        }
+
+        case "notification": {
+          // Proactive notification from scheduler (reminder, scheduled task)
+          const notifId =
+            Date.now().toString(36) +
+            Math.random().toString(36).slice(2, 7);
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: notifId,
+              role: "assistant",
+              text: msg.message,
+              isStreaming: false,
+              isNotification: true,
+              taskId: msg.task_id,
+              timestamp: new Date(),
+            },
+          ]);
           break;
         }
       }
@@ -488,6 +566,9 @@ export function useAssistant(): UseAssistantReturn {
 
   const clearMessages = useCallback(() => {
     setMessages([]);
+    if (wsRef.current) {
+      wsRef.current.sendClearMemory();
+    }
   }, []);
 
   // Cleanup on unmount

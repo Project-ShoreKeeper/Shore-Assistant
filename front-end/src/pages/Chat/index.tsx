@@ -29,9 +29,11 @@ function PageChat() {
     stopRecording,
     sendTextMessage,
     cancelGeneration,
+    clearMessages,
   } = useAssistant();
 
   const [inputText, setInputText] = useState("");
+  const [expandedThinking, setExpandedThinking] = useState<Set<string>>(new Set());
   const [selectedDeviceId, setSelectedDeviceId] = useState<
     string | undefined
   >(undefined);
@@ -62,10 +64,24 @@ function PageChat() {
   const renderMessage = (msg: ChatMessage) => {
     const isUser = msg.role === "user";
     const isEmpty = !msg.text || msg.text.trim() === "";
+    const hasThinking = !!msg.thinkingText;
     const isProcessing = msg.isStreaming;
 
     // Skip empty finalized user messages (silence)
     if (isUser && !isProcessing && isEmpty && !msg.audioUrl) return null;
+
+    const isThinkingExpanded = expandedThinking.has(msg.id);
+    const toggleThinking = () => {
+      setExpandedThinking((prev) => {
+        const next = new Set(prev);
+        if (next.has(msg.id)) {
+          next.delete(msg.id);
+        } else {
+          next.add(msg.id);
+        }
+        return next;
+      });
+    };
 
     return (
       <Flex
@@ -130,8 +146,108 @@ function PageChat() {
               </Box>
             )}
 
+            {/* Thinking block */}
+            {!isUser && hasThinking && (
+              <Box
+                mb={msg.text ? "2" : "0"}
+                style={{
+                  borderRadius: "8px",
+                  border: "1px solid var(--gray-4)",
+                  overflow: "hidden",
+                }}
+              >
+                {/* Thinking header - clickable to expand/collapse */}
+                <Box
+                  p="2"
+                  style={{
+                    backgroundColor: "var(--gray-2)",
+                    cursor: msg.isThinkingPhase ? "default" : "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "6px",
+                    userSelect: "none",
+                  }}
+                  onClick={msg.isThinkingPhase ? undefined : toggleThinking}
+                >
+                  {msg.isThinkingPhase && (
+                    <span
+                      style={{
+                        display: "inline-block",
+                        width: "6px",
+                        height: "6px",
+                        borderRadius: "50%",
+                        backgroundColor: "var(--amber-9)",
+                        animation: "pulse 1s infinite",
+                      }}
+                    />
+                  )}
+                  <Text
+                    size="1"
+                    weight="bold"
+                    style={{
+                      color: msg.isThinkingPhase
+                        ? "var(--amber-11)"
+                        : "var(--gray-9)",
+                      textTransform: "uppercase",
+                      letterSpacing: "0.5px",
+                    }}
+                  >
+                    {msg.isThinkingPhase ? "Thinking..." : "Thought"}
+                  </Text>
+                  {!msg.isThinkingPhase && (
+                    <Text
+                      size="1"
+                      style={{
+                        color: "var(--gray-8)",
+                        marginLeft: "auto",
+                      }}
+                    >
+                      {isThinkingExpanded ? "▲" : "▼"}
+                    </Text>
+                  )}
+                </Box>
+
+                {/* Thinking content - always shown during thinking, toggleable after */}
+                {(msg.isThinkingPhase || isThinkingExpanded) && (
+                  <Box
+                    p="2"
+                    style={{
+                      maxHeight: "200px",
+                      overflowY: "auto",
+                      backgroundColor: "var(--gray-1)",
+                    }}
+                  >
+                    <Text
+                      size="1"
+                      style={{
+                        whiteSpace: "pre-wrap",
+                        color: "var(--gray-10)",
+                        fontStyle: "italic",
+                        lineHeight: "1.5",
+                      }}
+                    >
+                      {msg.thinkingText}
+                      {msg.isThinkingPhase && (
+                        <span
+                          style={{
+                            display: "inline-block",
+                            width: "2px",
+                            height: "12px",
+                            backgroundColor: "var(--amber-9)",
+                            marginLeft: "2px",
+                            animation: "pulse 0.8s infinite",
+                            verticalAlign: "text-bottom",
+                          }}
+                        />
+                      )}
+                    </Text>
+                  </Box>
+                )}
+              </Box>
+            )}
+
             {/* Message text */}
-            {isProcessing && isEmpty ? (
+            {isProcessing && isEmpty && !hasThinking ? (
               <Text
                 size="2"
                 style={{
@@ -155,23 +271,25 @@ function PageChat() {
                 {isUser ? "Recognizing..." : "Thinking..."}
               </Text>
             ) : (
-              <Text size="2" style={{ whiteSpace: "pre-wrap" }}>
-                {msg.text}
-                {/* Streaming cursor for assistant */}
-                {!isUser && isProcessing && (
-                  <span
-                    style={{
-                      display: "inline-block",
-                      width: "2px",
-                      height: "14px",
-                      backgroundColor: "var(--indigo-9)",
-                      marginLeft: "2px",
-                      animation: "pulse 0.8s infinite",
-                      verticalAlign: "text-bottom",
-                    }}
-                  />
-                )}
-              </Text>
+              msg.text && (
+                <Text size="2" style={{ whiteSpace: "pre-wrap" }}>
+                  {msg.text}
+                  {/* Streaming cursor for assistant */}
+                  {!isUser && isProcessing && !msg.isThinkingPhase && (
+                    <span
+                      style={{
+                        display: "inline-block",
+                        width: "2px",
+                        height: "14px",
+                        backgroundColor: "var(--indigo-9)",
+                        marginLeft: "2px",
+                        animation: "pulse 0.8s infinite",
+                        verticalAlign: "text-bottom",
+                      }}
+                    />
+                  )}
+                </Text>
+              )
             )}
           </Box>
 
@@ -396,6 +514,8 @@ function PageChat() {
         language={language}
         onLanguageChange={setLanguage}
         isAssistantThinking={isAssistantThinking}
+        onClearMessages={clearMessages}
+        messageCount={messages.length}
       />
     </Flex>
   );

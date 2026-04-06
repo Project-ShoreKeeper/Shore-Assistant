@@ -1,7 +1,9 @@
 import React, { useEffect, useState, useRef } from "react";
-import { Flex, Box, Text, Select, Separator, Badge } from "@radix-ui/themes";
+import { Flex, Box, Text, Select, Separator, Badge, Button } from "@radix-ui/themes";
 import type { WebSocketStatus } from "../../services/chat-websocket.service";
 import { STT_LANGUAGES } from "../../constants/stt.constant";
+
+const BACKEND_URL = `${window.location.protocol}//${window.location.hostname}:8000`;
 
 export interface SettingsPanelProps {
   isLoaded: boolean;
@@ -14,6 +16,8 @@ export interface SettingsPanelProps {
   language: string;
   onLanguageChange?: (lang: string) => void;
   isAssistantThinking?: boolean;
+  onClearMessages?: () => void;
+  messageCount?: number;
 }
 
 function getWsStatusDisplay(status: WebSocketStatus) {
@@ -43,9 +47,12 @@ export default function SettingsPanel({
   language,
   onLanguageChange,
   isAssistantThinking,
+  onClearMessages,
+  messageCount = 0,
 }: SettingsPanelProps) {
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [ramUsage, setRamUsage] = useState<number | null>(null);
+  const [llmModel, setLlmModel] = useState<string>("—");
 
   const requestRef = useRef<number>(0);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -65,6 +72,11 @@ export default function SettingsPanel({
           console.warn("Could not get devices", err);
         });
     }
+
+    fetch(`${BACKEND_URL}/config`)
+      .then((r) => r.json())
+      .then((data) => setLlmModel(data.llm_model || "—"))
+      .catch(() => setLlmModel("—"));
 
     const ramInterval = setInterval(() => {
       const perf = performance as any;
@@ -195,9 +207,22 @@ export default function SettingsPanel({
             LLM
           </Text>
           <Text size="2" style={{ color: "var(--indigo-9)" }}>
-            Qwen2.5-14B
+            {llmModel}
           </Text>
         </Flex>
+
+        {/* Clear memory button */}
+        <Button
+          size="2"
+          color="red"
+          variant="soft"
+          mt="3"
+          style={{ width: "100%", cursor: "pointer" }}
+          onClick={onClearMessages}
+          disabled={messageCount === 0}
+        >
+          Clear Chat & Memory
+        </Button>
       </Box>
 
       <Separator size="4" style={{ backgroundColor: "var(--gray-5)" }} />
@@ -346,6 +371,7 @@ export default function SettingsPanel({
 
         {/* Audio Visualizer */}
         <Box
+          mt="2"
           style={{
             height: "90px",
             backgroundColor: "var(--gray-2)",
@@ -368,6 +394,75 @@ export default function SettingsPanel({
             }}
           />
         </Box>
+      </Box>
+
+      <Separator size="4" style={{ backgroundColor: "var(--gray-5)" }} />
+
+      <Box p="4">
+        <Text
+          size="1"
+          color="gray"
+          weight="bold"
+          style={{ textTransform: "uppercase", letterSpacing: "1px" }}
+        >
+          Available Tools
+        </Text>
+
+        <Flex direction="column" gap="3" mt="3">
+          <Box>
+            <Text size="2" weight="medium" style={{ color: "var(--indigo-9)" }}>
+              System
+            </Text>
+            <Text size="1" color="gray" style={{ display: "block", marginTop: "2px" }}>
+              "What time is it?" — get current date/time
+            </Text>
+            <Text size="1" color="gray" style={{ display: "block" }}>
+              "Read file X" / "List files in Y" — local file access
+            </Text>
+            <Text size="1" color="gray" style={{ display: "block" }}>
+              "Forget everything" — clear conversation memory
+            </Text>
+          </Box>
+
+          <Box>
+            <Text size="2" weight="medium" style={{ color: "var(--indigo-9)" }}>
+              Web
+            </Text>
+            <Text size="1" color="gray" style={{ display: "block", marginTop: "2px" }}>
+              "Search for ..." — web search via DuckDuckGo
+            </Text>
+            <Text size="1" color="gray" style={{ display: "block" }}>
+              "Read this page: url" — scrape a web page
+            </Text>
+          </Box>
+
+          <Box>
+            <Text size="2" weight="medium" style={{ color: "var(--indigo-9)" }}>
+              Vision
+            </Text>
+            <Text size="1" color="gray" style={{ display: "block", marginTop: "2px" }}>
+              "What's on my screen?" — capture and analyze screen
+            </Text>
+          </Box>
+
+          <Box>
+            <Text size="2" weight="medium" style={{ color: "var(--indigo-9)" }}>
+              Reminders & Scheduling
+            </Text>
+            <Text size="1" color="gray" style={{ display: "block", marginTop: "2px" }}>
+              "Remind me in 10 min to ..." — one-time reminder
+            </Text>
+            <Text size="1" color="gray" style={{ display: "block" }}>
+              "Every 30 min, remind me to ..." — recurring task
+            </Text>
+            <Text size="1" color="gray" style={{ display: "block" }}>
+              "List my tasks" — show active reminders
+            </Text>
+            <Text size="1" color="gray" style={{ display: "block" }}>
+              "Cancel task rem_XXXX" — cancel by ID
+            </Text>
+          </Box>
+        </Flex>
       </Box>
     </Flex>
   );

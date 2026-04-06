@@ -43,6 +43,17 @@ export interface LLMTokenMessage {
   accumulated: string;
 }
 
+export interface LLMThinkingTokenMessage {
+  type: "llm_thinking_token";
+  token: string;
+  accumulated: string;
+}
+
+export interface LLMThinkingDoneMessage {
+  type: "llm_thinking_done";
+  text: string;
+}
+
 export interface LLMSentenceMessage {
   type: "llm_sentence";
   text: string;
@@ -73,16 +84,27 @@ export interface ErrorMessage {
   message: string;
 }
 
+export interface NotificationMessage {
+  type: "notification";
+  task_id: string;
+  task_type: string;
+  message: string;
+  timestamp: number;
+}
+
 export type ChatServerMessage =
   | TranscriptMessage
   | AgentActionMessage
   | LLMTokenMessage
+  | LLMThinkingTokenMessage
+  | LLMThinkingDoneMessage
   | LLMSentenceMessage
   | LLMCompleteMessage
   | TTSStartMessage
   | TTSEndMessage
   | StatusMessage
-  | ErrorMessage;
+  | ErrorMessage
+  | NotificationMessage;
 
 // ─── Event system ───
 
@@ -175,6 +197,11 @@ export class ChatWebSocketService {
   public sendCancel(): void {
     if (!this.isReady()) return;
     this.socket!.send(JSON.stringify({ type: "cancel" }));
+  }
+
+  public sendClearMemory(): void {
+    if (!this.isReady()) return;
+    this.socket!.send(JSON.stringify({ type: "clear_memory" }));
   }
 
   // ─── Event system ───

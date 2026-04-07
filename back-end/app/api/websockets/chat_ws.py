@@ -67,7 +67,7 @@ async def websocket_chat(websocket: WebSocket):
 
     # Per-connection state
     session_id = str(uuid.uuid4())[:8]
-    print(f"[Chat WS] Client connected (session: {session_id})")
+
 
     # Register send functions for proactive notifications
     async def send_json_safe(data: dict):
@@ -89,12 +89,12 @@ async def websocket_chat(websocket: WebSocket):
     conversation_history: list[dict] = [
         {"role": m["role"], "content": m["content"]} for m in persisted
     ]
-    if conversation_history:
-        print(f"[Chat WS] Loaded {len(conversation_history)} messages from memory")
+
 
     session_config = {
         "language": "en",
         "tts_enabled": True,
+        "thinking": False,
     }
     is_cancelled = False
 
@@ -104,6 +104,10 @@ async def websocket_chat(websocket: WebSocket):
         text = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
         # Remove partial/unclosed code blocks
         text = re.sub(r"```.*", "", text, flags=re.DOTALL)
+        # Remove block math ($$...$$)
+        text = re.sub(r"\$\$.*?\$\$", "", text, flags=re.DOTALL)
+        # Remove inline math ($...$)
+        text = re.sub(r"\$[^$]+?\$", "", text)
         # Remove raw JSON fragments
         text = re.sub(r"\{.*?\}", "", text, flags=re.DOTALL)
         # Remove URLs
@@ -155,11 +159,8 @@ async def websocket_chat(websocket: WebSocket):
                     async for chunk in tts_service.synthesize_stream_pcm(sentence):
                         await send_binary_safe(chunk)
 
-            except Exception as e:
-                print(f"[Chat WS] TTS error: {type(e).__name__}: {e!r}")
-                print(f"[Chat WS] TTS failed sentence: {sentence!r}")
-                import traceback
-                traceback.print_exc()
+            except Exception:
+                pass
 
         # Send tts_end once after all sentences are done
         if started:
@@ -171,16 +172,10 @@ async def websocket_chat(websocket: WebSocket):
 
         is_notification = source == "notification"
 
-        print(f"\n[Chat WS] >>>>>> run_agent_pipeline <<<<<<")
-        print(f"[Chat WS] User text: {user_text[:200]}")
-        print(f"[Chat WS] Source: {source}")
-        print(f"[Chat WS] History length BEFORE append: {len(conversation_history)}")
-
         # Don't persist notification prompts as user messages
         if not is_notification:
             conversation_history.append({"role": "user", "content": user_text})
             memory_service.append(session_id="default", role="user", content=user_text)
-            print(f"[Chat WS] History length AFTER append: {len(conversation_history)}")
 
         # Set up TTS sentence queue if TTS is enabled
         tts_enabled = session_config.get("tts_enabled", True)
@@ -194,7 +189,11 @@ async def websocket_chat(websocket: WebSocket):
         tts_suppressed = False
 
         try:
-            async for event in agent_service.run(user_text, conversation_history):
+            async for event in agent_service.run(
+                user_text, conversation_history,
+                thinking=session_config.get("thinking", False),
+                no_tools=is_notification,
+            ):
                 if is_cancelled:
                     is_cancelled = False
                     await send_json_safe({
@@ -232,13 +231,9 @@ async def websocket_chat(websocket: WebSocket):
                 # When LLM completes, save to conversation history and persist
                 if event.get("type") == "llm_complete":
                     assistant_text = event["text"]
-                    print(f"[Chat WS] LLM complete — response length: {len(assistant_text)}")
-                    print(f"[Chat WS] LLM complete — preview: {assistant_text[:200]}")
 
                     # Don't save empty responses to history/memory
-                    if not assistant_text.strip():
-                        print(f"[Chat WS] WARNING: Empty response — NOT saving to history")
-                    else:
+                    if assistant_text.strip():
                         conversation_history.append({
                             "role": "assistant",
                             "content": assistant_text,
@@ -248,7 +243,6 @@ async def websocket_chat(websocket: WebSocket):
                             role="assistant",
                             content=assistant_text,
                         )
-                    print(f"[Chat WS] History length after response: {len(conversation_history)}")
 
                     # Keep in-memory history manageable
                     max_messages = settings.MEMORY_MAX_TURNS * 2
@@ -256,7 +250,6 @@ async def websocket_chat(websocket: WebSocket):
                         conversation_history[:] = conversation_history[-max_messages:]
 
         except Exception as e:
-            print(f"[Chat WS] Agent error: {e}")
             await send_json_safe({
                 "type": "error",
                 "message": f"Agent error: {str(e)}",
@@ -296,7 +289,7 @@ async def websocket_chat(websocket: WebSocket):
                     elif msg_type == "config":
                         config_data = data.get("data", {})
                         session_config.update(config_data)
-                        print(f"[Chat WS] Config updated: {session_config}")
+
                         await send_json_safe({
                             "type": "status",
                             "message": f"Config updated: {session_config}",
@@ -304,19 +297,19 @@ async def websocket_chat(websocket: WebSocket):
 
                     elif msg_type == "cancel":
                         is_cancelled = True
-                        print("[Chat WS] Generation cancel requested")
+
 
                     elif msg_type == "clear_memory":
                         conversation_history.clear()
                         memory_service.clear("default")
-                        print("[Chat WS] Memory cleared")
+
                         await send_json_safe({
                             "type": "status",
                             "message": "Memory cleared",
                         })
 
                     else:
-                        print(f"[Chat WS] Unknown message type: {msg_type}")
+                        pass
 
                 except json.JSONDecodeError:
                     await send_json_safe({
@@ -392,14 +385,11 @@ async def websocket_chat(websocket: WebSocket):
                     await run_agent_pipeline(transcript_text, source="voice")
 
     except WebSocketDisconnect:
-        print("[Chat WS] Client disconnected")
+        pass
     except RuntimeError as e:
-        if "disconnect" in str(e).lower():
-            print("[Chat WS] Client disconnected")
-        else:
-            print(f"[Chat WS] Unexpected error: {e}")
+        if "disconnect" not in str(e).lower():
+            raise
     except Exception as e:
-        print(f"[Chat WS] Unexpected error: {e}")
         await send_json_safe({
             "type": "error",
             "message": f"Server error: {str(e)}",

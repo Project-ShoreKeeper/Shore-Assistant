@@ -79,7 +79,26 @@ class ToolRetriever:
             if name not in retrieved:
                 retrieved.append(name)
 
+        # Add companion tools (e.g. web_search always brings web_scrape)
+        COMPANION_TOOLS = {
+            "web_search": "web_scrape",
+        }
+        for tool, companion in COMPANION_TOOLS.items():
+            if tool in retrieved and companion not in retrieved:
+                retrieved.append(companion)
+
         return retrieved
+
+    def reindex(self, tools: list) -> None:
+        """Re-embed all tools after dynamic tools are added/removed."""
+        if self._model is None:
+            return
+        self._tool_names = [t.name for t in tools]
+        self._tool_texts = [f"{t.name}: {t.description}" for t in tools]
+        self._tool_embeddings = self._model.encode(
+            self._tool_texts, normalize_embeddings=True
+        )
+        print(f"[ToolRetriever] Re-indexed {len(tools)} tools")
 
     def get_tool_descriptions(self, tool_names: list[str], all_tools: list) -> str:
         """Format tool descriptions for the selected tools, ready for the system prompt."""

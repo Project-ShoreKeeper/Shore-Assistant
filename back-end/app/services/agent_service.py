@@ -8,6 +8,7 @@ import json
 import time
 import asyncio
 import inspect
+from datetime import datetime
 from typing import AsyncGenerator, Optional, TypedDict, Annotated
 
 from langgraph.graph import StateGraph, END
@@ -85,6 +86,8 @@ class AgentService:
         self,
         user_text: str,
         conversation_history: list[dict],
+        thinking: bool = False,
+        no_tools: bool = False,
     ) -> AsyncGenerator[dict, None]:
         """
         Process user input through the agent pipeline.
@@ -97,40 +100,22 @@ class AgentService:
           {"type": "llm_sentence", "text": "..."}
           {"type": "llm_complete", "text": "..."}
         """
-        print(f"\n{'#'*60}")
-        print(f"[Agent] ===== NEW REQUEST =====")
-        print(f"[Agent] User text: {user_text[:200]}")
-        print(f"[Agent] Conversation history length: {len(conversation_history)}")
-        for i, m in enumerate(conversation_history):
-            role = m["role"]
-            preview = m["content"][:80].replace("\n", "\\n")
-            print(f"[Agent]   history[{i}]: {role}: {preview}")
-
-        # Retrieve relevant tools for this query
-        relevant_tool_names = tool_retriever.retrieve(user_text)
-        tool_descriptions = tool_retriever.get_tool_descriptions(
-            relevant_tool_names, ALL_TOOLS
-        )
-        system_prompt = build_system_prompt(tool_descriptions)
-
-        print(f"[Agent] Retrieved tools: {relevant_tool_names}")
-        print(f"[Agent] System prompt length: {len(system_prompt)} chars")
-        print(f"[Agent] Tool descriptions:\n{tool_descriptions}")
+        # Retrieve relevant tools for this query (skip for notifications)
+        if no_tools:
+            tool_descriptions = "(no tools available)"
+        else:
+            relevant_tool_names = tool_retriever.retrieve(user_text)
+            tool_descriptions = tool_retriever.get_tool_descriptions(
+                relevant_tool_names, ALL_TOOLS
+            )
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S (%A)")
+        system_prompt = f"[Current time: {current_time}]\n\n" + build_system_prompt(tool_descriptions)
 
         # Build messages for Ollama
         # NOTE: conversation_history already includes the current user message
         # (appended by chat_ws.py before calling run()), so don't add it again.
         # Filter out empty assistant messages (from previous 0-token failures)
         messages = [m for m in conversation_history if m["content"].strip()]
-        dropped = len(conversation_history) - len(messages)
-        if dropped:
-            print(f"[Agent] Dropped {dropped} empty messages from history")
-        print(f"[Agent] Messages to send (count): {len(messages)}")
-        # Verify last message is the current user input
-        if messages:
-            last = messages[-1]
-            print(f"[Agent] Last message: role={last['role']}, content={last['content'][:100]}")
-        print(f"{'#'*60}\n")
 
         yield {
             "type": "agent_action",
@@ -139,9 +124,8 @@ class AgentService:
             "timestamp": time.time(),
         }
 
-        for round_num in range(self.MAX_TOOL_ROUNDS):
-            print(f"\n[Agent] --- Tool round {round_num + 1}/{self.MAX_TOOL_ROUNDS} ---")
-
+        max_rounds = 1 if no_tools else self.MAX_TOOL_ROUNDS
+        for round_num in range(max_rounds):
             # Stream LLM response
             full_response = ""
             thinking_text = ""
@@ -149,7 +133,7 @@ class AgentService:
             event_count = 0
 
             async for event in llm_service.stream_chat_sentences(
-                messages, system_prompt=system_prompt
+                messages, system_prompt=system_prompt, thinking=thinking
             ):
                 event_count += 1
                 if event["type"] == "thinking_token":
@@ -179,34 +163,21 @@ class AgentService:
                     full_response = event["full_text"]
                     thinking_text = event.get("thinking_text", "")
 
-            print(f"[Agent] LLM streaming done. Events received: {event_count}")
-            print(f"[Agent] Full response length: {len(full_response)} chars")
-            print(f"[Agent] Thinking text length: {len(thinking_text)} chars")
-            print(f"[Agent] Full response preview: {full_response[:300]}")
-
             # Check if the response contains a tool call
             tool_call = parse_tool_call(full_response)
 
             # Fallback: if content is empty but thinking contains a tool call,
             # the model put the tool call in its reasoning (common with thinking models)
             if tool_call is None and not full_response.strip() and thinking_text:
-                print(f"[Agent] Content empty — checking thinking text for tool calls...")
                 tool_call = parse_tool_call(thinking_text)
-                if tool_call:
-                    print(f"[Agent] Found tool call in thinking text: {tool_call}")
-
-            print(f"[Agent] Tool call parsed: {tool_call}")
 
             if tool_call is None:
-                # No tool call -- this is the final response
-                print(f"[Agent] No tool call found — returning final response")
                 yield {"type": "llm_complete", "text": full_response}
                 return
 
             # Execute the tool
             tool_name = tool_call["tool"]
             tool_args = tool_call.get("args", {})
-            print(f"[Agent] Executing tool: {tool_name} with args: {tool_args}")
 
             yield {
                 "type": "agent_action",
@@ -218,7 +189,6 @@ class AgentService:
             }
 
             result = await execute_tool(tool_name, tool_args)
-            print(f"[Agent] Tool result: {result[:300]}")
 
             yield {
                 "type": "agent_action",
@@ -236,7 +206,6 @@ class AgentService:
                 "role": "user",
                 "content": f"Tool result for {tool_name}:\n{result}",
             })
-            print(f"[Agent] Messages count after tool round: {len(messages)}")
 
         # If we exhausted tool rounds, yield whatever we have
         yield {

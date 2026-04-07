@@ -23,3 +23,19 @@ ALL_TOOLS = [
 
 # Map tool names to tool instances for dispatch
 TOOL_MAP = {tool.name: tool for tool in ALL_TOOLS}
+
+
+def register_dynamic_tools(tools: list):
+    """Add dynamically discovered tools (e.g. n8n workflows) to the registry."""
+    for tool in tools:
+        if tool.name not in TOOL_MAP:
+            ALL_TOOLS.append(tool)
+            TOOL_MAP[tool.name] = tool
+
+
+def unregister_dynamic_tools(prefix: str = "n8n_"):
+    """Remove all dynamic tools with the given prefix."""
+    to_remove = [t for t in ALL_TOOLS if t.name.startswith(prefix)]
+    for t in to_remove:
+        ALL_TOOLS.remove(t)
+        TOOL_MAP.pop(t.name, None)

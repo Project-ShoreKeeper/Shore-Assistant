@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from "react";
-import { Flex, Box, Text, Select, Separator, Badge, Button } from "@radix-ui/themes";
+import { Flex, Box, Text, Select, Separator, Badge, Button, Switch } from "@radix-ui/themes";
 import type { WebSocketStatus } from "../../services/chat-websocket.service";
 import { STT_LANGUAGES } from "../../constants/stt.constant";
 
@@ -16,6 +16,8 @@ export interface SettingsPanelProps {
   language: string;
   onLanguageChange?: (lang: string) => void;
   isAssistantThinking?: boolean;
+  thinkingEnabled?: boolean;
+  onThinkingEnabledChange?: (enabled: boolean) => void;
   onClearMessages?: () => void;
   messageCount?: number;
 }
@@ -47,6 +49,8 @@ export default function SettingsPanel({
   language,
   onLanguageChange,
   isAssistantThinking,
+  thinkingEnabled = false,
+  onThinkingEnabledChange,
   onClearMessages,
   messageCount = 0,
 }: SettingsPanelProps) {
@@ -209,6 +213,18 @@ export default function SettingsPanel({
           <Text size="2" style={{ color: "var(--indigo-9)" }}>
             {llmModel}
           </Text>
+        </Flex>
+
+        {/* Thinking Mode toggle */}
+        <Flex justify="between" align="center" mt="2">
+          <Text size="2" color="gray">
+            Thinking
+          </Text>
+          <Switch
+            size="1"
+            checked={thinkingEnabled}
+            onCheckedChange={onThinkingEnabledChange}
+          />
         </Flex>
 
         {/* Clear memory button */}

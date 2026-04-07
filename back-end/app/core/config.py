@@ -43,6 +43,13 @@ class Settings(BaseSettings):
     TOOL_RETRIEVER_TOP_K: int = 3
     TOOL_RETRIEVER_THRESHOLD: float = 0.3
 
+    # n8n Integration
+    N8N_ENABLED: bool = False
+    N8N_BASE_URL: str = "http://localhost:5678"
+    N8N_API_KEY: str = ""
+    N8N_WEBHOOK_SECRET: str = ""
+    N8N_REFRESH_INTERVAL_MINUTES: int = 0
+
     class Config:
         env_file = ".env"
 

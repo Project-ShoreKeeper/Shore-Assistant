@@ -130,6 +130,8 @@ ollama serve
 winget install espeak-ng.espeak-ng
 ```
 
+docker compose -f docker-compose.n8n.yml up -d
+
 ## Key Technical Constraints
 
 - **16GB VRAM budget**: Whisper (~1.5GB) + primary LLM. Vision model hot-swaps by unloading LLM first.

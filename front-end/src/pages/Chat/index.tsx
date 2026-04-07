@@ -9,6 +9,11 @@ import {
   Avatar,
   Badge,
 } from "@radix-ui/themes";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
+import "katex/dist/katex.min.css";
 import { useAssistant, type ChatMessage } from "../../hooks/useAssistant";
 import AgentActionLog from "../../components/AgentActionLog";
 import SettingsPanel from "./SettingsPanel";
@@ -25,6 +30,8 @@ function PageChat() {
     isAssistantThinking,
     language,
     setLanguage,
+    thinkingEnabled,
+    setThinkingEnabled,
     startRecording,
     stopRecording,
     sendTextMessage,
@@ -272,23 +279,115 @@ function PageChat() {
               </Text>
             ) : (
               msg.text && (
-                <Text size="2" style={{ whiteSpace: "pre-wrap" }}>
-                  {msg.text}
-                  {/* Streaming cursor for assistant */}
-                  {!isUser && isProcessing && !msg.isThinkingPhase && (
-                    <span
-                      style={{
-                        display: "inline-block",
-                        width: "2px",
-                        height: "14px",
-                        backgroundColor: "var(--indigo-9)",
-                        marginLeft: "2px",
-                        animation: "pulse 0.8s infinite",
-                        verticalAlign: "text-bottom",
+                isUser ? (
+                  <Text size="2" style={{ whiteSpace: "pre-wrap" }}>
+                    {msg.text}
+                  </Text>
+                ) : (
+                  <Box style={{ fontSize: "var(--font-size-2)", lineHeight: "1.6" }}>
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm, remarkMath]}
+                      rehypePlugins={[rehypeKatex]}
+                      components={{
+                        p: ({ children }) => (
+                          <p style={{ margin: "0 0 0.5em 0" }}>{children}</p>
+                        ),
+                        ul: ({ children }) => (
+                          <ul style={{ margin: "0.25em 0", paddingLeft: "1.4em" }}>{children}</ul>
+                        ),
+                        ol: ({ children }) => (
+                          <ol style={{ margin: "0.25em 0", paddingLeft: "1.4em" }}>{children}</ol>
+                        ),
+                        li: ({ children }) => (
+                          <li style={{ marginBottom: "0.1em" }}>{children}</li>
+                        ),
+                        code: ({ children, className }) => {
+                          const isBlock = !!className;
+                          return isBlock ? (
+                            <code
+                              style={{
+                                display: "block",
+                                backgroundColor: "var(--gray-2)",
+                                border: "1px solid var(--gray-5)",
+                                borderRadius: "6px",
+                                padding: "8px 10px",
+                                fontSize: "0.85em",
+                                fontFamily: "monospace",
+                                whiteSpace: "pre-wrap",
+                                overflowX: "auto",
+                                marginBlock: "0.4em",
+                              }}
+                            >
+                              {children}
+                            </code>
+                          ) : (
+                            <code
+                              style={{
+                                backgroundColor: "var(--gray-4)",
+                                borderRadius: "4px",
+                                padding: "1px 5px",
+                                fontSize: "0.875em",
+                                fontFamily: "monospace",
+                              }}
+                            >
+                              {children}
+                            </code>
+                          );
+                        },
+                        pre: ({ children }) => (
+                          <pre style={{ margin: "0.4em 0", background: "none", padding: 0 }}>{children}</pre>
+                        ),
+                        blockquote: ({ children }) => (
+                          <blockquote
+                            style={{
+                              borderLeft: "3px solid var(--gray-6)",
+                              margin: "0.4em 0",
+                              paddingLeft: "0.8em",
+                              color: "var(--gray-10)",
+                              fontStyle: "italic",
+                            }}
+                          >
+                            {children}
+                          </blockquote>
+                        ),
+                        h1: ({ children }) => <h1 style={{ fontSize: "1.2em", fontWeight: 700, margin: "0.4em 0 0.2em" }}>{children}</h1>,
+                        h2: ({ children }) => <h2 style={{ fontSize: "1.1em", fontWeight: 600, margin: "0.4em 0 0.2em" }}>{children}</h2>,
+                        h3: ({ children }) => <h3 style={{ fontSize: "1em", fontWeight: 600, margin: "0.3em 0 0.15em" }}>{children}</h3>,
+                        a: ({ children, href }) => (
+                          <a href={href} target="_blank" rel="noopener noreferrer" style={{ color: "var(--indigo-10)", textDecoration: "underline" }}>
+                            {children}
+                          </a>
+                        ),
+                        hr: () => <hr style={{ border: "none", borderTop: "1px solid var(--gray-5)", margin: "0.5em 0" }} />,
+                        table: ({ children }) => (
+                          <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.9em", margin: "0.4em 0" }}>{children}</table>
+                        ),
+                        th: ({ children }) => (
+                          <th style={{ border: "1px solid var(--gray-5)", padding: "4px 8px", backgroundColor: "var(--gray-3)", fontWeight: 600 }}>{children}</th>
+                        ),
+                        td: ({ children }) => (
+                          <td style={{ border: "1px solid var(--gray-5)", padding: "4px 8px" }}>{children}</td>
+                        ),
                       }}
-                    />
-                  )}
-                </Text>
+                    >
+                      {msg.text}
+                    </ReactMarkdown>
+                    {/* Streaming cursor */}
+                    {isProcessing && !msg.isThinkingPhase && (
+                      <span
+                        style={{
+                          display: "inline-block",
+                          width: "2px",
+                          height: "14px",
+                          backgroundColor: "var(--indigo-9)",
+                          marginLeft: "2px",
+                          animation: "pulse 0.8s infinite",
+                          verticalAlign: "text-bottom",
+                        }}
+                      />
+                    )}
+                  </Box>
+                )
               )
             )}
           </Box>
@@ -514,6 +613,8 @@ function PageChat() {
         language={language}
         onLanguageChange={setLanguage}
         isAssistantThinking={isAssistantThinking}
+        thinkingEnabled={thinkingEnabled}
+        onThinkingEnabledChange={setThinkingEnabled}
         onClearMessages={clearMessages}
         messageCount={messages.length}
       />

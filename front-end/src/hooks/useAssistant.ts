@@ -53,6 +53,8 @@ export interface UseAssistantReturn {
   // Settings
   language: string;
   setLanguage: (lang: string) => void;
+  thinkingEnabled: boolean;
+  setThinkingEnabled: (enabled: boolean) => void;
 
   // Controls
   startRecording: (deviceId?: string) => void;
@@ -76,6 +78,8 @@ export function useAssistant(): UseAssistantReturn {
   const [wsStatus, setWsStatus] = useState<WebSocketStatus>("CLOSED");
   const [language, setLanguage] = useState(STT_DEFAULT_LANGUAGE);
   const languageRef = useRef(STT_DEFAULT_LANGUAGE);
+  const [thinkingEnabled, setThinkingEnabled] = useState(false);
+  const thinkingEnabledRef = useRef(false);
 
   // Conversation state
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -99,6 +103,10 @@ export function useAssistant(): UseAssistantReturn {
   useEffect(() => {
     languageRef.current = language;
   }, [language]);
+
+  useEffect(() => {
+    thinkingEnabledRef.current = thinkingEnabled;
+  }, [thinkingEnabled]);
 
   // ── Initialize VAD ──
   useEffect(() => {
@@ -166,7 +174,7 @@ export function useAssistant(): UseAssistantReturn {
     ws.on("statusChange", (status) => setWsStatus(status));
 
     ws.on("open", () => {
-      ws.sendConfig({ language: languageRef.current });
+      ws.sendConfig({ language: languageRef.current, thinking: thinkingEnabledRef.current });
     });
 
     ws.on("message", (msg: ChatServerMessage) => {
@@ -427,9 +435,9 @@ export function useAssistant(): UseAssistantReturn {
   // Send config updates
   useEffect(() => {
     if (wsRef.current && wsStatus === "OPEN") {
-      wsRef.current.sendConfig({ language });
+      wsRef.current.sendConfig({ language, thinking: thinkingEnabled });
     }
-  }, [language, wsStatus]);
+  }, [language, thinkingEnabled, wsStatus]);
 
   // ── Controls ──
 
@@ -595,6 +603,8 @@ export function useAssistant(): UseAssistantReturn {
 
     language,
     setLanguage,
+    thinkingEnabled,
+    setThinkingEnabled,
 
     startRecording,
     stopRecording,

@@ -24,6 +24,17 @@ async def lifespan(app: FastAPI):
     tts_service.warmup()
     tool_retriever.initialize(ALL_TOOLS)
 
+    # n8n workflow discovery
+    if settings.N8N_ENABLED:
+        from app.services.n8n_service import n8n_service
+        from app.tools import register_dynamic_tools
+
+        n8n_tools = await n8n_service.initialize()
+        if n8n_tools:
+            register_dynamic_tools(n8n_tools)
+            tool_retriever.reindex(ALL_TOOLS)
+        await n8n_service.start_periodic_refresh()
+
     # Start proactive agent scheduler
     scheduler_service.set_fire_callback(notification_service.notify)
     scheduler_service.start()
@@ -31,6 +42,10 @@ async def lifespan(app: FastAPI):
     yield
 
     scheduler_service.shutdown()
+
+    if settings.N8N_ENABLED:
+        from app.services.n8n_service import n8n_service
+        await n8n_service.shutdown()
 
 
 app = FastAPI(
@@ -51,3 +66,7 @@ app.add_middleware(
 app.include_router(health_router)
 app.include_router(stt_ws_router)
 app.include_router(chat_ws_router)
+
+if settings.N8N_ENABLED:
+    from app.api.endpoints.n8n_webhook import router as n8n_router
+    app.include_router(n8n_router)

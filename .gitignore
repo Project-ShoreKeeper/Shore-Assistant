@@ -4,6 +4,9 @@ __pycache__/
 *.egg-info/
 .ipynb_checkpoints/
 
+# Environment variables
+.env
+
 # Virtual environments
 shore-agent/
 .venv/
@@ -24,6 +27,7 @@ faulthandler.txt
 
 # Plans
 PLAN_*.md
+plans/
 
 # Runtime data (memory, scheduler)
 back-end/data/

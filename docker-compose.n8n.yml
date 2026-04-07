@@ -1,0 +1,31 @@
+services:
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: shore-n8n
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_HOST=0.0.0.0
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - WEBHOOK_URL=http://localhost:5678/
+    volumes:
+      - n8n_data:/home/node/.n8n
+
+volumes:
+  n8n_data:
+
+# Usage:
+#   docker compose -f docker-compose.n8n.yml up -d
+#
+# After first run:
+#   1. Open http://localhost:5678 and create an account
+#   2. Go to Settings > API > Create API Key
+#   3. Add to back-end/.env:
+#      N8N_ENABLED=True
+#      N8N_API_KEY=your_api_key_here
+#
+# Networking:
+#   Shore reaches n8n at: http://localhost:5678 (port-mapped)
+#   n8n reaches Shore at: http://host.docker.internal:8000 (Docker Desktop)

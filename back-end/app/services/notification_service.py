@@ -81,7 +81,14 @@ class NotificationService:
         task_type = task.get("type", "reminder")
         message = task["message"]
 
-        if task_type == "reminder":
+        if task_type == "n8n_notification":
+            return (
+                f"[SYSTEM: An automated workflow has sent a notification. "
+                f"The message is: \"{message}\". "
+                f"Relay this information to the user naturally, in your own voice and personality. "
+                f"Do not use any tools. Keep it brief.]"
+            )
+        elif task_type == "reminder":
             return (
                 f"[SYSTEM: A one-time reminder you set earlier has triggered. "
                 f"The reminder message is: \"{message}\". "

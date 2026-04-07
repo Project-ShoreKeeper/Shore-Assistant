@@ -18,7 +18,6 @@ def _load_persona_template() -> str:
     """Load the system prompt template for the configured persona, plus tool instructions and user context."""
     persona_file = PROMPTS_DIR / f"{settings.PERSONA}.txt"
     if not persona_file.exists():
-        print(f"[LLM] Persona '{settings.PERSONA}' not found, falling back to 'base'")
         persona_file = PROMPTS_DIR / "base.txt"
     template = persona_file.read_text(encoding="utf-8")
 
@@ -32,7 +31,6 @@ def _load_persona_template() -> str:
     if user_file.exists():
         template += "\n\n" + user_file.read_text(encoding="utf-8")
 
-    print(f"[LLM] Loaded persona: {settings.PERSONA}")
     return template
 
 
@@ -73,6 +71,7 @@ class LLMService:
         self,
         messages: list[dict],
         system_prompt: Optional[str] = None,
+        thinking: bool = False,
     ) -> AsyncGenerator[dict, None]:
         """
         Stream tokens from Ollama chat API.
@@ -90,25 +89,15 @@ class LLMService:
             "messages": all_messages,
             "stream": True,
             "options": {"num_ctx": settings.OLLAMA_NUM_CTX},
-            "think": False,
+            "think": thinking,
         }
 
-        # ── DEBUG: dump what we send to Ollama ──
-        print(f"\n{'='*60}")
-        print(f"[LLM] REQUEST to Ollama ({self.model})")
-        print(f"[LLM]   Message count: {len(all_messages)}")
-        for i, m in enumerate(all_messages):
-            role = m["role"]
-            content = m["content"]
-            preview = content[:120].replace("\n", "\\n")
-            print(f"[LLM]   [{i}] {role}: {preview}...")
-        print(f"{'='*60}\n")
+
 
         token_count = 0
         thinking_token_count = 0
         line_count = 0
         async with client.stream("POST", "/api/chat", json=payload) as response:
-            print(f"[LLM] HTTP status: {response.status_code}")
             response.raise_for_status()
             async for line in response.aiter_lines():
                 if not line.strip():
@@ -117,16 +106,7 @@ class LLMService:
                 try:
                     data = json.loads(line)
 
-                    # Log first few lines and the done line raw
-                    if line_count <= 3 or data.get("done"):
-                        print(f"[LLM] RAW line {line_count}: {line[:300]}")
-
                     if data.get("done"):
-                        done_reason = data.get("done_reason", "unknown")
-                        eval_count = data.get("eval_count", "?")
-                        prompt_eval_count = data.get("prompt_eval_count", "?")
-                        print(f"[LLM] DONE — reason: {done_reason}, content tokens: {token_count}, thinking tokens: {thinking_token_count}")
-                        print(f"[LLM]   prompt_eval_count: {prompt_eval_count}, eval_count: {eval_count}")
                         break
 
                     msg = data.get("message", {})
@@ -140,16 +120,15 @@ class LLMService:
                         token_count += 1
                         yield {"type": "content", "token": content_token}
                 except json.JSONDecodeError:
-                    print(f"[LLM] WARNING: JSON decode error on line: {line[:200]}")
                     continue
 
-        if token_count == 0 and thinking_token_count == 0:
-            print(f"[LLM] WARNING: LLM produced ZERO tokens! (lines received: {line_count})")
+
 
     async def stream_chat_sentences(
         self,
         messages: list[dict],
         system_prompt: Optional[str] = None,
+        thinking: bool = False,
     ) -> AsyncGenerator[dict, None]:
         """
         Stream from Ollama, yielding individual tokens (thinking + content)
@@ -167,7 +146,7 @@ class LLMService:
         sentence_buffer = ""
         was_thinking = False
 
-        async for chunk in self.stream_chat(messages, system_prompt):
+        async for chunk in self.stream_chat(messages, system_prompt, thinking=thinking):
             token = chunk["token"]
 
             if chunk["type"] == "thinking":

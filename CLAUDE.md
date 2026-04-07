@@ -14,9 +14,13 @@ FastAPI Backend (Python)
   ├── /ws/audio   — STT-only endpoint (legacy, used by VAD Test page)
   ├── /ws/chat    — Full pipeline: Audio/Text → STT → Agent → LLM → TTS
   ├── Whisper STT (HuggingFace Transformers, GPU/CPU auto-detect)
-  ├── LLM Agent   (Ollama Qwen2.5-14B via httpx streaming)
-  ├── Tools        (system_time, read_file, list_directory, search_web, web_scrape, capture_screen, analyze_screen)
-  ├── TTS          (Kokoro TTS → Int16 PCM streaming, local/offline)
+  ├── LLM Agent   (Ollama gemma4-e4b via httpx streaming, LangGraph StateGraph)
+  ├── Tool Retriever (sentence-transformers embedding-based selection, all-MiniLM-L6-v2)
+  ├── Tools        (system_time, read_file, list_directory, clear_memory, search_web, web_scrape, capture_screen, analyze_screen, set_reminder, set_scheduled_task, cancel_task, list_tasks)
+  ├── Scheduler    (APScheduler — one-shot reminders + recurring tasks, persisted to JSON)
+  ├── Notifications (proactive push via ConnectionManager → agent pipeline → TTS)
+  ├── Memory       (per-session JSON history, survives restarts, max 20 turns)
+  ├── TTS          (Kokoro TTS → Int16 PCM streaming, local/offline, multi-language)
   └── Vision       (mss screen capture → Ollama qwen2.5vl:7b hot-swap)
 ```
 
@@ -34,22 +38,41 @@ Shore-Assistant/
 │       │       ├── stt_ws.py           # /ws/audio (STT only)
 │       │       └── chat_ws.py          # /ws/chat (full pipeline + TTS)
 │       ├── schemas/messages.py         # Pydantic WS message models
+│       ├── prompts/
+│       │   ├── base.txt                # Base persona system prompt template
+│       │   ├── kuudere.txt             # Kuudere persona system prompt template
+│       │   ├── tools.txt               # Tool usage instructions appended to persona
+│       │   └── user.txt                # Optional user context appended to persona
 │       ├── services/
 │       │   ├── stt_service.py          # Whisper via Transformers
-│       │   ├── llm_service.py          # Ollama streaming client (httpx)
-│       │   ├── agent_service.py        # Agent loop with tool call parsing
-│       │   ├── tts_service.py          # Kokoro TTS, CPU inference, 24kHz PCM
+│       │   ├── llm_service.py          # Ollama streaming client (httpx), persona loader
+│       │   ├── agent_service.py        # LangGraph StateGraph agent loop
+│       │   ├── tts_service.py          # Kokoro TTS, CPU inference, 24kHz PCM, en/ja/zh voices
 │       │   ├── vision_service.py       # Screen capture (mss) + vision inference
-│       │   └── vram_manager.py         # VRAM hot-swap orchestration
+│       │   ├── vram_manager.py         # VRAM hot-swap orchestration
+│       │   ├── memory_service.py       # Per-session JSON conversation history
+│       │   ├── scheduler_service.py    # APScheduler: one-shot & recurring tasks
+│       │   ├── notification_service.py # Scheduler → agent pipeline → proactive TTS
+│       │   ├── connection_manager.py   # Singleton WebSocket send handle for background push
+│       │   └── tool_retriever.py       # Embedding-based tool selection (sentence-transformers)
 │       ├── tools/
 │       │   ├── __init__.py             # Tool registry (ALL_TOOLS, TOOL_MAP)
-│       │   ├── system_tools.py         # get_system_time, read_file, list_directory
+│       │   ├── system_tools.py         # get_system_time, read_file, list_directory, clear_memory
 │       │   ├── web_tools.py            # search_web (DuckDuckGo), web_scrape (readability-lxml)
-│       │   └── screen_tools.py         # capture_screen, analyze_screen (vision hot-swap)
+│       │   ├── screen_tools.py         # capture_screen, analyze_screen (vision hot-swap)
+│       │   └── scheduler_tools.py      # set_reminder, set_scheduled_task, cancel_task, list_tasks
 │       └── utils/audio_utils.py        # PCM/float32 conversion
 │
 └── front-end/
     └── src/
+        ├── routers/
+        │   └── PublicRoutes.tsx             # React Router route definitions
+        ├── layouts/
+        │   └── AppLayout/
+        │       ├── index.tsx               # Shell layout wrapper
+        │       ├── Header.tsx              # Top navigation bar
+        │       ├── Footer.tsx              # Bottom bar
+        │       └── Sidebar.tsx             # Left sidebar
         ├── services/
         │   ├── vad.service.ts              # Silero VAD (ONNX)
         │   ├── websocket.service.ts        # STT WebSocket (/ws/audio)
@@ -99,7 +122,7 @@ npm run lint         # ESLint
 ### External Dependencies
 ```bash
 # Ollama (required for LLM + Vision)
-ollama pull qwen2.5:14b
+ollama pull gemma4-e4b       # or your configured OLLAMA_MODEL
 ollama pull qwen2.5vl:7b
 ollama serve
 
@@ -109,10 +132,14 @@ winget install espeak-ng.espeak-ng
 
 ## Key Technical Constraints
 
-- **16GB VRAM budget**: Whisper (~1.5GB) + Qwen2.5-14B (~9-10GB). Vision model hot-swaps by unloading LLM first.
+- **16GB VRAM budget**: Whisper (~1.5GB) + primary LLM. Vision model hot-swaps by unloading LLM first.
 - **Audio pipeline**: 16kHz sample rate, Float32 format, 512-sample VAD chunks (Silero requirement).
 - **Two WebSocket endpoints**: `/ws/audio` (binary-only STT) and `/ws/chat` (mixed JSON + binary for full pipeline). Don't merge them.
-- **Tool call format**: LLM outputs ` ```tool\n{"tool": "name", "args": {...}}\n``` ` blocks. Parsed by regex in `agent_service.py`.
+- **Tool call format**: LLM outputs ` ```tool\n{"tool": "name", "args": {...}}\n``` ` blocks. Parsed by regex in `agent_service.py`. Agent loop is a LangGraph `StateGraph`.
+- **Tool retrieval**: Only relevant tools are injected per request via embedding cosine similarity (`tool_retriever.py`). Always-available tools: `get_system_time`, `clear_memory`, `set_reminder`, `set_scheduled_task`, `list_tasks`, `cancel_task`.
+- **Persona system**: System prompt loaded from `prompts/{PERSONA}.txt`, with `tools.txt` and optional `user.txt` appended. Configured via `PERSONA` env var (`base` or `kuudere`).
+- **Scheduler**: APScheduler manages one-shot reminders and recurring tasks. Tasks persist to `data/scheduled_tasks.json`. Missed tasks fire immediately on restart.
+- **Proactive notifications**: When a task fires, `NotificationService` feeds a prompt to the agent pipeline so Shore responds in-character with TTS. Queued to disk if no client is connected, drained on reconnect.
 - **TTS pipeline**: LLM tokens accumulate → sentence boundary detected → sentence queued → Kokoro synthesizes on CPU → Int16 PCM binary frames sent over WebSocket. Single `tts_start`/`tts_end` per response.
 - **TTS cancellation**: Frontend stops TTS player immediately when user sends a new message (voice or keyboard).
 - **analyze_screen captures server display**, not the client's browser screen. For client-side screen capture, `getDisplayMedia` would be needed.
@@ -124,9 +151,18 @@ All backend config via environment variables or `.env` file in `back-end/`:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | OLLAMA_BASE_URL | http://localhost:11434 | Ollama API URL |
-| OLLAMA_MODEL | qwen2.5:14b | Primary LLM model |
+| OLLAMA_MODEL | gemma4-e4b | Primary LLM model |
 | OLLAMA_TIMEOUT | 120 | Request timeout (seconds) |
+| OLLAMA_NUM_CTX | 8192 | LLM context window size |
 | VISION_MODEL | qwen2.5vl:7b | Vision model for screen analysis |
+| PERSONA | kuudere | Persona template to load (`base` or `kuudere`) |
+| MEMORY_DIR | data/memory | Directory for per-session conversation JSON files |
+| MEMORY_MAX_TURNS | 20 | Max conversation turns retained per session |
+| SCHEDULER_TASKS_FILE | data/scheduled_tasks.json | Persisted scheduler task list |
+| SCHEDULER_PENDING_FILE | data/pending_notifications.json | Queued notifications for offline client |
+| TOOL_RETRIEVER_MODEL | all-MiniLM-L6-v2 | Sentence-transformers model for tool embedding |
+| TOOL_RETRIEVER_TOP_K | 3 | Max tools retrieved per query |
+| TOOL_RETRIEVER_THRESHOLD | 0.3 | Minimum cosine similarity to include a tool |
 
 ## Conventions
 
@@ -137,6 +173,9 @@ All backend config via environment variables or `.env` file in `back-end/`:
 - All tools use `@tool` decorator from `langchain_core.tools`
 - Async tools use `ainvoke()`, sync tools use `invoke()` (see `agent_service.py:execute_tool`)
 - TTS text is sanitized before synthesis: strip tool blocks, code blocks, URLs, markdown
+- Agent is a LangGraph `StateGraph` with typed `AgentState` (messages, intent, tool_name, tool_args, tool_result, llm_response, actions_log)
+- Tool retriever always injects core tools; others selected by cosine similarity to user query
+- Persona and tool instructions are file-based (`prompts/`), not hardcoded in Python
 
 ## Backlog
 
@@ -148,7 +187,7 @@ All backend config via environment variables or `.env` file in `back-end/`:
 - [ ] Multi-language TTS — auto-detect language from LLM response and switch Kokoro voice
 
 ### Proactive Agent (Event Loop)
-- [ ] Scheduled tasks — "remind me in 10 minutes", "check X every hour" (background timer + task queue)
+- [x] Scheduled tasks — set_reminder (one-shot) + set_scheduled_task (recurring) tools with APScheduler
+- [x] Proactive notifications — NotificationService feeds scheduler events through agent pipeline → TTS
 - [ ] Background monitoring — watch files, processes, or logs and notify on changes
-- [ ] Proactive notifications — push alerts to frontend over WebSocket without user prompt (e.g. "build finished")
 - [ ] Deferred goals — multi-step plans the agent works through over time, persisted to disk

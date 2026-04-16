@@ -4,6 +4,14 @@ from app.tools.system_tools import get_system_time, read_file, list_directory, c
 from app.tools.web_tools import search_web, web_scrape
 from app.tools.screen_tools import capture_screen, analyze_screen
 from app.tools.scheduler_tools import set_reminder, set_scheduled_task, cancel_task, list_tasks
+from app.tools.n8n_workflow_tools import (
+    n8n_search_nodes,
+    n8n_get_node_schema,
+    n8n_search_workflow_templates,
+    n8n_create_workflow,
+    n8n_build_complex_workflow,
+    n8n_manage_workflows,
+)
 
 # All available tools, registered for use by the agent
 ALL_TOOLS = [
@@ -19,6 +27,12 @@ ALL_TOOLS = [
     set_scheduled_task,
     cancel_task,
     list_tasks,
+    n8n_search_nodes,
+    n8n_get_node_schema,
+    n8n_search_workflow_templates,
+    n8n_create_workflow,
+    n8n_build_complex_workflow,
+    n8n_manage_workflows,
 ]
 
 # Map tool names to tool instances for dispatch

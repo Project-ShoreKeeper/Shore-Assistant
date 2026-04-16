@@ -59,7 +59,7 @@ async def refresh_n8n_workflows():
     from app.tools import register_dynamic_tools, unregister_dynamic_tools, ALL_TOOLS
     from app.services.tool_retriever import tool_retriever
 
-    unregister_dynamic_tools("n8n_")
+    unregister_dynamic_tools("n8n_webhook_")
     new_tools = await n8n_service.refresh()
     if new_tools:
         register_dynamic_tools(new_tools)

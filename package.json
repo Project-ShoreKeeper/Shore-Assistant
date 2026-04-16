@@ -1,0 +1,8 @@
+{
+  "name": "shore-assistant-tools",
+  "private": true,
+  "description": "Root-level tooling for Shore Assistant (n8n-as-code CLI)",
+  "devDependencies": {
+    "@n8n-as-code/cli": "latest"
+  }
+}

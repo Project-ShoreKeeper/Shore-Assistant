@@ -22,11 +22,13 @@ async def lifespan(app: FastAPI):
     else:
         print("[Startup] STT disabled — skipping Whisper model load")
     tts_service.warmup()
+
     tool_retriever.initialize(ALL_TOOLS)
 
-    # n8n workflow discovery
+    # n8n workflow discovery + n8nac init
     if settings.N8N_ENABLED:
         from app.services.n8n_service import n8n_service
+        from app.services.n8n_workflow_service import n8n_workflow_service
         from app.tools import register_dynamic_tools
 
         n8n_tools = await n8n_service.initialize()
@@ -34,6 +36,7 @@ async def lifespan(app: FastAPI):
             register_dynamic_tools(n8n_tools)
             tool_retriever.reindex(ALL_TOOLS)
         await n8n_service.start_periodic_refresh()
+        await n8n_workflow_service.init_n8nac()
 
     # Start proactive agent scheduler
     scheduler_service.set_fire_callback(notification_service.notify)
@@ -45,7 +48,9 @@ async def lifespan(app: FastAPI):
 
     if settings.N8N_ENABLED:
         from app.services.n8n_service import n8n_service
+        from app.services.n8n_workflow_service import n8n_workflow_service
         await n8n_service.shutdown()
+        await n8n_workflow_service.shutdown()
 
 
 app = FastAPI(

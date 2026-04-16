@@ -7,6 +7,8 @@ creates dynamic langchain tools for the agent, and triggers webhooks.
 import re
 import json
 import asyncio
+import time
+from pathlib import Path
 from typing import Optional
 
 import httpx
@@ -90,10 +92,21 @@ class N8nService:
             # Extract tags as list of strings
             tags = [t.get("name", "") for t in wf.get("tags", []) if t.get("name")]
 
+            # Try to get description from meta.notes or sticky note nodes
+            description = (wf.get("meta") or {}).get("notes", "")
+            if not description:
+                for node in nodes:
+                    if node.get("type") == "n8n-nodes-base.stickyNote":
+                        content = node.get("parameters", {}).get("content", "")
+                        if content:
+                            # Take first 300 chars of sticky note as description
+                            description = content[:300]
+                            break
+
             result.append({
                 "id": wf.get("id"),
                 "name": wf.get("name", f"workflow_{wf.get('id')}"),
-                "description": (wf.get("meta") or {}).get("notes", ""),
+                "description": description,
                 "webhook_path": webhook_path,
                 "webhook_url": self._build_webhook_url(webhook_path),
                 "tags": tags,
@@ -107,7 +120,7 @@ class N8nService:
     def _sanitize_tool_name(self, name: str) -> str:
         """Convert workflow name to a valid tool name."""
         sanitized = re.sub(r"[^a-zA-Z0-9]+", "_", name.lower()).strip("_")
-        return f"n8n_{sanitized}"
+        return f"n8n_webhook_{sanitized}"
 
     def _create_tool_for_workflow(self, workflow: dict) -> Optional[StructuredTool]:
         """Create a langchain tool for a single n8n webhook workflow."""
@@ -130,7 +143,7 @@ class N8nService:
             """Trigger the n8n workflow with a JSON payload.
 
             Args:
-                payload: JSON string with the data to send to the workflow.
+                payload: JSON string with the data to send to the workflow. Use simple, short field names like "url", "message", "query".
             """
             return await _service.trigger_workflow(_webhook_url, payload)
 
@@ -146,7 +159,7 @@ class N8nService:
             return None
 
     async def trigger_workflow(self, webhook_url: str, payload: str) -> str:
-        """POST to an n8n webhook URL. Returns response text."""
+        """POST to an n8n webhook URL. Saves binary responses to disk, returns text or file path."""
         try:
             parsed = json.loads(payload) if payload.strip() else {}
         except json.JSONDecodeError:
@@ -156,6 +169,33 @@ class N8nService:
             client = await self._get_client()
             response = await client.post(webhook_url, json=parsed)
             response.raise_for_status()
+
+            content_type = response.headers.get("content-type", "")
+
+            # Binary response — save to file
+            if not content_type.startswith(("text/", "application/json")):
+                downloads_dir = Path("data/n8n_downloads")
+                downloads_dir.mkdir(parents=True, exist_ok=True)
+
+                # Guess extension from content type
+                ext_map = {
+                    "audio/mpeg": ".mp3",
+                    "audio/mp3": ".mp3",
+                    "audio/wav": ".wav",
+                    "audio/ogg": ".ogg",
+                    "video/mp4": ".mp4",
+                    "application/pdf": ".pdf",
+                    "image/png": ".png",
+                    "image/jpeg": ".jpg",
+                    "application/zip": ".zip",
+                }
+                ext = ext_map.get(content_type.split(";")[0].strip(), ".bin")
+                filename = f"n8n_{int(time.time())}{ext}"
+                filepath = downloads_dir / filename
+                filepath.write_bytes(response.content)
+
+                return f"File saved: {filepath.resolve()}"
+
             return response.text[:2000]
         except httpx.ConnectError:
             return "Error: Could not connect to n8n. Is it running?"
@@ -192,7 +232,7 @@ class N8nService:
                 from app.tools import register_dynamic_tools, unregister_dynamic_tools, ALL_TOOLS
                 from app.services.tool_retriever import tool_retriever
 
-                unregister_dynamic_tools("n8n_")
+                unregister_dynamic_tools("n8n_webhook_")
                 new_tools = await self.refresh()
                 if new_tools:
                     register_dynamic_tools(new_tools)

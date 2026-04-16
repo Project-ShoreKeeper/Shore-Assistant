@@ -215,6 +215,25 @@ class LLMService:
         data = response.json()
         return data.get("message", {}).get("content", "")
 
+    async def generate_with_image(self, prompt: str, image_b64: str) -> str:
+        """Send an image + prompt to the primary model for vision analysis."""
+        client = await self._get_client()
+        payload = {
+            "model": self.model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": prompt,
+                    "images": [image_b64],
+                }
+            ],
+            "stream": False,
+            "options": {"num_ctx": settings.OLLAMA_NUM_CTX},
+        }
+        response = await client.post("/api/chat", json=payload)
+        response.raise_for_status()
+        return response.json().get("message", {}).get("content", "")
+
     async def unload_model(self, model: Optional[str] = None):
         """Unload a model from VRAM using keep_alive=0."""
         client = await self._get_client()

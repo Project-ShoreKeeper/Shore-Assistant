@@ -7,6 +7,20 @@ __pycache__/
 # Environment variables
 .env
 
+# n8n workflow exports (may contain API keys)
+workflows/
+
+# n8n-as-code CLI config (contains API key) and generated/local files
+n8nac-config.json
+data/n8n-workflows/
+node_modules/
+AGENTS.md
+.cursorrules
+.clinerules
+.windsurfrules
+n8n-nodes-technical.json
+.vscode/n8n.code-snippets
+
 # Virtual environments
 shore-agent/
 .venv/

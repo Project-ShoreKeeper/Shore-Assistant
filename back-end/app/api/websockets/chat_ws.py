@@ -83,6 +83,7 @@ async def websocket_chat(websocket: WebSocket):
             pass
 
     connection_manager.register(send_json_safe, send_binary_safe)
+    my_send_json = send_json_safe  # Track our own ref for cleanup guard
 
     # Load persisted history
     persisted = memory_service.load(session_id="default")
@@ -110,8 +111,11 @@ async def websocket_chat(websocket: WebSocket):
         text = re.sub(r"\$[^$]+?\$", "", text)
         # Remove raw JSON fragments
         text = re.sub(r"\{.*?\}", "", text, flags=re.DOTALL)
-        # Remove URLs
+        # Remove URLs (with and without protocol)
         text = re.sub(r"https?://\S+", "", text)
+        text = re.sub(r"www\.\S+", "", text)
+        # Remove dangling link lead-ins left after URL removal (e.g. "The link is:")
+        text = re.sub(r"(?:the\s+)?(?:download\s+)?(?:link|url)\s*(?:is|here)\s*:?\s*$", "", text, flags=re.IGNORECASE)
         # Remove markdown bold/italic markers
         text = re.sub(r"\*{1,3}(.*?)\*{1,3}", r"\1", text)
         # Remove markdown links [text](url)
@@ -395,5 +399,7 @@ async def websocket_chat(websocket: WebSocket):
             "message": f"Server error: {str(e)}",
         })
     finally:
-        notification_service.clear_agent_callback()
-        connection_manager.unregister()
+        # Only unregister if we're still the active connection
+        if connection_manager._send_json is my_send_json:
+            notification_service.clear_agent_callback()
+            connection_manager.unregister()

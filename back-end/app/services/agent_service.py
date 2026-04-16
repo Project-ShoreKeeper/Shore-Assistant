@@ -61,12 +61,31 @@ async def execute_tool(tool_name: str, tool_args: dict) -> str:
     tool = TOOL_MAP.get(tool_name)
     if tool is None:
         return f"Error: Unknown tool '{tool_name}'"
+
+    # Normalize args for smaller models that may pass dicts where strings are expected
+    # or use mismatched key names.
+    normalized = {}
+    for k, v in tool_args.items():
+        normalized[k] = json.dumps(v) if isinstance(v, (dict, list)) else v
+
+    # If every key is unrecognized but the tool has exactly one parameter,
+    # remap the single value to that parameter (handles arg name mismatches).
+    try:
+        schema_props = set(tool.args_schema.schema().get("properties", {}).keys())
+        unmatched = set(normalized.keys()) - schema_props
+        if unmatched == set(normalized.keys()) and len(schema_props) == 1:
+            sole_param = next(iter(schema_props))
+            sole_value = next(iter(normalized.values()))
+            normalized = {sole_param: sole_value}
+    except Exception:
+        pass
+
     try:
         # Use ainvoke for async tools, invoke for sync
         if tool.coroutine:
-            result = await tool.ainvoke(tool_args)
+            result = await tool.ainvoke(normalized)
         else:
-            result = tool.invoke(tool_args)
+            result = tool.invoke(normalized)
         return str(result)
     except Exception as e:
         return f"Error executing tool '{tool_name}': {e}"
@@ -80,7 +99,7 @@ class AgentService:
     Yields events as an async generator for real-time WebSocket streaming.
     """
 
-    MAX_TOOL_ROUNDS = 5  # Prevent infinite tool loops
+    MAX_TOOL_ROUNDS = 50  # High ceiling — effectively unlimited for normal use
 
     async def run(
         self,
@@ -195,7 +214,7 @@ class AgentService:
                 "action": "tool_result",
                 "detail": f"Got result from {tool_name}",
                 "tool": tool_name,
-                "result": result[:500],  # Truncate for frontend display
+                "result": result,
                 "timestamp": time.time(),
             }
 

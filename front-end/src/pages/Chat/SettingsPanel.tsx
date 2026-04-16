@@ -227,6 +227,26 @@ export default function SettingsPanel({
           />
         </Flex>
 
+        {/* n8n refresh button */}
+        <Button
+          size="2"
+          color="cyan"
+          variant="soft"
+          mt="3"
+          style={{ width: "100%", cursor: "pointer" }}
+          onClick={async () => {
+            try {
+              const res = await fetch(`${BACKEND_URL}/api/n8n/refresh`, { method: "POST" });
+              const data = await res.json();
+              alert(`Refreshed: ${data.workflows_discovered} workflow(s) found`);
+            } catch {
+              alert("Failed to refresh n8n workflows");
+            }
+          }}
+        >
+          Refresh n8n Workflows
+        </Button>
+
         {/* Clear memory button */}
         <Button
           size="2"

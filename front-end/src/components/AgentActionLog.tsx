@@ -51,7 +51,7 @@ export default function AgentActionLog({
         border: "1px solid var(--gray-4)",
         fontFamily: "monospace",
         fontSize: "12px",
-        maxHeight: "200px",
+        maxHeight: "400px",
         overflowY: "auto",
       }}
     >
@@ -110,9 +110,7 @@ export default function AgentActionLog({
                   whiteSpace: "pre-wrap",
                 }}
               >
-                {a.result.length > 200
-                  ? a.result.substring(0, 200) + "..."
-                  : a.result}
+                {a.result}
               </span>
             )}
           </Text>

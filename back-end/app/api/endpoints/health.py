@@ -16,7 +16,9 @@ def health_check():
 
 @router.get("/config")
 def get_config():
-    return {"llm_model": settings.OLLAMA_MODEL}
+    return {
+        "llm_model": settings.OLLAMA_MODEL,
+    }
 
 
 @router.delete("/memory")

@@ -20,6 +20,7 @@
     "react-router-dom": "^7.13.2",
     "react-use-websocket": "^4.13.0",
     "rehype-katex": "^7.0.1",
+    "remark-breaks": "^4.0.0",
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",
     "tailwindcss": "^4.2.2"

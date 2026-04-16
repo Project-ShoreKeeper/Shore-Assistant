@@ -108,6 +108,14 @@ export function useAssistant(): UseAssistantReturn {
     thinkingEnabledRef.current = thinkingEnabled;
   }, [thinkingEnabled]);
 
+  useEffect(() => {
+    voiceModeRef.current = voiceMode;
+  }, [voiceMode]);
+
+  useEffect(() => {
+    fishVoiceRef.current = fishVoice;
+  }, [fishVoice]);
+
   // ── Initialize VAD ──
   useEffect(() => {
     let isMounted = true;
@@ -174,7 +182,10 @@ export function useAssistant(): UseAssistantReturn {
     ws.on("statusChange", (status) => setWsStatus(status));
 
     ws.on("open", () => {
-      ws.sendConfig({ language: languageRef.current, thinking: thinkingEnabledRef.current });
+      ws.sendConfig({
+        language: languageRef.current,
+        thinking: thinkingEnabledRef.current,
+      });
     });
 
     ws.on("message", (msg: ChatServerMessage) => {
@@ -435,9 +446,12 @@ export function useAssistant(): UseAssistantReturn {
   // Send config updates
   useEffect(() => {
     if (wsRef.current && wsStatus === "OPEN") {
-      wsRef.current.sendConfig({ language, thinking: thinkingEnabled });
+      wsRef.current.sendConfig({
+        language,
+        thinking: thinkingEnabled,
+      });
     }
-  }, [language, thinkingEnabled, wsStatus]);
+  }, [language, thinkingEnabled, voiceMode, fishVoice, wsStatus]);
 
   // ── Controls ──
 

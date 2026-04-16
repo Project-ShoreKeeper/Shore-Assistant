@@ -18,6 +18,17 @@ import { useAssistant, type ChatMessage } from "../../hooks/useAssistant";
 import AgentActionLog from "../../components/AgentActionLog";
 import SettingsPanel from "./SettingsPanel";
 
+/** Wrap bare URLs in markdown link syntax with truncated display text. */
+function linkifyUrls(text: string): string {
+  return text.replace(
+    /(?<!\[.*?)(?<!\()(https?:\/\/[^\s<>)\]]+)/g,
+    (url) => {
+      const display = url.length > 50 ? url.slice(0, 50) + "..." : url;
+      return `[${display}](${url})`;
+    }
+  );
+}
+
 function PageChat() {
   const {
     isVADLoaded,
@@ -370,7 +381,7 @@ function PageChat() {
                         ),
                       }}
                     >
-                      {msg.text}
+                      {linkifyUrls(msg.text)}
                     </ReactMarkdown>
                     {/* Streaming cursor */}
                     {isProcessing && !msg.isThinkingPhase && (

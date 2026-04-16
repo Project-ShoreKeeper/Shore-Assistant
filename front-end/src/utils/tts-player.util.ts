@@ -20,9 +20,18 @@ export class TTSPlayer {
    * Initialize or reconfigure for a new TTS stream.
    */
   start(sampleRate: number = 22050): void {
+    // Recreate AudioContext if sample rate changed (e.g. switching Kokoro↔Fish Speech)
+    const needsNewContext =
+      !this.audioContext ||
+      this.audioContext.state === "closed" ||
+      this.sampleRate !== sampleRate;
+
     this.sampleRate = sampleRate;
 
-    if (!this.audioContext || this.audioContext.state === "closed") {
+    if (needsNewContext) {
+      if (this.audioContext && this.audioContext.state !== "closed") {
+        this.audioContext.close();
+      }
       this.audioContext = new AudioContext({ sampleRate });
 
       // Create analyser for volume/frequency data (for avatar lip-sync)

@@ -1,18 +1,12 @@
 """
 LangGraph-based agent service.
-Orchestrates intent classification, tool execution, and LLM response streaming.
+Orchestrates tool execution and LLM response streaming using Ollama's native tool calling.
 """
 
-import re
-import json
 import time
 import asyncio
-import inspect
 from datetime import datetime
-from typing import AsyncGenerator, Optional, TypedDict, Annotated
-
-from langgraph.graph import StateGraph, END
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from typing import AsyncGenerator, Optional, TypedDict
 
 from app.services.llm_service import llm_service, build_system_prompt
 from app.services.tool_retriever import tool_retriever
@@ -22,36 +16,14 @@ from app.tools import TOOL_MAP, ALL_TOOLS
 # ==================== State ====================
 
 class AgentState(TypedDict):
-    messages: list[dict]           # Conversation history for Ollama
-    current_input: str             # Latest user text
-    intent: str                    # "direct" | "tool_call"
+    messages: list[dict]
+    current_input: str
+    intent: str
     tool_name: Optional[str]
     tool_args: Optional[dict]
     tool_result: Optional[str]
-    llm_response: str              # Full accumulated response
-    actions_log: list[dict]        # Events to stream to frontend
-
-
-# ==================== Tool call parser ====================
-
-TOOL_CALL_PATTERN = re.compile(
-    r"```(?:tool|json)\s*\n?\s*(\{.*?\})\s*\n?\s*```",
-    re.DOTALL,
-)
-
-
-def parse_tool_call(text: str) -> Optional[dict]:
-    """Extract a tool call JSON from LLM response text."""
-    match = TOOL_CALL_PATTERN.search(text)
-    if not match:
-        return None
-    try:
-        data = json.loads(match.group(1))
-        if "tool" in data:
-            return data
-    except json.JSONDecodeError:
-        pass
-    return None
+    llm_response: str
+    actions_log: list[dict]
 
 
 # ==================== Tool execution ====================
@@ -62,30 +34,11 @@ async def execute_tool(tool_name: str, tool_args: dict) -> str:
     if tool is None:
         return f"Error: Unknown tool '{tool_name}'"
 
-    # Normalize args for smaller models that may pass dicts where strings are expected
-    # or use mismatched key names.
-    normalized = {}
-    for k, v in tool_args.items():
-        normalized[k] = json.dumps(v) if isinstance(v, (dict, list)) else v
-
-    # If every key is unrecognized but the tool has exactly one parameter,
-    # remap the single value to that parameter (handles arg name mismatches).
     try:
-        schema_props = set(tool.args_schema.schema().get("properties", {}).keys())
-        unmatched = set(normalized.keys()) - schema_props
-        if unmatched == set(normalized.keys()) and len(schema_props) == 1:
-            sole_param = next(iter(schema_props))
-            sole_value = next(iter(normalized.values()))
-            normalized = {sole_param: sole_value}
-    except Exception:
-        pass
-
-    try:
-        # Use ainvoke for async tools, invoke for sync
         if tool.coroutine:
-            result = await tool.ainvoke(normalized)
+            result = await tool.ainvoke(tool_args)
         else:
-            result = tool.invoke(normalized)
+            result = tool.invoke(tool_args)
         return str(result)
     except Exception as e:
         return f"Error executing tool '{tool_name}': {e}"
@@ -99,7 +52,7 @@ class AgentService:
     Yields events as an async generator for real-time WebSocket streaming.
     """
 
-    MAX_TOOL_ROUNDS = 50  # High ceiling — effectively unlimited for normal use
+    MAX_TOOL_ROUNDS = 50
 
     async def run(
         self,
@@ -112,49 +65,37 @@ class AgentService:
         Process user input through the agent pipeline.
 
         Yields event dicts:
-          {"type": "agent_action", "action": "thinking", "detail": "..."}
           {"type": "agent_action", "action": "tool_call", "tool": "...", "args": {...}}
-          {"type": "agent_action", "action": "tool_result", "tool": "...", "result": "..."}
+          {"type": "agent_action", "action": "tool_result", "tool": "...", "result": "...", "status": "completed"|"error"}
           {"type": "llm_token", "token": "...", "accumulated": "..."}
           {"type": "llm_sentence", "text": "..."}
           {"type": "llm_complete", "text": "..."}
         """
         # Retrieve relevant tools for this query (skip for notifications)
         if no_tools:
+            tool_schemas = None
             tool_descriptions = "(no tools available)"
         else:
             relevant_tool_names = tool_retriever.retrieve(user_text)
-            tool_descriptions = tool_retriever.get_tool_descriptions(
-                relevant_tool_names, ALL_TOOLS
-            )
+            tool_schemas = tool_retriever.get_tool_schemas(relevant_tool_names, ALL_TOOLS)
+            tool_descriptions = "(tools provided via native API)"
+
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S (%A)")
         system_prompt = f"[Current time: {current_time}]\n\n" + build_system_prompt(tool_descriptions)
 
         # Build messages for Ollama
-        # NOTE: conversation_history already includes the current user message
-        # (appended by chat_ws.py before calling run()), so don't add it again.
-        # Filter out empty assistant messages (from previous 0-token failures)
         messages = [m for m in conversation_history if m["content"].strip()]
-
-        yield {
-            "type": "agent_action",
-            "action": "thinking",
-            "detail": "Processing your message...",
-            "timestamp": time.time(),
-        }
 
         max_rounds = 1 if no_tools else self.MAX_TOOL_ROUNDS
         for round_num in range(max_rounds):
             # Stream LLM response
             full_response = ""
-            thinking_text = ""
-            sentence_buffer = ""
-            event_count = 0
+            pending_tool_calls = []
 
             async for event in llm_service.stream_chat_sentences(
-                messages, system_prompt=system_prompt, thinking=thinking
+                messages, system_prompt=system_prompt, thinking=thinking,
+                tools=tool_schemas,
             ):
-                event_count += 1
                 if event["type"] == "thinking_token":
                     yield {
                         "type": "llm_thinking_token",
@@ -178,55 +119,65 @@ class AgentService:
                         "type": "llm_sentence",
                         "text": event["text"],
                     }
+                elif event["type"] == "tool_calls":
+                    pending_tool_calls = event["tool_calls"]
                 elif event["type"] == "done":
                     full_response = event["full_text"]
-                    thinking_text = event.get("thinking_text", "")
 
-            # Check if the response contains a tool call
-            tool_call = parse_tool_call(full_response)
-
-            # Fallback: if content is empty but thinking contains a tool call,
-            # the model put the tool call in its reasoning (common with thinking models)
-            if tool_call is None and not full_response.strip() and thinking_text:
-                tool_call = parse_tool_call(thinking_text)
-
-            if tool_call is None:
+            # No tool calls — stream is complete
+            if not pending_tool_calls:
                 yield {"type": "llm_complete", "text": full_response}
                 return
 
-            # Execute the tool
-            tool_name = tool_call["tool"]
-            tool_args = tool_call.get("args", {})
+            # If the model returned text alongside tool calls, emit llm_complete for that text
+            # as a separate assistant message before the tool_call events, so the UI can render
+            # the pre-tool-call narration as its own bubble. (Per spec: "let the text come after
+            # as another message, dont fully delete it" — text appears before tool cards in UI.)
+            # NOTE: Token streaming already sent the text; llm_complete finalizes it.
+            if full_response.strip():
+                yield {"type": "llm_complete", "text": full_response}
 
-            yield {
-                "type": "agent_action",
-                "action": "tool_call",
-                "detail": f"Calling {tool_name}...",
-                "tool": tool_name,
-                "args": tool_args,
-                "timestamp": time.time(),
-            }
+            # Add the assistant message (with tool_calls) to history
+            assistant_msg = {"role": "assistant", "content": full_response}
+            if pending_tool_calls:
+                assistant_msg["tool_calls"] = pending_tool_calls
+            messages.append(assistant_msg)
 
-            result = await execute_tool(tool_name, tool_args)
+            for tc in pending_tool_calls:
+                func = tc.get("function", {})
+                tool_name = func.get("name", "unknown")
+                tool_args = func.get("arguments", {})
 
-            yield {
-                "type": "agent_action",
-                "action": "tool_result",
-                "detail": f"Got result from {tool_name}",
-                "tool": tool_name,
-                "result": result,
-                "timestamp": time.time(),
-            }
+                yield {
+                    "type": "agent_action",
+                    "action": "tool_call",
+                    "detail": f"Calling {tool_name}...",
+                    "tool": tool_name,
+                    "args": tool_args,
+                    "timestamp": time.time(),
+                }
 
-            # Add the assistant's tool-call response and the tool result to messages,
-            # then loop to let the LLM synthesize the result
-            messages.append({"role": "assistant", "content": full_response})
-            messages.append({
-                "role": "user",
-                "content": f"Tool result for {tool_name}:\n{result}",
-            })
+                result = await execute_tool(tool_name, tool_args)
+                is_error = result.startswith("Error")
 
-        # If we exhausted tool rounds, yield whatever we have
+                yield {
+                    "type": "agent_action",
+                    "action": "tool_result",
+                    "detail": f"Got result from {tool_name}",
+                    "tool": tool_name,
+                    "result": result,
+                    "status": "error" if is_error else "completed",
+                    "timestamp": time.time(),
+                }
+
+                # Add tool result in Ollama's expected format
+                messages.append({
+                    "role": "tool",
+                    "content": result,
+                    "tool_name": tool_name,
+                })
+
+        # Exhausted tool rounds
         yield {
             "type": "llm_complete",
             "text": "I've reached the maximum number of tool calls. Here's what I found so far.",

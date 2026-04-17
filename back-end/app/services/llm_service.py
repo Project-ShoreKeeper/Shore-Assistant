@@ -109,9 +109,6 @@ class LLMService:
                 try:
                     data = json.loads(line)
 
-                    if data.get("done"):
-                        break
-
                     msg = data.get("message", {})
                     thinking_token = msg.get("thinking", "")
                     content_token = msg.get("content", "")
@@ -125,6 +122,9 @@ class LLMService:
                         yield {"type": "content", "token": content_token}
                     if tool_calls:
                         accumulated_tool_calls.extend(tool_calls)
+
+                    if data.get("done"):
+                        break
                 except json.JSONDecodeError:
                     continue
 
@@ -158,6 +158,8 @@ class LLMService:
         was_thinking = False
 
         async for chunk in self.stream_chat(messages, system_prompt, thinking=thinking, tools=tools):
+            # tool_calls are yielded by stream_chat only after the stream ends,
+            # so was_thinking is guaranteed to already be resolved here.
             if chunk["type"] == "tool_calls":
                 yield {"type": "tool_calls", "tool_calls": chunk["tool_calls"]}
                 continue

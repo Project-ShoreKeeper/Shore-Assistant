@@ -111,5 +111,45 @@ class ToolRetriever:
                 lines.append(f"- {tool.name}: {tool.description}")
         return "\n".join(lines)
 
+    def get_tool_schemas(self, tool_names: list[str], all_tools: list) -> list[dict]:
+        """Convert selected tools to OpenAI-compatible JSON schema for Ollama's native tool calling."""
+        tool_map = {t.name: t for t in all_tools}
+        schemas = []
+        for name in tool_names:
+            tool = tool_map.get(name)
+            if not tool:
+                continue
+            # Extract parameters from LangChain's args_schema
+            try:
+                schema = tool.args_schema.schema()
+                properties = {}
+                required = schema.get("required", [])
+                for prop_name, prop_def in schema.get("properties", {}).items():
+                    prop_entry = {"type": prop_def.get("type", "string")}
+                    if "description" in prop_def:
+                        prop_entry["description"] = prop_def["description"]
+                    if "default" in prop_def:
+                        prop_entry["default"] = prop_def["default"]
+                    if "enum" in prop_def:
+                        prop_entry["enum"] = prop_def["enum"]
+                    properties[prop_name] = prop_entry
+            except Exception:
+                properties = {}
+                required = []
+
+            schemas.append({
+                "type": "function",
+                "function": {
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": {
+                        "type": "object",
+                        "properties": properties,
+                        "required": required,
+                    },
+                },
+            })
+        return schemas
+
 
 tool_retriever = ToolRetriever()

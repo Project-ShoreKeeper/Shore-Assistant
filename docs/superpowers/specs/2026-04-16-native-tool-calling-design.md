@@ -169,8 +169,9 @@ No breaking changes. Same event structure, richer data:
 
 **`tool_result` event** (adds `status` field):
 ```json
-{"type": "agent_action", "action": "tool_result", "tool": "search_web", "result": "...", "status": "success", "timestamp": 1234}
+{"type": "agent_action", "action": "tool_result", "tool": "search_web", "result": "...", "status": "completed", "timestamp": 1234}
 ```
+`status` is `"completed"` on success or `"error"` on failure (matching the frontend `ToolActionCard` status vocabulary).
 
 Text content alongside tool calls is streamed as normal `llm_token` events before the `tool_call` event.
 

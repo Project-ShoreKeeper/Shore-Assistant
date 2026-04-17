@@ -72,10 +72,11 @@ class LLMService:
         messages: list[dict],
         system_prompt: Optional[str] = None,
         thinking: bool = False,
+        tools: Optional[list[dict]] = None,
     ) -> AsyncGenerator[dict, None]:
         """
         Stream tokens from Ollama chat API.
-        Yields dicts: {"type": "thinking"|"content", "token": "..."}
+        Yields dicts: {"type": "thinking"|"content", "token": "..."} or {"type": "tool_calls", "tool_calls": [...]}
         """
         client = await self._get_client()
 
@@ -91,12 +92,14 @@ class LLMService:
             "options": {"num_ctx": settings.OLLAMA_NUM_CTX},
             "think": thinking,
         }
-
-
+        if tools:
+            payload["tools"] = tools
 
         token_count = 0
         thinking_token_count = 0
         line_count = 0
+        accumulated_tool_calls = []
+
         async with client.stream("POST", "/api/chat", json=payload) as response:
             response.raise_for_status()
             async for line in response.aiter_lines():
@@ -112,6 +115,7 @@ class LLMService:
                     msg = data.get("message", {})
                     thinking_token = msg.get("thinking", "")
                     content_token = msg.get("content", "")
+                    tool_calls = msg.get("tool_calls")
 
                     if thinking_token:
                         thinking_token_count += 1
@@ -119,8 +123,14 @@ class LLMService:
                     if content_token:
                         token_count += 1
                         yield {"type": "content", "token": content_token}
+                    if tool_calls:
+                        accumulated_tool_calls.extend(tool_calls)
                 except json.JSONDecodeError:
                     continue
+
+        # After streaming ends, yield tool_calls if any were found
+        if accumulated_tool_calls:
+            yield {"type": "tool_calls", "tool_calls": accumulated_tool_calls}
 
 
 
@@ -129,6 +139,7 @@ class LLMService:
         messages: list[dict],
         system_prompt: Optional[str] = None,
         thinking: bool = False,
+        tools: Optional[list[dict]] = None,
     ) -> AsyncGenerator[dict, None]:
         """
         Stream from Ollama, yielding individual tokens (thinking + content)
@@ -146,7 +157,11 @@ class LLMService:
         sentence_buffer = ""
         was_thinking = False
 
-        async for chunk in self.stream_chat(messages, system_prompt, thinking=thinking):
+        async for chunk in self.stream_chat(messages, system_prompt, thinking=thinking, tools=tools):
+            if chunk["type"] == "tool_calls":
+                yield {"type": "tool_calls", "tool_calls": chunk["tool_calls"]}
+                continue
+
             token = chunk["token"]
 
             if chunk["type"] == "thinking":

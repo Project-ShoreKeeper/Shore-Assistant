@@ -4,7 +4,6 @@ Orchestrates tool execution and LLM response streaming using Ollama's native too
 """
 
 import time
-import asyncio
 from datetime import datetime
 from typing import AsyncGenerator, Optional, TypedDict
 
@@ -74,14 +73,12 @@ class AgentService:
         # Retrieve relevant tools for this query (skip for notifications)
         if no_tools:
             tool_schemas = None
-            tool_descriptions = "(no tools available)"
         else:
             relevant_tool_names = tool_retriever.retrieve(user_text)
             tool_schemas = tool_retriever.get_tool_schemas(relevant_tool_names, ALL_TOOLS)
-            tool_descriptions = "(tools provided via native API)"
 
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S (%A)")
-        system_prompt = f"[Current time: {current_time}]\n\n" + build_system_prompt(tool_descriptions)
+        system_prompt = f"[Current time: {current_time}]\n\n" + build_system_prompt()
 
         # Build messages for Ollama
         messages = [m for m in conversation_history if m["content"].strip()]

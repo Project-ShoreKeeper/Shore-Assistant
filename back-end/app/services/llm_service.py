@@ -37,13 +37,12 @@ def _load_persona_template() -> str:
 SYSTEM_PROMPT_TEMPLATE = _load_persona_template()
 
 
-def build_system_prompt(tool_descriptions: str) -> str:
-    """Build a system prompt with only the relevant tool descriptions."""
-    return SYSTEM_PROMPT_TEMPLATE.replace("{tools}", tool_descriptions)
+def build_system_prompt() -> str:
+    """Build the system prompt from persona + tool instructions."""
+    return SYSTEM_PROMPT_TEMPLATE
 
 
-# Legacy fallback
-SYSTEM_PROMPT = build_system_prompt("(no tools loaded)")
+SYSTEM_PROMPT = build_system_prompt()
 
 # Punctuation marks that signal a sentence boundary for TTS
 SENTENCE_DELIMITERS = frozenset(".!?;\n")

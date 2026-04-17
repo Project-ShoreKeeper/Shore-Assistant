@@ -15,7 +15,7 @@ import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
 import { useAssistant, type ChatMessage } from "../../hooks/useAssistant";
-import AgentActionLog from "../../components/AgentActionLog";
+import ToolActionCard from "../../components/ToolActionCard";
 import SettingsPanel from "./SettingsPanel";
 
 /** Wrap bare URLs in markdown link syntax with truncated display text. */
@@ -154,13 +154,20 @@ function PageChat() {
               </Box>
             )}
 
-            {/* Agent action log */}
+            {/* Tool action cards */}
             {!isUser && msg.agentActions && msg.agentActions.length > 0 && (
-              <Box mb={msg.text ? "2" : "0"} style={{ maxWidth: "100%", minWidth: "250px" }}>
-                <AgentActionLog
-                  actions={msg.agentActions}
-                  isThinking={msg.isStreaming || false}
-                />
+              <Box mb={msg.text ? "2" : "0"} style={{ maxWidth: "100%", minWidth: "280px" }}>
+                {msg.agentActions
+                  .filter((a) => a.action === "tool_call")
+                  .map((a) => (
+                    <ToolActionCard
+                      key={a.id}
+                      tool={a.tool || "unknown"}
+                      args={a.args}
+                      result={a.result}
+                      status={a.status}
+                    />
+                  ))}
               </Box>
             )}
 

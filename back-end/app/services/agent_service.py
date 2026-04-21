@@ -9,6 +9,7 @@ from typing import AsyncGenerator, Optional, TypedDict
 
 from app.services.llm_service import llm_service, build_system_prompt
 from app.services.tool_retriever import tool_retriever
+from app.services.cloud_llm_service import current_history_var
 from app.tools import TOOL_MAP, ALL_TOOLS
 
 
@@ -82,6 +83,7 @@ class AgentService:
 
         # Build messages for Ollama
         messages = [m for m in conversation_history if m["content"].strip()]
+        current_history_var.set(conversation_history)
 
         max_rounds = 1 if no_tools else self.MAX_TOOL_ROUNDS
         for round_num in range(max_rounds):

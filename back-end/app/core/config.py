@@ -52,6 +52,13 @@ class Settings(BaseSettings):
     N8N_REFRESH_INTERVAL_MINUTES: int = 0
     N8N_WORKFLOWS_DIR: str = "data/n8n-workflows"
 
+    # Cloud AI sub-agents
+    ANTHROPIC_API_KEY: str = ""
+    GEMINI_API_KEY: str = ""
+    OPENAI_API_KEY: str = ""
+    CLOUD_MAX_TOKENS: int = 4096
+    CLOUD_HISTORY_MAX_TURNS: int = 10
+
     class Config:
         env_file = ".env"
 

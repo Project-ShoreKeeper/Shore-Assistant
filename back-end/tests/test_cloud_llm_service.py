@@ -70,3 +70,46 @@ async def test_call_claude_returns_error_on_exception():
         result = await service.call_claude("explain recursion", [])
 
     assert result.startswith("Error calling Claude:")
+
+
+async def test_call_gemini_returns_text():
+    service = CloudLLMService()
+
+    mock_response = MagicMock()
+    mock_response.text = "Gemini answer"
+
+    mock_models = MagicMock()
+    mock_models.generate_content = AsyncMock(return_value=mock_response)
+
+    mock_aio = MagicMock()
+    mock_aio.models = mock_models
+
+    mock_client = MagicMock()
+    mock_client.aio = mock_aio
+
+    with patch("app.services.cloud_llm_service.genai.Client", return_value=mock_client), \
+         patch("app.services.cloud_llm_service.settings") as mock_settings:
+        mock_settings.GEMINI_API_KEY = "test-gemini-key"
+        mock_settings.CLOUD_HISTORY_MAX_TURNS = 10
+        mock_settings.CLOUD_MAX_TOKENS = 4096
+        result = await service.call_gemini("summarize this doc", SAMPLE_HISTORY)
+
+    assert result == "Gemini answer"
+
+
+async def test_call_gemini_returns_error_on_exception():
+    service = CloudLLMService()
+
+    mock_models = MagicMock()
+    mock_models.generate_content = AsyncMock(side_effect=Exception("quota exceeded"))
+
+    mock_aio = MagicMock()
+    mock_aio.models = mock_models
+
+    mock_client = MagicMock()
+    mock_client.aio = mock_aio
+
+    with patch("app.services.cloud_llm_service.genai.Client", return_value=mock_client):
+        result = await service.call_gemini("summarize this doc", [])
+
+    assert result.startswith("Error calling Gemini:")

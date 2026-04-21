@@ -7,6 +7,8 @@ History is passed via current_history_var ContextVar set by agent_service.
 from contextvars import ContextVar
 
 from anthropic import AsyncAnthropic
+from google import genai
+from google.genai import types as genai_types
 
 from app.core.config import settings
 
@@ -61,7 +63,43 @@ class CloudLLMService:
             return f"Error calling Claude: {e}"
 
     async def call_gemini(self, question: str, history: list[dict]) -> str:
-        raise NotImplementedError
+        """Call Gemini with conversation history as context."""
+        if not settings.GEMINI_API_KEY:
+            return "Error calling Gemini: GEMINI_API_KEY is not set."
+        try:
+            trimmed = self._trim_history(history, settings.CLOUD_HISTORY_MAX_TURNS)
+
+            contents = []
+            for m in trimmed:
+                role = m.get("role", "user")
+                if role not in ("user", "assistant"):
+                    continue
+                gemini_role = "model" if role == "assistant" else "user"
+                contents.append(
+                    genai_types.Content(
+                        role=gemini_role,
+                        parts=[genai_types.Part(text=m["content"])],
+                    )
+                )
+            contents.append(
+                genai_types.Content(
+                    role="user",
+                    parts=[genai_types.Part(text=question)],
+                )
+            )
+
+            client = genai.Client(api_key=settings.GEMINI_API_KEY)
+            response = await client.aio.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=contents,
+                config=genai_types.GenerateContentConfig(
+                    system_instruction=ESCALATION_SYSTEM_PROMPT,
+                    max_output_tokens=settings.CLOUD_MAX_TOKENS,
+                ),
+            )
+            return response.text
+        except Exception as e:
+            return f"Error calling Gemini: {e}"
 
     async def call_openai(self, question: str, history: list[dict]) -> str:
         raise NotImplementedError

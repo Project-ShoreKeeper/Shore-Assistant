@@ -9,6 +9,7 @@ from contextvars import ContextVar
 from anthropic import AsyncAnthropic
 from google import genai
 from google.genai import types as genai_types
+from openai import AsyncOpenAI
 
 from app.core.config import settings
 
@@ -102,7 +103,29 @@ class CloudLLMService:
             return f"Error calling Gemini: {e}"
 
     async def call_openai(self, question: str, history: list[dict]) -> str:
-        raise NotImplementedError
+        """Call GPT-4o with conversation history as context."""
+        if not settings.OPENAI_API_KEY:
+            return "Error calling OpenAI: OPENAI_API_KEY is not set."
+        try:
+            trimmed = self._trim_history(history, settings.CLOUD_HISTORY_MAX_TURNS)
+
+            messages = [{"role": "system", "content": ESCALATION_SYSTEM_PROMPT}]
+            for m in trimmed:
+                role = m.get("role", "user")
+                if role not in ("user", "assistant"):
+                    continue
+                messages.append({"role": role, "content": m["content"]})
+            messages.append({"role": "user", "content": question})
+
+            client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+            response = await client.chat.completions.create(
+                model="gpt-4o",
+                messages=messages,
+                max_tokens=settings.CLOUD_MAX_TOKENS,
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            return f"Error calling OpenAI: {e}"
 
 
 cloud_llm_service = CloudLLMService()

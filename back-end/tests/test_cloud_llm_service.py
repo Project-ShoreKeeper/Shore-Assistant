@@ -113,3 +113,53 @@ async def test_call_gemini_returns_error_on_exception():
         result = await service.call_gemini("summarize this doc", [])
 
     assert result.startswith("Error calling Gemini:")
+
+
+async def test_call_openai_returns_text():
+    service = CloudLLMService()
+
+    mock_choice = MagicMock()
+    mock_choice.message.content = "OpenAI answer"
+
+    mock_response = MagicMock()
+    mock_response.choices = [mock_choice]
+
+    mock_completions = MagicMock()
+    mock_completions.create = AsyncMock(return_value=mock_response)
+
+    mock_chat = MagicMock()
+    mock_chat.completions = mock_completions
+
+    mock_client = MagicMock()
+    mock_client.chat = mock_chat
+
+    with patch("app.services.cloud_llm_service.AsyncOpenAI", return_value=mock_client):
+        with patch("app.services.cloud_llm_service.settings") as mock_settings:
+            mock_settings.OPENAI_API_KEY = "fake-key"
+            mock_settings.CLOUD_MAX_TOKENS = 4096
+            mock_settings.CLOUD_HISTORY_MAX_TURNS = 10
+            result = await service.call_openai("write a sorting algorithm", SAMPLE_HISTORY)
+
+    assert result == "OpenAI answer"
+
+
+async def test_call_openai_returns_error_on_exception():
+    service = CloudLLMService()
+
+    mock_completions = MagicMock()
+    mock_completions.create = AsyncMock(side_effect=Exception("invalid key"))
+
+    mock_chat = MagicMock()
+    mock_chat.completions = mock_completions
+
+    mock_client = MagicMock()
+    mock_client.chat = mock_chat
+
+    with patch("app.services.cloud_llm_service.AsyncOpenAI", return_value=mock_client):
+        with patch("app.services.cloud_llm_service.settings") as mock_settings:
+            mock_settings.OPENAI_API_KEY = "fake-key"
+            mock_settings.CLOUD_MAX_TOKENS = 4096
+            mock_settings.CLOUD_HISTORY_MAX_TURNS = 10
+            result = await service.call_openai("write a sorting algorithm", [])
+
+    assert result.startswith("Error calling OpenAI:")

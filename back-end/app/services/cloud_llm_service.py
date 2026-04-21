@@ -6,6 +6,8 @@ History is passed via current_history_var ContextVar set by agent_service.
 
 from contextvars import ContextVar
 
+from anthropic import AsyncAnthropic
+
 from app.core.config import settings
 
 # Set by agent_service before each tool execution loop; read by cloud tools
@@ -27,7 +29,36 @@ class CloudLLMService:
         return history[-max_messages:] if len(history) > max_messages else list(history)
 
     async def call_claude(self, question: str, history: list[dict]) -> str:
-        raise NotImplementedError
+        """Call Claude with conversation history as context. Uses prompt caching on system prompt."""
+        if not settings.ANTHROPIC_API_KEY:
+            return "Error calling Claude: ANTHROPIC_API_KEY is not set."
+        try:
+            trimmed = self._trim_history(history, settings.CLOUD_HISTORY_MAX_TURNS)
+
+            messages = []
+            for m in trimmed:
+                role = m.get("role", "user")
+                if role not in ("user", "assistant"):
+                    continue
+                messages.append({"role": role, "content": m["content"]})
+            messages.append({"role": "user", "content": question})
+
+            client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+            response = await client.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=settings.CLOUD_MAX_TOKENS,
+                system=[
+                    {
+                        "type": "text",
+                        "text": ESCALATION_SYSTEM_PROMPT,
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ],
+                messages=messages,
+            )
+            return response.content[0].text
+        except Exception as e:
+            return f"Error calling Claude: {e}"
 
     async def call_gemini(self, question: str, history: list[dict]) -> str:
         raise NotImplementedError

@@ -39,3 +39,34 @@ def test_context_var_default():
     result = current_history_var.get([])
     assert result == []
     current_history_var.reset(token)
+
+
+async def test_call_claude_returns_text():
+    service = CloudLLMService()
+
+    mock_message = MagicMock()
+    mock_message.content = [MagicMock(text="Claude answer")]
+
+    mock_client = MagicMock()
+    mock_client.messages.create = AsyncMock(return_value=mock_message)
+
+    with patch("app.services.cloud_llm_service.AsyncAnthropic", return_value=mock_client), \
+         patch("app.services.cloud_llm_service.settings") as mock_settings:
+        mock_settings.ANTHROPIC_API_KEY = "test-key"
+        mock_settings.CLOUD_HISTORY_MAX_TURNS = 10
+        mock_settings.CLOUD_MAX_TOKENS = 4096
+        result = await service.call_claude("explain recursion", SAMPLE_HISTORY)
+
+    assert result == "Claude answer"
+
+
+async def test_call_claude_returns_error_on_exception():
+    service = CloudLLMService()
+
+    mock_client = MagicMock()
+    mock_client.messages.create = AsyncMock(side_effect=Exception("rate limited"))
+
+    with patch("app.services.cloud_llm_service.AsyncAnthropic", return_value=mock_client):
+        result = await service.call_claude("explain recursion", [])
+
+    assert result.startswith("Error calling Claude:")

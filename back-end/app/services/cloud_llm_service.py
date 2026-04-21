@@ -24,6 +24,26 @@ ESCALATION_SYSTEM_PROMPT = (
 
 
 class CloudLLMService:
+    def __init__(self):
+        self._anthropic_client = None
+        self._gemini_client = None
+        self._openai_client = None
+
+    def _get_anthropic_client(self) -> "AsyncAnthropic":
+        if self._anthropic_client is None:
+            self._anthropic_client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+        return self._anthropic_client
+
+    def _get_gemini_client(self) -> "genai.Client":
+        if self._gemini_client is None:
+            self._gemini_client = genai.Client(api_key=settings.GEMINI_API_KEY)
+        return self._gemini_client
+
+    def _get_openai_client(self) -> "AsyncOpenAI":
+        if self._openai_client is None:
+            self._openai_client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+        return self._openai_client
+
     def _trim_history(self, history: list[dict], max_turns: int) -> list[dict]:
         """Return the last max_turns turns (each turn = 1 user + 1 assistant message)."""
         if max_turns <= 0:
@@ -46,7 +66,7 @@ class CloudLLMService:
                 messages.append({"role": role, "content": m["content"]})
             messages.append({"role": "user", "content": question})
 
-            client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+            client = self._get_anthropic_client()
             response = await client.messages.create(
                 model="claude-sonnet-4-6",
                 max_tokens=settings.CLOUD_MAX_TOKENS,
@@ -89,7 +109,7 @@ class CloudLLMService:
                 )
             )
 
-            client = genai.Client(api_key=settings.GEMINI_API_KEY)
+            client = self._get_gemini_client()
             response = await client.aio.models.generate_content(
                 model="gemini-2.0-flash",
                 contents=contents,
@@ -117,7 +137,7 @@ class CloudLLMService:
                 messages.append({"role": role, "content": m["content"]})
             messages.append({"role": "user", "content": question})
 
-            client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+            client = self._get_openai_client()
             response = await client.chat.completions.create(
                 model="gpt-4o",
                 messages=messages,

@@ -18,6 +18,9 @@ ALWAYS_AVAILABLE = {
     "set_scheduled_task",
     "list_tasks",
     "cancel_task",
+    "ask_claude",
+    "ask_gemini",
+    "ask_openai",
 }
 
 

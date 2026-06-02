@@ -13,15 +13,10 @@ class Settings(BaseSettings):
     # STT
     STT_ENABLED: bool = False
 
-    # Ollama LLM
-    OLLAMA_BASE_URL: str = "http://localhost:11434"
-    OLLAMA_MODEL: str = "gemma4-e4b"
-    OLLAMA_TIMEOUT: int = 120
-    OLLAMA_NUM_CTX: int = 8192
-
-    # Vision
-    VISION_MODEL: str = "qwen2.5vl:7b"
-    VISION_USE_PRIMARY_MODEL: bool = False  # True = use primary LLM (must be multimodal), False = hot-swap to VISION_MODEL
+    # Llama-server LLM (llama.cpp OpenAI-compatible API)
+    LLAMA_BASE_URL: str = "http://localhost:8080"
+    LLAMA_MODEL: str = ""  # llama-server typically ignores this; used only as a display label
+    LLAMA_TIMEOUT: int = 120
 
     # Piper TTS
     PIPER_PATH: str = "piper"

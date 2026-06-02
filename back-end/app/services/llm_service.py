@@ -74,6 +74,60 @@ def _parse_sse_line(line: str) -> "dict | str | None":
         return None
 
 
+class _ToolCallAccumulator:
+    """
+    Absorbs tool_call deltas from an OpenAI-style streaming response.
+
+    OpenAI sends tool_calls in increments keyed by `index`. `id`, `type`,
+    and `function.name` may appear on any single delta; `function.arguments`
+    arrives as concatenated string fragments. After the stream ends, call
+    `finalize()` to get the assembled list with arguments parsed as a dict.
+    """
+
+    def __init__(self):
+        self._by_index: dict[int, dict] = {}
+
+    def absorb(self, deltas: list[dict]) -> None:
+        for delta in deltas or []:
+            idx = delta.get("index", 0)
+            slot = self._by_index.setdefault(
+                idx,
+                {"id": None, "type": "function",
+                 "function": {"name": None, "arguments_buffer": ""}},
+            )
+            if delta.get("id") is not None:
+                slot["id"] = delta["id"]
+            if delta.get("type") is not None:
+                slot["type"] = delta["type"]
+            fn = delta.get("function") or {}
+            if fn.get("name") is not None:
+                slot["function"]["name"] = fn["name"]
+            if fn.get("arguments") is not None:
+                slot["function"]["arguments_buffer"] += fn["arguments"]
+
+    def finalize(self) -> list[dict]:
+        out = []
+        for idx in sorted(self._by_index.keys()):
+            slot = self._by_index[idx]
+            raw = slot["function"]["arguments_buffer"]
+            try:
+                parsed_args = json.loads(raw) if raw else {}
+            except json.JSONDecodeError:
+                parsed_args = raw  # surface malformed JSON to the caller
+            out.append({
+                "id": slot["id"],
+                "type": slot["type"],
+                "function": {
+                    "name": slot["function"]["name"],
+                    "arguments": parsed_args,
+                },
+            })
+        return out
+
+    def is_empty(self) -> bool:
+        return not self._by_index
+
+
 class LLMService:
     def __init__(self):
         self.base_url = settings.OLLAMA_BASE_URL

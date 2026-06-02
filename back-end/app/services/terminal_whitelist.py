@@ -18,6 +18,12 @@ class CheckResult:
 
 class WhitelistGuard:
 
+    _CHAIN_RE = re.compile(r"\s*(?:&&|\|\||;|\|)\s*")
+    _WRAPPER_RE = re.compile(
+        r"""^\s*(powershell|pwsh|cmd|bash)\s+(?:-c|/c|/C)\s+(['"])(?P<inner>.+)\2\s*$""",
+        re.IGNORECASE,
+    )
+
     def __init__(self, default_path: str, user_path: str):
         self.default_path = default_path
         self.user_path = user_path
@@ -41,27 +47,42 @@ class WhitelistGuard:
 
     def check(self, command: str, shell: str) -> CheckResult:
         cmd_str = command.strip()
-        # Blacklist always wins
+        # Unwrap shell -c "..." once
+        m = self._WRAPPER_RE.match(cmd_str)
+        if m:
+            cmd_str = m.group("inner").strip()
+        # Blacklist always wins, against the whole (unwrapped) string
         for pat in self.blacklist:
             if pat.search(cmd_str):
                 return CheckResult("block", f"matches blacklist pattern: {pat.pattern}")
-        # Get head token
-        try:
-            tokens = shlex.split(cmd_str, posix=(shell != "powershell"))
-        except ValueError:
-            return CheckResult("confirm", "could not parse command")
-        if not tokens:
-            return CheckResult("block", "empty command")
-        head = tokens[0]
-        if head not in self.allow:
-            return CheckResult("confirm", f"'{head}' not in whitelist")
-        # Allowed head — check arg-pattern denies
-        if head in self.deny_argpatterns:
-            rest = cmd_str[len(head):]
-            for pat in self.deny_argpatterns[head]:
-                if pat.search(rest):
-                    return CheckResult("confirm", f"argument pattern '{pat.pattern}' requires confirm")
-        return CheckResult("allow", "")
+        segments = [s for s in self._CHAIN_RE.split(cmd_str) if s.strip()]
+        decision: Decision = "allow"
+        reasons: list[str] = []
+        for seg in segments:
+            try:
+                tokens = shlex.split(seg, posix=(shell != "powershell"))
+            except ValueError:
+                decision = "confirm"
+                reasons.append(f"could not parse: {seg}")
+                continue
+            if not tokens:
+                continue
+            head = tokens[0]
+            # Re-check blacklist per segment too
+            for pat in self.blacklist:
+                if pat.search(seg):
+                    return CheckResult("block", f"segment matches blacklist: {pat.pattern}")
+            if head not in self.allow:
+                decision = "confirm"
+                reasons.append(f"'{head}' not in whitelist")
+                continue
+            if head in self.deny_argpatterns:
+                rest = seg[len(head):]
+                for pat in self.deny_argpatterns[head]:
+                    if pat.search(rest):
+                        decision = "confirm"
+                        reasons.append(f"argument pattern '{pat.pattern}'")
+        return CheckResult(decision, "; ".join(reasons))
 
     def add_user_allow(self, head_token: str) -> None:
         self.allow.add(head_token)

@@ -40,3 +40,42 @@ def test_block_blacklisted(guard):
 def test_block_dangerous_git_subcommand(guard):
     r = guard.check("git push --force origin main", shell="powershell")
     assert r.decision == "confirm"
+
+
+def test_chained_all_allowed(guard):
+    r = guard.check("dir && ls", shell="powershell")
+    assert r.decision == "allow"
+
+
+def test_chained_one_unknown_needs_confirm(guard):
+    r = guard.check("dir && docker ps", shell="powershell")
+    assert r.decision == "confirm"
+
+
+def test_chained_one_blacklisted_blocks(guard):
+    r = guard.check("dir; rm -rf /", shell="bash")
+    assert r.decision == "block"
+
+
+def test_unwraps_powershell_dash_c(guard):
+    r = guard.check('powershell -c "git status"', shell="powershell")
+    assert r.decision == "allow"
+
+
+def test_unwraps_cmd_slash_c(guard):
+    r = guard.check('cmd /c "dir"', shell="cmd")
+    assert r.decision == "allow"
+
+
+def test_unwraps_bash_dash_c(guard):
+    r = guard.check('bash -c "ls -la"', shell="bash")
+    assert r.decision == "allow"
+
+
+def test_user_allow_persists(guard, tmp_path):
+    guard.add_user_allow("docker")
+    assert guard.check("docker ps", shell="powershell").decision == "allow"
+    # Reload from disk
+    from app.services.terminal_whitelist import WhitelistGuard
+    fresh = WhitelistGuard(default_path=guard.default_path, user_path=guard.user_path)
+    assert fresh.check("docker ps", shell="powershell").decision == "allow"

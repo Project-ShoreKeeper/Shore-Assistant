@@ -38,3 +38,6 @@ lxml>=5.0.0
 # Vision / Screen capture
 mss>=9.0.0
 Pillow>=10.0.0
+
+# Terminal / PTY support
+pywinpty>=2.0.13 ; sys_platform == "win32"

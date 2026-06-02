@@ -1,0 +1,34 @@
+{
+  "allow": [
+    "dir", "ls", "pwd", "cd", "cat", "type", "head", "tail", "less", "more",
+    "Get-ChildItem", "Get-Location", "Get-Content", "Get-Process",
+    "echo", "Write-Output", "Write-Host",
+    "whoami", "hostname", "ipconfig", "ifconfig",
+    "where", "which", "Get-Command",
+    "git", "npm", "pnpm", "yarn", "bun",
+    "python", "python3", "py", "pip",
+    "node", "npx", "deno",
+    "cargo", "go", "rustc",
+    "tsc", "vite", "eslint",
+    "uvicorn", "fastapi", "pytest", "jupyter",
+    "tree", "fd", "rg"
+  ],
+  "deny_argpatterns": {
+    "git": ["push\\s+--force", "reset\\s+--hard", "clean\\s+-f", "branch\\s+-D"],
+    "npm": ["^publish\\b"],
+    "find": ["-delete", "-exec"]
+  },
+  "blacklist_patterns": [
+    "rm\\s+-rf\\s+[/C]",
+    "Remove-Item\\s+[/C].*-Recurse",
+    "format\\s+[A-Za-z]:",
+    "diskpart\\b",
+    "shutdown\\b",
+    "Restart-Computer\\b",
+    "del\\s+/[Ss].*\\\\?\\*",
+    "rd\\s+/[Ss]\\s+/[Qq]",
+    "reg\\s+delete\\s+HKLM",
+    "takeown\\s+/F\\s+C:",
+    "icacls\\s+C:\\\\?\\s+/grant"
+  ]
+}

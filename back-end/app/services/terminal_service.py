@@ -55,6 +55,8 @@ class TerminalService:
         self.audit_log_path.parent.mkdir(parents=True, exist_ok=True)
         # Hook set by chat_ws to broadcast WS messages
         self.broadcast = None  # async callable(dict)
+        self.confirm_timeout = 60
+        self._pending_confirms: dict[str, asyncio.Future] = {}
 
     async def _broadcast(self, msg: dict):
         if self.broadcast:
@@ -67,6 +69,31 @@ class TerminalService:
         entry["ts"] = datetime.now(timezone.utc).isoformat()
         with open(self.audit_log_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry) + "\n")
+
+    def resolve_confirm(self, request_id: str, decision: str) -> bool:
+        fut = self._pending_confirms.pop(request_id, None)
+        if fut and not fut.done():
+            fut.set_result(decision)
+            return True
+        return False
+
+    async def _request_confirm(self, command: str, shell: str, cwd: str, reason: str) -> str:
+        request_id = uuid.uuid4().hex[:12]
+        fut = asyncio.get_running_loop().create_future()
+        self._pending_confirms[request_id] = fut
+        await self._broadcast({
+            "type": "terminal_confirm_request",
+            "request_id": request_id,
+            "command": command,
+            "shell": shell,
+            "cwd": cwd,
+            "reason": reason,
+        })
+        try:
+            return await asyncio.wait_for(fut, timeout=self.confirm_timeout)
+        except asyncio.TimeoutError:
+            self._pending_confirms.pop(request_id, None)
+            return "deny"
 
     async def run_oneshot(
         self,
@@ -97,6 +124,35 @@ class TerminalService:
                 "duration_ms": 0,
                 "log_path": "",
             }
+        # Whitelist gate
+        if self.whitelist:
+            check = self.whitelist.check(command, shell)
+            if check.decision == "block":
+                self._audit({
+                    "kind": "oneshot", "command": command, "shell": shell, "cwd": cwd,
+                    "decision": "blocked", "reason": check.reason,
+                })
+                return {
+                    "exit_code": -1, "stdout": "",
+                    "stderr": f"Blocked: {check.reason}",
+                    "truncated": False, "duration_ms": 0, "log_path": "",
+                }
+            if check.decision == "confirm":
+                response = await self._request_confirm(command, shell, cwd, reason or check.reason)
+                if response == "always_allow":
+                    head = command.strip().split()[0] if command.strip() else ""
+                    if head:
+                        self.whitelist.add_user_allow(head)
+                elif response != "approve":
+                    self._audit({
+                        "kind": "oneshot", "command": command, "shell": shell, "cwd": cwd,
+                        "decision": "denied",
+                    })
+                    return {
+                        "exit_code": -1, "stdout": "",
+                        "stderr": "User denied execution",
+                        "truncated": False, "duration_ms": 0, "log_path": "",
+                    }
         argv = SHELL_INVOCATIONS[shell] + [command]
 
         await self._broadcast(

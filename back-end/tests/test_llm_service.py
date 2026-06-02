@@ -227,3 +227,64 @@ async def test_stream_chat_sets_reasoning_effort_when_thinking():
         pass
 
     assert captured["json"]["reasoning_effort"] == "medium"
+
+
+async def test_generate_once_returns_message_content():
+    from app.services.llm_service import LLMService
+
+    fake_response = MagicMock()
+    fake_response.raise_for_status = MagicMock()
+    fake_response.json = MagicMock(return_value={
+        "choices": [{"message": {"content": "non-stream answer"}}]
+    })
+
+    fake_client = MagicMock()
+    fake_client.is_closed = False
+    fake_client.post = AsyncMock(return_value=fake_response)
+
+    service = LLMService()
+    service._client = fake_client
+
+    result = await service.generate_once([{"role": "user", "content": "x"}])
+
+    assert result == "non-stream answer"
+    assert fake_client.post.call_args.args[0] == "/v1/chat/completions"
+    payload = fake_client.post.call_args.kwargs["json"]
+    assert payload["stream"] is False
+
+
+async def test_generate_with_image_sends_data_uri_image_url():
+    from app.services.llm_service import LLMService
+
+    fake_response = MagicMock()
+    fake_response.raise_for_status = MagicMock()
+    fake_response.json = MagicMock(return_value={
+        "choices": [{"message": {"content": "I see a cat."}}]
+    })
+
+    fake_client = MagicMock()
+    fake_client.is_closed = False
+    fake_client.post = AsyncMock(return_value=fake_response)
+
+    service = LLMService()
+    service._client = fake_client
+
+    result = await service.generate_with_image("what is this", "AAAA")
+
+    assert result == "I see a cat."
+    payload = fake_client.post.call_args.kwargs["json"]
+    user_msg = payload["messages"][-1]
+    assert user_msg["role"] == "user"
+    assert isinstance(user_msg["content"], list)
+    assert user_msg["content"][0] == {"type": "text", "text": "what is this"}
+    assert user_msg["content"][1] == {
+        "type": "image_url",
+        "image_url": {"url": "data:image/jpeg;base64,AAAA"},
+    }
+
+
+def test_ollama_only_methods_are_gone():
+    from app.services.llm_service import LLMService
+    assert not hasattr(LLMService, "unload_model")
+    assert not hasattr(LLMService, "preload_model")
+    assert not hasattr(LLMService, "list_running_models")

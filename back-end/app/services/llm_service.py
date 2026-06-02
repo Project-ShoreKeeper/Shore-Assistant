@@ -1,6 +1,7 @@
 """
-Ollama LLM streaming client using httpx.AsyncClient.
-Streams tokens from Qwen2.5-7B and detects sentence boundaries for TTS chunking.
+llama-server LLM streaming client using httpx.AsyncClient.
+Streams tokens via the OpenAI-compatible /v1/chat/completions endpoint and
+detects sentence boundaries for TTS chunking.
 """
 
 import copy
@@ -235,7 +236,7 @@ class LLMService:
         tools: Optional[list[dict]] = None,
     ) -> AsyncGenerator[dict, None]:
         """
-        Stream from Ollama, yielding individual tokens (thinking + content)
+        Stream from llama-server, yielding individual tokens (thinking + content)
         and completed sentences (content only, for TTS).
 
         Yields dicts:
@@ -309,67 +310,46 @@ class LLMService:
         """Non-streaming single response (for intent classification, etc.)."""
         client = await self._get_client()
 
+        all_messages = _normalize_outgoing_messages([
+            {"role": "system", "content": system_prompt or SYSTEM_PROMPT},
+            *messages,
+        ])
         payload = {
             "model": self.model,
-            "messages": [
-                {"role": "system", "content": system_prompt or SYSTEM_PROMPT},
-                *messages,
-            ],
+            "messages": all_messages,
             "stream": False,
-            "options": {"num_ctx": settings.OLLAMA_NUM_CTX},
-            "think": False,
         }
 
-        response = await client.post("/api/chat", json=payload)
+        response = await client.post("/v1/chat/completions", json=payload)
         response.raise_for_status()
         data = response.json()
-        return data.get("message", {}).get("content", "")
+        choices = data.get("choices") or [{}]
+        return choices[0].get("message", {}).get("content", "")
 
     async def generate_with_image(self, prompt: str, image_b64: str) -> str:
-        """Send an image + prompt to the primary model for vision analysis."""
+        """Send a prompt + base64 JPEG to the primary multimodal LLM."""
         client = await self._get_client()
         payload = {
             "model": self.model,
             "messages": [
                 {
                     "role": "user",
-                    "content": prompt,
-                    "images": [image_b64],
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"},
+                        },
+                    ],
                 }
             ],
             "stream": False,
-            "options": {"num_ctx": settings.OLLAMA_NUM_CTX},
         }
-        response = await client.post("/api/chat", json=payload)
+        response = await client.post("/v1/chat/completions", json=payload)
         response.raise_for_status()
-        return response.json().get("message", {}).get("content", "")
-
-    async def unload_model(self, model: Optional[str] = None):
-        """Unload a model from VRAM using keep_alive=0."""
-        client = await self._get_client()
-        payload = {
-            "model": model or self.model,
-            "keep_alive": 0,
-        }
-        response = await client.post("/api/generate", json=payload)
-        response.raise_for_status()
-
-    async def preload_model(self, model: Optional[str] = None):
-        """Preload a model into VRAM."""
-        client = await self._get_client()
-        payload = {
-            "model": model or self.model,
-            "keep_alive": "5m",
-        }
-        response = await client.post("/api/generate", json=payload)
-        response.raise_for_status()
-
-    async def list_running_models(self) -> list[dict]:
-        """List models currently loaded in VRAM."""
-        client = await self._get_client()
-        response = await client.get("/api/ps")
-        response.raise_for_status()
-        return response.json().get("models", [])
+        data = response.json()
+        choices = data.get("choices") or [{}]
+        return choices[0].get("message", {}).get("content", "")
 
     async def close(self):
         if self._client and not self._client.is_closed:

@@ -373,3 +373,40 @@ class TerminalService:
             "duration_ms": duration_ms,
             "log_path": str(log_path),
         }
+
+
+async def _idle_reaper(service: "TerminalService"):
+    while True:
+        await asyncio.sleep(60)
+        now = time.time()
+        for name, s in list(service.sessions.items()):
+            if now - s.last_activity > service.session_idle_seconds:
+                try:
+                    await s.close(reason="idle")
+                except Exception:
+                    pass
+
+
+def _build_service() -> TerminalService:
+    from app.core.config import settings
+    from app.services.terminal_whitelist import WhitelistGuard
+    default_cwd = settings.TERMINAL_DEFAULT_CWD or os.getcwd()
+    guard = WhitelistGuard(
+        default_path=settings.TERMINAL_WHITELIST_FILE,
+        user_path=settings.TERMINAL_USER_WHITELIST_FILE,
+    )
+    svc = TerminalService(
+        whitelist=guard,
+        runs_dir=Path(settings.TERMINAL_RUNS_DIR),
+        audit_log_path=Path(settings.TERMINAL_AUDIT_LOG),
+        default_cwd=default_cwd,
+        oneshot_timeout=settings.TERMINAL_ONESHOT_TIMEOUT_SECONDS,
+        max_output_bytes=settings.TERMINAL_MAX_OUTPUT_BYTES,
+        llm_preview_bytes=settings.TERMINAL_LLM_OUTPUT_PREVIEW_BYTES,
+    )
+    svc.confirm_timeout = settings.TERMINAL_CONFIRM_TIMEOUT_SECONDS
+    svc.session_idle_seconds = settings.TERMINAL_SESSION_IDLE_MINUTES * 60
+    return svc
+
+
+terminal_service = _build_service()

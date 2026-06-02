@@ -18,6 +18,7 @@ ALWAYS_AVAILABLE = {
     "set_scheduled_task",
     "list_tasks",
     "cancel_task",
+    "run_command",
 }
 
 
@@ -81,11 +82,14 @@ class ToolRetriever:
 
         # Add companion tools (e.g. web_search always brings web_scrape)
         COMPANION_TOOLS = {
-            "web_search": "web_scrape",
+            "web_search": ["web_scrape"],
+            "open_terminal": ["send_to_terminal", "list_terminals", "close_terminal"],
         }
-        for tool, companion in COMPANION_TOOLS.items():
-            if tool in retrieved and companion not in retrieved:
-                retrieved.append(companion)
+        for tool, companions in COMPANION_TOOLS.items():
+            if tool in retrieved:
+                for companion in companions:
+                    if companion not in retrieved:
+                        retrieved.append(companion)
 
         return retrieved
 

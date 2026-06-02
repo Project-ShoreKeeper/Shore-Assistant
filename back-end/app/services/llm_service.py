@@ -51,6 +51,29 @@ PAUSE_DELIMITERS = frozenset(",:")
 PAUSE_MIN_LENGTH = 40
 
 
+def _parse_sse_line(line: str) -> "dict | str | None":
+    """
+    Parse one raw line of a Server-Sent Events stream from llama-server.
+
+    Returns:
+      - the string "[DONE]" when the server signals end-of-stream
+      - a dict for a parsed JSON payload
+      - None for blank lines, heartbeat/comment lines, non-data events,
+        or malformed JSON (which is tolerated, not raised)
+    """
+    if not line or not line.strip():
+        return None
+    if not line.startswith("data:"):
+        return None
+    payload = line[len("data:"):].strip()
+    if payload == "[DONE]":
+        return "[DONE]"
+    try:
+        return json.loads(payload)
+    except json.JSONDecodeError:
+        return None
+
+
 class LLMService:
     def __init__(self):
         self.base_url = settings.OLLAMA_BASE_URL
@@ -283,4 +306,6 @@ class LLMService:
             self._client = None
 
 
-llm_service = LLMService()
+# TEMPORARILY COMMENTED OUT - LLMService.__init__ references settings.OLLAMA_* which don't exist
+# Task 5 will rewrite stream_chat to use LLAMA_BASE_URL and eliminate this instance initialization
+# llm_service = LLMService()

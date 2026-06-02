@@ -99,3 +99,37 @@ async def test_confirm_approve_runs_command(gated_svc):
     # Note: sys.executable's binary name (python.exe) is in allow list
     assert result["exit_code"] == 0
     assert "42" in result["stdout"]
+
+
+async def test_open_pty_session_echoes(svc, monkeypatch):
+    # Open a python -c REPL replacement that we can drive
+    session = await svc.open_session(name="t1", shell="cmd", cwd=svc.default_cwd)
+    assert session["name"] == "t1"
+    # Send a command into cmd shell and read back
+    await svc.send_to_session("t1", "echo hello-from-pty\r\n", wait_seconds=2)
+    # Output should arrive via broadcast
+    calls = [c.args[0] for c in svc.broadcast.call_args_list]
+    outputs = [m for m in calls if m.get("type") == "terminal_session_output" and m.get("session_id") == session["session_id"]]
+    assert any("hello-from-pty" in m["data"] for m in outputs)
+    await svc.close_session("t1")
+
+
+async def test_list_sessions_includes_opened(svc):
+    await svc.open_session(name="x", shell="cmd", cwd=svc.default_cwd)
+    listed = svc.list_sessions()
+    names = [s["name"] for s in listed]
+    assert "x" in names
+    await svc.close_session("x")
+
+
+async def test_send_to_nonexistent_session_errors(svc):
+    result = await svc.send_to_session("ghost", "hi\r\n")
+    assert "error" in result
+    assert "ghost" in result["error"]
+
+
+async def test_open_duplicate_name_errors(svc):
+    await svc.open_session(name="dup", shell="cmd", cwd=svc.default_cwd)
+    result = await svc.open_session(name="dup", shell="cmd", cwd=svc.default_cwd)
+    assert "error" in result
+    await svc.close_session("dup")

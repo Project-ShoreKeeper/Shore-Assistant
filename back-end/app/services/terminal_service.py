@@ -57,6 +57,8 @@ class TerminalService:
         self.broadcast = None  # async callable(dict)
         self.confirm_timeout = 60
         self._pending_confirms: dict[str, asyncio.Future] = {}
+        self.sessions: dict = {}
+        self.session_idle_seconds = 30 * 60
 
     async def _broadcast(self, msg: dict):
         if self.broadcast:
@@ -94,6 +96,95 @@ class TerminalService:
         except asyncio.TimeoutError:
             self._pending_confirms.pop(request_id, None)
             return "deny"
+
+    async def _on_session_output(self, session, data: str):
+        await self._broadcast({
+            "type": "terminal_session_output",
+            "session_id": session.session_id,
+            "data": data,
+        })
+
+    async def _on_session_closed(self, session, reason: str, exit_code):
+        self.sessions.pop(session.name, None)
+        await self._broadcast({
+            "type": "terminal_session_closed",
+            "session_id": session.session_id,
+            "name": session.name,
+            "reason": reason,
+            "exit_code": exit_code,
+        })
+        self._audit({
+            "kind": "session_closed", "name": session.name,
+            "reason": reason, "exit_code": exit_code,
+        })
+
+    async def open_session(self, name: Optional[str], shell: str = "powershell", cwd: Optional[str] = None) -> dict:
+        from app.services.terminal_session import WinPtySession
+        cwd = cwd or self.default_cwd or os.getcwd()
+        if not Path(cwd).is_dir():
+            return {"error": f"CWD not found: {cwd}"}
+        name = name or f"session-{len(self.sessions) + 1}"
+        if name in self.sessions:
+            return {"error": f"Session '{name}' already exists"}
+        try:
+            session = WinPtySession(name, shell, cwd, self._on_session_output, self._on_session_closed)
+        except Exception as e:
+            return {"error": f"Failed to open: {e}"}
+        self.sessions[name] = session
+        await session.wait_ready()
+        await self._broadcast({
+            "type": "terminal_session_opened",
+            "session_id": session.session_id,
+            "name": name, "shell": shell, "cwd": cwd, "pid": session.pid,
+        })
+        self._audit({
+            "kind": "session_opened", "name": name,
+            "shell": shell, "cwd": cwd, "pid": session.pid,
+        })
+        return {"session_id": session.session_id, "name": name, "message": f"Opened {shell} session '{name}'"}
+
+    async def send_to_session(self, name: str, data: str, wait_seconds: float = 2.0) -> dict:
+        session = self.sessions.get(name)
+        if not session:
+            return {"error": f"No terminal named '{name}'. Open one first.", "available": list(self.sessions.keys())}
+        try:
+            await session.write(data)
+        except RuntimeError as e:
+            return {"error": str(e)}
+        raw = await session.collect_output(wait_seconds)
+        return {
+            "output": raw,
+            "ansi_stripped": strip_ansi(raw),
+            "exit_code_if_dead": None if session.pty.isalive() else session.pty.exitstatus,
+        }
+
+    def list_sessions(self) -> list:
+        now = time.time()
+        result = []
+        for name, s in self.sessions.items():
+            result.append({
+                "name": name,
+                "session_id": s.session_id,
+                "shell": s.shell,
+                "cwd": s.cwd,
+                "idle_seconds": int(now - s.last_activity),
+                "last_output_preview": s._buffer[-200:].decode("utf-8", errors="replace") if s._buffer else "",
+            })
+        return result
+
+    async def close_session(self, name: str) -> dict:
+        session = self.sessions.get(name)
+        if not session:
+            return {"closed": False, "message": f"No session named '{name}'"}
+        await session.close(reason="llm")
+        return {"closed": True, "message": f"Closed '{name}'"}
+
+    async def shutdown_all(self):
+        for name in list(self.sessions.keys()):
+            try:
+                await self.sessions[name].close(reason="shutdown")
+            except Exception:
+                pass
 
     async def run_oneshot(
         self,

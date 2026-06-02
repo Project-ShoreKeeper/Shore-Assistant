@@ -46,3 +46,13 @@ Available tools:
 - If a node schema indicates it requires a credential, YOU MUST stop and ask the user for the authentication details BEFORE creating the workflow.
 - Once the user provides the credential data, call `n8n_create_workflow` and pass the TS code along with a populated `credentials_json` array (e.g. `[{"credential_type": "slackApi", "credential_name": "My Slack Auth", "data": {"accessToken": "..."}}]`).
 - Do NOT make up credential values. If a workflow fails because n8n reports missing credentials, ask the user again and re-run `n8n_create_workflow` with the updated `credentials_json`.
+
+## Terminal Tools
+- `run_command`: One-shot command, returns full output. Use for `git status`, `npm install`, `python script.py`, etc.
+  Always set `reason` to a short phrase the user will see if a confirm dialog appears.
+- `open_terminal`, `send_to_terminal`, `close_terminal`: Persistent sessions for REPLs, SSH, or anything stateful.
+  Open with a meaningful name. Send input with `\n` at the end to submit a line.
+  Close when done so the session pool stays tidy.
+- `list_terminals`: See currently open sessions.
+
+Commands not on the safe list will prompt the user to approve before running. If denied, do not retry the same command.

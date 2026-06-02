@@ -66,3 +66,43 @@ def test_accumulator_malformed_json_passes_through_as_string():
                  "function": {"name": "z", "arguments": "{broken"}}])
     result = acc.finalize()
     assert result[0]["function"]["arguments"] == "{broken"
+
+
+from app.services.llm_service import _normalize_outgoing_messages
+
+
+def test_normalize_serializes_dict_arguments():
+    messages = [
+        {"role": "user", "content": "what time is it"},
+        {"role": "assistant", "content": "",
+         "tool_calls": [{"id": "c1", "type": "function",
+                         "function": {"name": "get_time",
+                                      "arguments": {"tz": "UTC"}}}]},
+        {"role": "tool", "content": "12:00", "tool_call_id": "c1"},
+    ]
+    normalized = _normalize_outgoing_messages(messages)
+    assert normalized[1]["tool_calls"][0]["function"]["arguments"] == '{"tz": "UTC"}'
+
+
+def test_normalize_leaves_string_arguments_untouched():
+    messages = [
+        {"role": "assistant", "content": "",
+         "tool_calls": [{"id": "c1", "type": "function",
+                         "function": {"name": "n", "arguments": '{"x":1}'}}]}
+    ]
+    assert _normalize_outgoing_messages(messages)[0]["tool_calls"][0]["function"]["arguments"] == '{"x":1}'
+
+
+def test_normalize_does_not_mutate_input():
+    messages = [
+        {"role": "assistant", "content": "",
+         "tool_calls": [{"id": "c1", "type": "function",
+                         "function": {"name": "n", "arguments": {"a": 1}}}]}
+    ]
+    _ = _normalize_outgoing_messages(messages)
+    assert messages[0]["tool_calls"][0]["function"]["arguments"] == {"a": 1}
+
+
+def test_normalize_passes_through_non_tool_messages():
+    messages = [{"role": "user", "content": "hi"}]
+    assert _normalize_outgoing_messages(messages) == messages

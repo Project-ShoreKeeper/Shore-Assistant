@@ -3,6 +3,7 @@ Ollama LLM streaming client using httpx.AsyncClient.
 Streams tokens from Qwen2.5-7B and detects sentence boundaries for TTS chunking.
 """
 
+import copy
 import json
 import httpx
 from pathlib import Path
@@ -126,6 +127,25 @@ class _ToolCallAccumulator:
 
     def is_empty(self) -> bool:
         return not self._by_index
+
+
+def _normalize_outgoing_messages(messages: list[dict]) -> list[dict]:
+    """
+    Return a deep-copied messages list where any assistant tool_calls have
+    their `function.arguments` JSON-encoded to a string. OpenAI requires the
+    wire format to be a string; our internal shape stores it as a dict for
+    direct tool execution. The input list is not mutated.
+    """
+    out = copy.deepcopy(messages)
+    for msg in out:
+        if msg.get("role") != "assistant":
+            continue
+        for tc in msg.get("tool_calls") or []:
+            fn = tc.get("function") or {}
+            args = fn.get("arguments")
+            if isinstance(args, dict):
+                fn["arguments"] = json.dumps(args)
+    return out
 
 
 class LLMService:

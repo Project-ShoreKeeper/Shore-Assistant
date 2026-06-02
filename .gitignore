@@ -43,5 +43,8 @@ faulthandler.txt
 PLAN_*.md
 plans/
 
+# Worktrees
+.worktrees/
+
 # Runtime data (memory, scheduler)
 back-end/data/

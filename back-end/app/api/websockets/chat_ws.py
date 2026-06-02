@@ -85,6 +85,9 @@ async def websocket_chat(websocket: WebSocket):
     connection_manager.register(send_json_safe, send_binary_safe)
     my_send_json = send_json_safe  # Track our own ref for cleanup guard
 
+    from app.services.terminal_service import terminal_service
+    terminal_service.broadcast = send_json_safe
+
     # Load persisted history
     persisted = memory_service.load(session_id="default")
     conversation_history: list[dict] = [
@@ -312,6 +315,48 @@ async def websocket_chat(websocket: WebSocket):
                             "message": "Memory cleared",
                         })
 
+                    elif msg_type == "terminal_confirm_response":
+                        terminal_service.resolve_confirm(
+                            data["request_id"], data["decision"]
+                        )
+
+                    elif msg_type == "terminal_user_input":
+                        name_lookup = next(
+                            (n for n, s in terminal_service.sessions.items()
+                             if s.session_id == data["session_id"]),
+                            None,
+                        )
+                        if name_lookup:
+                            await terminal_service.send_to_session(
+                                name_lookup, data["data"], wait_seconds=0
+                            )
+
+                    elif msg_type == "terminal_resize":
+                        name_lookup = next(
+                            (n for n, s in terminal_service.sessions.items()
+                             if s.session_id == data["session_id"]),
+                            None,
+                        )
+                        if name_lookup:
+                            await terminal_service.sessions[name_lookup].resize(
+                                data["cols"], data["rows"]
+                            )
+
+                    elif msg_type == "terminal_close_session":
+                        name_lookup = next(
+                            (n for n, s in terminal_service.sessions.items()
+                             if s.session_id == data["session_id"]),
+                            None,
+                        )
+                        if name_lookup:
+                            await terminal_service.close_session(name_lookup)
+
+                    elif msg_type == "terminal_resync":
+                        await send_json_safe({
+                            "type": "terminal_sessions_snapshot",
+                            "sessions": terminal_service.list_sessions(),
+                        })
+
                     else:
                         pass
 
@@ -403,3 +448,4 @@ async def websocket_chat(websocket: WebSocket):
         if connection_manager._send_json is my_send_json:
             notification_service.clear_agent_callback()
             connection_manager.unregister()
+            terminal_service.broadcast = None

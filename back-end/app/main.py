@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -42,7 +43,14 @@ async def lifespan(app: FastAPI):
     scheduler_service.set_fire_callback(notification_service.notify)
     scheduler_service.start()
 
+    # Start terminal idle reaper
+    from app.services.terminal_service import terminal_service, _idle_reaper
+    idle_reaper_task = asyncio.create_task(_idle_reaper(terminal_service))
+
     yield
+
+    idle_reaper_task.cancel()
+    await terminal_service.shutdown_all()
 
     scheduler_service.shutdown()
 

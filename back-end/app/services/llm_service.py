@@ -150,9 +150,9 @@ def _normalize_outgoing_messages(messages: list[dict]) -> list[dict]:
 
 class LLMService:
     def __init__(self):
-        self.base_url = settings.OLLAMA_BASE_URL
-        self.model = settings.OLLAMA_MODEL
-        self.timeout = settings.OLLAMA_TIMEOUT
+        self.base_url = settings.LLAMA_BASE_URL
+        self.model = settings.LLAMA_MODEL
+        self.timeout = settings.LLAMA_TIMEOUT
         self._client: Optional[httpx.AsyncClient] = None
 
     async def _get_client(self) -> httpx.AsyncClient:
@@ -171,62 +171,59 @@ class LLMService:
         tools: Optional[list[dict]] = None,
     ) -> AsyncGenerator[dict, None]:
         """
-        Stream tokens from Ollama chat API.
-        Yields dicts: {"type": "thinking"|"content", "token": "..."} or {"type": "tool_calls", "tool_calls": [...]}
+        Stream tokens from llama-server's OpenAI-compatible /v1/chat/completions.
+        Yields dicts:
+          {"type": "thinking", "token": "..."}  (from delta.reasoning_content)
+          {"type": "content",  "token": "..."}  (from delta.content)
+          {"type": "tool_calls", "tool_calls": [...]}  (once, after stream ends)
         """
         client = await self._get_client()
 
-        all_messages = [
+        all_messages = _normalize_outgoing_messages([
             {"role": "system", "content": system_prompt or SYSTEM_PROMPT},
             *messages,
-        ]
+        ])
 
         payload = {
             "model": self.model,
             "messages": all_messages,
             "stream": True,
-            "options": {"num_ctx": settings.OLLAMA_NUM_CTX},
-            "think": thinking,
         }
         if tools:
             payload["tools"] = tools
+        if thinking:
+            payload["reasoning_effort"] = "medium"
 
-        token_count = 0
-        thinking_token_count = 0
-        line_count = 0
-        accumulated_tool_calls = []
+        accumulator = _ToolCallAccumulator()
 
-        async with client.stream("POST", "/api/chat", json=payload) as response:
+        async with client.stream("POST", "/v1/chat/completions", json=payload) as response:
             response.raise_for_status()
             async for line in response.aiter_lines():
-                if not line.strip():
+                parsed = _parse_sse_line(line)
+                if parsed is None:
                     continue
-                line_count += 1
-                try:
-                    data = json.loads(line)
+                if parsed == "[DONE]":
+                    break
 
-                    msg = data.get("message", {})
-                    thinking_token = msg.get("thinking", "")
-                    content_token = msg.get("content", "")
-                    tool_calls = msg.get("tool_calls")
-
-                    if thinking_token:
-                        thinking_token_count += 1
-                        yield {"type": "thinking", "token": thinking_token}
-                    if content_token:
-                        token_count += 1
-                        yield {"type": "content", "token": content_token}
-                    if tool_calls:
-                        accumulated_tool_calls.extend(tool_calls)
-
-                    if data.get("done"):
-                        break
-                except json.JSONDecodeError:
+                choices = parsed.get("choices") or []
+                if not choices:
                     continue
+                delta = choices[0].get("delta") or {}
 
-        # After streaming ends, yield tool_calls if any were found
-        if accumulated_tool_calls:
-            yield {"type": "tool_calls", "tool_calls": accumulated_tool_calls}
+                reasoning = delta.get("reasoning_content")
+                if reasoning:
+                    yield {"type": "thinking", "token": reasoning}
+
+                content = delta.get("content")
+                if content:
+                    yield {"type": "content", "token": content}
+
+                tool_call_deltas = delta.get("tool_calls")
+                if tool_call_deltas:
+                    accumulator.absorb(tool_call_deltas)
+
+        if not accumulator.is_empty():
+            yield {"type": "tool_calls", "tool_calls": accumulator.finalize()}
 
 
 
@@ -380,6 +377,4 @@ class LLMService:
             self._client = None
 
 
-# TEMPORARILY COMMENTED OUT - LLMService.__init__ references settings.OLLAMA_* which don't exist
-# Task 5 will rewrite stream_chat to use LLAMA_BASE_URL and eliminate this instance initialization
-# llm_service = LLMService()
+llm_service = LLMService()

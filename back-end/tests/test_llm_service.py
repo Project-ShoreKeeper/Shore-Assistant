@@ -106,3 +106,124 @@ def test_normalize_does_not_mutate_input():
 def test_normalize_passes_through_non_tool_messages():
     messages = [{"role": "user", "content": "hi"}]
     assert _normalize_outgoing_messages(messages) == messages
+
+
+from unittest.mock import AsyncMock, MagicMock, patch
+
+
+class _FakeStreamResponse:
+    """Minimal async-context-manager response mimicking httpx.AsyncClient.stream()."""
+    def __init__(self, lines: list[str]):
+        self._lines = lines
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return False
+
+    def raise_for_status(self):
+        return None
+
+    async def aiter_lines(self):
+        for line in self._lines:
+            yield line
+
+
+def _build_sse_lines(events: list[dict]) -> list[str]:
+    return [f"data: {json.dumps(e)}" for e in events] + ["data: [DONE]"]
+
+
+async def test_stream_chat_yields_content_thinking_and_tool_calls():
+    from app.services.llm_service import LLMService
+
+    events = [
+        {"choices": [{"delta": {"reasoning_content": "thinking..."}}]},
+        {"choices": [{"delta": {"content": "Hello"}}]},
+        {"choices": [{"delta": {"content": " world"}}]},
+        {"choices": [{"delta": {"tool_calls": [
+            {"index": 0, "id": "call_1", "type": "function",
+             "function": {"name": "get_time", "arguments": ""}}
+        ]}}]},
+        {"choices": [{"delta": {"tool_calls": [
+            {"index": 0, "function": {"arguments": '{"tz":"UTC"}'}}
+        ]}, "finish_reason": "tool_calls"}]},
+    ]
+    fake_lines = _build_sse_lines(events)
+
+    fake_client = MagicMock()
+    fake_client.is_closed = False
+    fake_client.stream = MagicMock(return_value=_FakeStreamResponse(fake_lines))
+
+    service = LLMService()
+    service._client = fake_client
+
+    yielded = []
+    async for ev in service.stream_chat([{"role": "user", "content": "hi"}], thinking=True):
+        yielded.append(ev)
+
+    types = [e["type"] for e in yielded]
+    assert types == ["thinking", "content", "content", "tool_calls"]
+    assert yielded[0]["token"] == "thinking..."
+    assert yielded[1]["token"] == "Hello"
+    assert yielded[2]["token"] == " world"
+    assert yielded[3]["tool_calls"][0]["id"] == "call_1"
+    assert yielded[3]["tool_calls"][0]["function"]["name"] == "get_time"
+    assert yielded[3]["tool_calls"][0]["function"]["arguments"] == {"tz": "UTC"}
+
+
+async def test_stream_chat_posts_to_v1_chat_completions_with_normalized_args():
+    from app.services.llm_service import LLMService
+
+    captured = {}
+
+    def stream_capture(method, url, **kwargs):
+        captured["method"] = method
+        captured["url"] = url
+        captured["json"] = kwargs.get("json")
+        return _FakeStreamResponse(["data: [DONE]"])
+
+    fake_client = MagicMock()
+    fake_client.is_closed = False
+    fake_client.stream = MagicMock(side_effect=stream_capture)
+
+    service = LLMService()
+    service._client = fake_client
+
+    history = [
+        {"role": "assistant", "content": "",
+         "tool_calls": [{"id": "c1", "type": "function",
+                         "function": {"name": "n", "arguments": {"a": 1}}}]}
+    ]
+    async for _ in service.stream_chat(history, thinking=False):
+        pass
+
+    assert captured["method"] == "POST"
+    assert captured["url"] == "/v1/chat/completions"
+    payload = captured["json"]
+    assert payload["stream"] is True
+    assert "reasoning_effort" not in payload
+    sent_assistant = next(m for m in payload["messages"] if m["role"] == "assistant")
+    assert sent_assistant["tool_calls"][0]["function"]["arguments"] == '{"a": 1}'
+
+
+async def test_stream_chat_sets_reasoning_effort_when_thinking():
+    from app.services.llm_service import LLMService
+
+    captured = {}
+
+    def stream_capture(method, url, **kwargs):
+        captured["json"] = kwargs.get("json")
+        return _FakeStreamResponse(["data: [DONE]"])
+
+    fake_client = MagicMock()
+    fake_client.is_closed = False
+    fake_client.stream = MagicMock(side_effect=stream_capture)
+
+    service = LLMService()
+    service._client = fake_client
+
+    async for _ in service.stream_chat([{"role": "user", "content": "x"}], thinking=True):
+        pass
+
+    assert captured["json"]["reasoning_effort"] == "medium"

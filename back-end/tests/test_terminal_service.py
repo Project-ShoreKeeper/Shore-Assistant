@@ -133,3 +133,66 @@ async def test_open_duplicate_name_errors(svc):
     result = await svc.open_session(name="dup", shell="cmd", cwd=svc.default_cwd)
     assert "error" in result
     await svc.close_session("dup")
+
+
+from unittest.mock import MagicMock
+from app.services.terminal_backend import NodePtyBackend
+from app.services.node_pty_client import NodePtyClient
+
+
+def _mk_node_svc(tmp_path, mock_call):
+    client = MagicMock(spec=NodePtyClient)
+    client.call = mock_call
+    client.on_notification = MagicMock()
+    client.on_disconnect = MagicMock()
+    client.close = AsyncMock()
+    backend = NodePtyBackend(client)
+    svc = TerminalService(
+        whitelist=None,
+        runs_dir=tmp_path / "runs",
+        audit_log_path=tmp_path / "audit.log",
+        default_cwd=str(tmp_path),
+        oneshot_timeout=10,
+        max_output_bytes=10_000,
+        llm_preview_bytes=200,
+        backend=backend,
+    )
+    svc.broadcast = AsyncMock()
+    return svc, backend, client
+
+
+async def test_node_backend_oneshot(tmp_path):
+    async def fake_call(method, params, timeout=None):
+        if method == "oneshot.run":
+            return {"exit_code": 0, "duration_ms": 42, "timed_out": False}
+        raise AssertionError(f"unexpected call: {method}")
+    svc, backend, client = _mk_node_svc(tmp_path, AsyncMock(side_effect=fake_call))
+    result = await svc.run_oneshot("echo hi", shell="powershell")
+    assert result["exit_code"] == 0
+    assert result["duration_ms"] == 42
+
+
+async def test_node_backend_session_lifecycle(tmp_path):
+    async def fake_call(method, params, timeout=None):
+        if method == "session.open":
+            return {"session_id": params["session_id"], "pid": 1234}
+        if method == "session.send":
+            return {"ok": True}
+        if method == "session.close":
+            return {"closed": True}
+        raise AssertionError(f"unexpected call: {method}")
+    svc, backend, client = _mk_node_svc(tmp_path, AsyncMock(side_effect=fake_call))
+
+    open_result = await svc.open_session("dev", shell="powershell")
+    assert "session_id" in open_result
+    assert "dev" in svc.sessions
+
+    # Simulate Node sending session.output notification
+    await backend._on_notification("session.output", {
+        "session_id": open_result["session_id"], "data": "PS C:\\>"
+    })
+    assert "PS C" in svc.sessions["dev"]["_buffer_tail"]
+
+    await svc.send_to_session("dev", "ls\r\n", wait_seconds=0)
+    close_result = await svc.close_session("dev")
+    assert close_result["closed"] is True

@@ -43,6 +43,15 @@ const ALLOWED_IMAGE_MIME = new Set([
   "image/gif",
 ]);
 
+// crypto.randomUUID() only exists in "secure contexts" (HTTPS, localhost) and
+// modern browsers — fall back to a Math.random ID anywhere it's missing so
+// devs hitting Vite via a LAN IP don't blow up.
+function makeId(): string {
+  const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
+  if (c?.randomUUID) return c.randomUUID();
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+}
+
 async function fileToAttachment(file: File): Promise<ImageAttachment | null> {
   if (!ALLOWED_IMAGE_MIME.has(file.type)) return null;
   if (file.size > MAX_IMAGE_BYTES) return null;
@@ -67,7 +76,7 @@ async function fileToAttachment(file: File): Promise<ImageAttachment | null> {
   const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
   const sizeKb = Math.round((dataUrl.length * 0.75) / 1024);
   return {
-    id: crypto.randomUUID(),
+    id: makeId(),
     dataUrl,
     width: targetW,
     height: targetH,

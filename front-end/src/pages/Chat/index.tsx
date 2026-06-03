@@ -14,8 +14,10 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
+import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { useAssistant, type ChatMessage } from "../../hooks/useAssistant";
 import AgentActionLog from "../../components/AgentActionLog";
+import TerminalPanel from "../../components/Terminal/TerminalPanel";
 import SettingsPanel from "./SettingsPanel";
 
 /** Wrap bare URLs in markdown link syntax with truncated display text. */
@@ -428,8 +430,10 @@ function PageChat() {
 
   return (
     <Flex style={{ height: "100%", width: "100%" }}>
-      {/* Left column: Chat interface */}
-      <Flex direction="column" style={{ flex: 1, position: "relative" }}>
+      <PanelGroup direction="horizontal" style={{ flex: 1 }}>
+        <Panel defaultSize={55} minSize={30}>
+          {/* Left column: Chat interface */}
+          <Flex direction="column" style={{ height: "100%", position: "relative" }}>
         {/* Chat body */}
         <ScrollArea
           type="auto"
@@ -601,7 +605,13 @@ function PageChat() {
             </Text>
           )}
         </Box>
-      </Flex>
+          </Flex>
+        </Panel>
+        <PanelResizeHandle style={{ width: "4px", background: "var(--gray-5)", cursor: "col-resize" }} />
+        <Panel defaultSize={45} minSize={20}>
+          <TerminalPanel />
+        </Panel>
+      </PanelGroup>
 
       {/* Right column: Settings */}
       <SettingsPanel

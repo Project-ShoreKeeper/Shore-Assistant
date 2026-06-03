@@ -119,3 +119,39 @@ async def test_in_flight_rejected_on_close(server_factory):
         await task
     assert exc.value.code == -32603
     await client.close()
+
+
+async def test_reconnect_after_drop(server_factory):
+    request_count = {"n": 0}
+
+    async def handler(ws):
+        request_count["n"] += 1
+        if request_count["n"] == 1:
+            await ws.close()
+            return
+        msg = json.loads(await ws.recv())
+        await ws.send(json.dumps({
+            "jsonrpc": "2.0",
+            "id": msg["id"],
+            "result": {"pong": True, "version": "test"},
+        }))
+        await asyncio.sleep(0.5)
+
+    port = await server_factory(handler, port=19107)
+    client = NodePtyClient(
+        url=f"ws://127.0.0.1:{port}",
+        reconnect_base_ms=50,
+        reconnect_max_ms=200,
+    )
+    client.start_auto_reconnect()
+    await client.connect()
+    await asyncio.sleep(0.1)  # let server close first connection
+    # Should reconnect transparently
+    for _ in range(20):
+        if client.is_connected:
+            break
+        await asyncio.sleep(0.1)
+    assert client.is_connected
+    result = await client.call("ping", {})
+    assert result["pong"] is True
+    await client.close()

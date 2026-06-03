@@ -39,6 +39,8 @@ class NodePtyClient:
         self._notification_handler: Optional[NotificationHandler] = None
         self._reader_task: Optional[asyncio.Task] = None
         self._connect_lock = asyncio.Lock()
+        self._auto_reconnect = False
+        self._reconnect_task: Optional[asyncio.Task] = None
 
     @property
     def is_connected(self) -> bool:
@@ -46,6 +48,26 @@ class NodePtyClient:
 
     def on_notification(self, handler: NotificationHandler) -> None:
         self._notification_handler = handler
+
+    def start_auto_reconnect(self) -> None:
+        self._auto_reconnect = True
+        if self._reconnect_task is None or self._reconnect_task.done():
+            self._reconnect_task = asyncio.create_task(self._reconnect_loop())
+
+    async def _reconnect_loop(self) -> None:
+        backoff_ms = self.reconnect_base_ms
+        while self._auto_reconnect:
+            if self.is_connected:
+                backoff_ms = self.reconnect_base_ms
+                await asyncio.sleep(0.5)
+                continue
+            try:
+                await self.connect()
+                backoff_ms = self.reconnect_base_ms
+            except Exception as e:
+                log.info("reconnect failed (%s); sleeping %dms", e, backoff_ms)
+                await asyncio.sleep(backoff_ms / 1000)
+                backoff_ms = min(backoff_ms * 2, self.reconnect_max_ms)
 
     async def connect(self) -> None:
         async with self._connect_lock:
@@ -73,6 +95,14 @@ class NodePtyClient:
             raise NodePtyRpcError(-32603, f"timeout waiting for {method}")
 
     async def close(self) -> None:
+        self._auto_reconnect = False
+        if self._reconnect_task and not self._reconnect_task.done():
+            self._reconnect_task.cancel()
+            try:
+                await self._reconnect_task
+            except asyncio.CancelledError:
+                pass
+            self._reconnect_task = None
         if self._reader_task:
             self._reader_task.cancel()
             try:

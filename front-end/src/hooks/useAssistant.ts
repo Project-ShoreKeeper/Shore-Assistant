@@ -27,11 +27,12 @@ export interface ChatMessage {
 
 export interface AgentAction {
   id: string;
-  action: string;
+  action: "tool_call" | "tool_result";
   detail: string;
   tool?: string;
   args?: Record<string, unknown>;
   result?: string;
+  status: "running" | "completed" | "error";
   timestamp: Date;
 }
 
@@ -107,14 +108,6 @@ export function useAssistant(): UseAssistantReturn {
   useEffect(() => {
     thinkingEnabledRef.current = thinkingEnabled;
   }, [thinkingEnabled]);
-
-  useEffect(() => {
-    voiceModeRef.current = voiceMode;
-  }, [voiceMode]);
-
-  useEffect(() => {
-    fishVoiceRef.current = fishVoice;
-  }, [fishVoice]);
 
   // ── Initialize VAD ──
   useEffect(() => {
@@ -213,44 +206,75 @@ export function useAssistant(): UseAssistantReturn {
         }
 
         case "agent_action": {
-          const actionItem: AgentAction = {
-            id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
-            action: msg.action,
-            detail: msg.detail,
-            tool: msg.tool,
-            args: msg.args,
-            result: msg.result,
-            timestamp: new Date(msg.timestamp * 1000),
-          };
+          if (msg.action === "tool_call") {
+            const actionItem: AgentAction = {
+              id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
+              action: "tool_call",
+              detail: msg.detail,
+              tool: msg.tool,
+              args: msg.args,
+              status: "running",
+              timestamp: new Date(msg.timestamp * 1000),
+            };
 
-          setMessages((prev) => {
-            const lastMsg = prev[prev.length - 1];
-            if (lastMsg?.role === "assistant" && lastMsg.isStreaming) {
-              const updated = [...prev];
-              updated[updated.length - 1] = {
-                ...lastMsg,
-                agentActions: [...(lastMsg.agentActions || []), actionItem]
-              };
-              return updated;
-            } else {
-              const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
-              streamingMsgIdRef.current = id;
-              return [
-                ...prev,
-                {
-                  id,
-                  role: "assistant",
-                  text: "",
-                  isStreaming: true,
-                  timestamp: new Date(),
-                  agentActions: [actionItem]
-                },
-              ];
-            }
-          });
+            setMessages((prev) => {
+              const lastMsg = prev[prev.length - 1];
+              if (lastMsg?.role === "assistant" && lastMsg.isStreaming) {
+                const updated = [...prev];
+                updated[updated.length - 1] = {
+                  ...lastMsg,
+                  agentActions: [...(lastMsg.agentActions || []), actionItem],
+                };
+                return updated;
+              } else {
+                const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+                streamingMsgIdRef.current = id;
+                return [
+                  ...prev,
+                  {
+                    id,
+                    role: "assistant",
+                    text: "",
+                    isStreaming: true,
+                    timestamp: new Date(),
+                    agentActions: [actionItem],
+                  },
+                ];
+              }
+            });
 
-          if (msg.action === "thinking") {
             setIsAssistantThinking(true);
+          } else if (msg.action === "tool_result") {
+            const isError =
+              msg.status === "error" || (msg.result?.startsWith("Error") ?? false);
+
+            setMessages((prev) => {
+              const lastMsg = prev[prev.length - 1];
+              if (
+                lastMsg?.role === "assistant" &&
+                lastMsg.isStreaming &&
+                lastMsg.agentActions
+              ) {
+                const updated = [...prev];
+                const updatedActions = [...lastMsg.agentActions];
+                const runningIdx = updatedActions.findLastIndex(
+                  (a) => a.status === "running" && a.tool === msg.tool,
+                );
+                if (runningIdx >= 0) {
+                  updatedActions[runningIdx] = {
+                    ...updatedActions[runningIdx],
+                    result: msg.result,
+                    status: isError ? "error" : "completed",
+                  };
+                }
+                updated[updated.length - 1] = {
+                  ...lastMsg,
+                  agentActions: updatedActions,
+                };
+                return updated;
+              }
+              return prev;
+            });
           }
           break;
         }
@@ -451,7 +475,7 @@ export function useAssistant(): UseAssistantReturn {
         thinking: thinkingEnabled,
       });
     }
-  }, [language, thinkingEnabled, voiceMode, fishVoice, wsStatus]);
+  }, [language, thinkingEnabled, wsStatus]);
 
   // ── Controls ──
 

@@ -18,6 +18,9 @@ ALWAYS_AVAILABLE = {
     "set_scheduled_task",
     "list_tasks",
     "cancel_task",
+    "ask_claude",
+    "ask_gemini",
+    "ask_openai",
 }
 
 
@@ -110,6 +113,79 @@ class ToolRetriever:
                 # Build a concise description with args info from the docstring
                 lines.append(f"- {tool.name}: {tool.description}")
         return "\n".join(lines)
+
+    def get_tool_schemas(self, tool_names: list[str], all_tools: list) -> list[dict]:
+        """Convert selected tools to OpenAI-compatible JSON schema for llama-server's native tool calling.
+
+        Args:
+            tool_names: list of tool names to include in the output.
+            all_tools: list of LangChain BaseTool objects to look up from.
+
+        Returns:
+            List of schemas in `{"type": "function", "function": {...}}` shape.
+        """
+        tool_map = {t.name: t for t in all_tools}
+        schemas = []
+        for name in tool_names:
+            tool = tool_map.get(name)
+            if not tool:
+                continue
+
+            properties, required = self._extract_properties(tool)
+
+            schemas.append({
+                "type": "function",
+                "function": {
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": {
+                        "type": "object",
+                        "properties": properties,
+                        "required": required,
+                    },
+                },
+            })
+        return schemas
+
+    @staticmethod
+    def _resolve_type(prop_def: dict) -> str:
+        """Resolve the JSON schema type, handling Pydantic v2's anyOf shape for optional fields."""
+        if "type" in prop_def:
+            return prop_def["type"]
+        for candidate in prop_def.get("anyOf", []):
+            t = candidate.get("type")
+            if t and t != "null":
+                return t
+        return "string"
+
+    @staticmethod
+    def _extract_properties(tool) -> tuple[dict, list[str]]:
+        """Extract JSON schema properties and required list from a LangChain tool's args_schema."""
+        if not hasattr(tool, "args_schema") or tool.args_schema is None:
+            return {}, []
+        try:
+            # Pydantic v2 uses model_json_schema; fall back to .schema() for v1 compatibility
+            if hasattr(tool.args_schema, "model_json_schema"):
+                schema = tool.args_schema.model_json_schema()
+            else:
+                schema = tool.args_schema.schema()
+        except Exception:
+            return {}, []
+
+        properties = {}
+        for prop_name, prop_def in schema.get("properties", {}).items():
+            prop_entry = {"type": ToolRetriever._resolve_type(prop_def)}
+            if "description" in prop_def:
+                prop_entry["description"] = prop_def["description"]
+            if "default" in prop_def:
+                prop_entry["default"] = prop_def["default"]
+            if "enum" in prop_def:
+                prop_entry["enum"] = prop_def["enum"]
+            properties[prop_name] = prop_entry
+
+        # Drop required fields that didn't survive property extraction
+        required = [r for r in schema.get("required", []) if r in properties]
+        return properties, required
 
 
 tool_retriever = ToolRetriever()

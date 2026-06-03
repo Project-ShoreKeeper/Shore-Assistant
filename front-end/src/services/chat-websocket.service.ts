@@ -29,11 +29,12 @@ export interface TranscriptMessage {
 
 export interface AgentActionMessage {
   type: "agent_action";
-  action: "thinking" | "tool_call" | "tool_result" | "vision_swap";
+  action: "tool_call" | "tool_result" | "vision_swap";
   detail: string;
   tool?: string;
   args?: Record<string, unknown>;
   result?: string;
+  status?: "completed" | "error";
   timestamp: number;
 }
 

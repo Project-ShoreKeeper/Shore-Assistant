@@ -13,15 +13,10 @@ class Settings(BaseSettings):
     # STT
     STT_ENABLED: bool = False
 
-    # Ollama LLM
-    OLLAMA_BASE_URL: str = "http://localhost:11434"
-    OLLAMA_MODEL: str = "gemma4-e4b"
-    OLLAMA_TIMEOUT: int = 120
-    OLLAMA_NUM_CTX: int = 8192
-
-    # Vision
-    VISION_MODEL: str = "qwen2.5vl:7b"
-    VISION_USE_PRIMARY_MODEL: bool = False  # True = use primary LLM (must be multimodal), False = hot-swap to VISION_MODEL
+    # Llama-server LLM (llama.cpp OpenAI-compatible API)
+    LLAMA_BASE_URL: str = "http://localhost:8080"
+    LLAMA_MODEL: str = "gemma-4-26B-A4B-it-UD-Q5_K_M"  # llama-server typically ignores this; used only as a display label
+    LLAMA_TIMEOUT: int = 120
 
     # Piper TTS
     PIPER_PATH: str = "piper"
@@ -51,6 +46,13 @@ class Settings(BaseSettings):
     N8N_WEBHOOK_SECRET: str = ""
     N8N_REFRESH_INTERVAL_MINUTES: int = 0
     N8N_WORKFLOWS_DIR: str = "data/n8n-workflows"
+
+    # Cloud AI sub-agents
+    ANTHROPIC_API_KEY: str = ""
+    GEMINI_API_KEY: str = ""
+    OPENAI_API_KEY: str = ""
+    CLOUD_MAX_TOKENS: int = 4096
+    CLOUD_HISTORY_MAX_TURNS: int = 10
 
     class Config:
         env_file = ".env"

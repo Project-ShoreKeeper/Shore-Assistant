@@ -18,14 +18,14 @@ FastAPI Backend (Python)
   ├── /ws/audio   — STT-only endpoint (legacy, used by VAD Test page)
   ├── /ws/chat    — Full pipeline: Audio/Text → STT → Agent → LLM → TTS
   ├── Whisper STT (HuggingFace Transformers, GPU/CPU auto-detect)
-  ├── LLM Agent   (Ollama gemma4-e4b via httpx streaming, LangGraph StateGraph)
+  ├── LLM Agent   (llama.cpp llama-server, OpenAI-compatible /v1/chat/completions, LangGraph StateGraph)
   ├── Tool Retriever (sentence-transformers embedding-based selection, all-MiniLM-L6-v2)
   ├── Tools        (system_time, read_file, list_directory, clear_memory, search_web, web_scrape, capture_screen, analyze_screen, set_reminder, set_scheduled_task, cancel_task, list_tasks + dynamic n8n workflow tools)
   ├── Scheduler    (APScheduler — one-shot reminders + recurring tasks, persisted to JSON)
   ├── Notifications (proactive push via ConnectionManager → agent pipeline → TTS; sources: scheduler, n8n webhooks)
   ├── Memory       (per-session JSON history, survives restarts, max 20 turns)
   ├── TTS          (Kokoro TTS → Int16 PCM streaming, local/offline, multi-language)
-  ├── Vision       (mss screen capture → primary model direct or qwen2.5vl:7b hot-swap)
+  ├── Vision       (mss screen capture → primary multimodal model via /v1/chat/completions)
   └── n8n          (two-way integration: dynamic workflow tools + inbound webhook notifications)
 ```
 
@@ -36,7 +36,7 @@ Shore-Assistant/
 ├── back-end/
 │   └── app/
 │       ├── main.py                     # FastAPI app factory + router includes
-│       ├── core/config.py              # Pydantic settings (Ollama, TTS, Vision)
+│       ├── core/config.py              # Pydantic settings (llama-server, TTS, Vision)
 │       ├── api/
 │       │   ├── endpoints/
 │       │   │   ├── health.py           # GET / and /health
@@ -52,11 +52,9 @@ Shore-Assistant/
 │       │   └── user.txt                # Optional user context appended to persona
 │       ├── services/
 │       │   ├── stt_service.py          # Whisper via Transformers
-│       │   ├── llm_service.py          # Ollama streaming client (httpx), persona loader
+│       │   ├── llm_service.py          # llama-server OpenAI-compatible streaming client (httpx), persona loader
 │       │   ├── agent_service.py        # LangGraph StateGraph agent loop
 │       │   ├── tts_service.py          # Kokoro TTS, CPU inference, 24kHz PCM, en/ja/zh voices
-│       │   ├── vision_service.py       # Screen capture (mss) + vision inference
-│       │   ├── vram_manager.py         # VRAM hot-swap orchestration
 │       │   ├── memory_service.py       # Per-session JSON conversation history
 │       │   ├── scheduler_service.py    # APScheduler: one-shot & recurring tasks
 │       │   ├── notification_service.py # Scheduler/n8n → agent pipeline → proactive TTS
@@ -129,10 +127,17 @@ npm run lint         # ESLint
 
 ### External Dependencies
 ```bash
-# Ollama (required for LLM + Vision)
-ollama pull gemma4-e4b       # or your configured OLLAMA_MODEL
-ollama pull qwen2.5vl:7b
-ollama serve
+# llama.cpp llama-server (required for LLM + Vision)
+# Build llama.cpp with CUDA + vision (mmproj) support, then run:
+llama-server \
+  -m models/<your-multimodal-model>.gguf \
+  --mmproj models/<your-mmproj>.gguf \
+  --jinja \
+  --host 0.0.0.0 --port 8080 \
+  --ctx-size 8192
+
+# --jinja is required for tool calling.
+# --mmproj is required for capture_screen / analyze_screen.
 
 # espeak-ng (required for Kokoro TTS English phonemes)
 winget install espeak-ng.espeak-ng
@@ -142,13 +147,13 @@ docker compose -f docker-compose.n8n.yml up -d
 
 ## Key Technical Constraints
 
-- **16GB VRAM budget**: Whisper (~1.5GB) + primary LLM. Vision uses primary model directly (Gemma4 is multimodal) by default; hot-swap to dedicated vision model available via `VISION_USE_PRIMARY_MODEL=False`.
+- **16GB VRAM budget**: Whisper (~1.5GB) + primary LLM. Vision runs through the primary multimodal model via llama-server's `/v1/chat/completions` (no hot-swap). The primary model must be multimodal with an mmproj loaded.
 - **Audio pipeline**: 16kHz sample rate, Float32 format, 512-sample VAD chunks (Silero requirement).
 - **Two WebSocket endpoints**: `/ws/audio` (binary-only STT) and `/ws/chat` (mixed JSON + binary for full pipeline). Don't merge them.
 - **Tool call format**: LLM outputs ` ```tool\n{"tool": "name", "args": {...}}\n``` ` blocks. Parsed by regex in `agent_service.py`. Agent loop is a LangGraph `StateGraph`.
 - **Tool retrieval**: Only relevant tools are injected per request via embedding cosine similarity (`tool_retriever.py`). Always-available tools: `get_system_time`, `clear_memory`, `set_reminder`, `set_scheduled_task`, `list_tasks`, `cancel_task`. Companion tools: `web_search` always includes `web_scrape`. Dynamic n8n tools are auto-registered at startup.
 - **Auto-injected time**: Current timestamp is prepended to the system prompt every request so the LLM always has fresh time.
-- **Thinking mode**: Frontend toggle sends `thinking` config via WebSocket → passed to Ollama `"think"` parameter. Thinking tokens stream into collapsible UI block.
+- **Thinking mode**: Frontend toggle sends `thinking` config via WebSocket → passed to llama-server as `reasoning_effort: "medium"`. Reasoning tokens stream into collapsible UI block.
 - **Persona system**: System prompt loaded from `prompts/{PERSONA}.txt`, with `tools.txt` and optional `user.txt` appended. Configured via `PERSONA` env var (`base` or `kuudere`).
 - **Scheduler**: APScheduler manages one-shot reminders and recurring tasks. Tasks persist to `data/scheduled_tasks.json`. Missed tasks fire immediately on restart.
 - **Proactive notifications**: When a task fires, `NotificationService` feeds a prompt to the agent pipeline so Shore responds in-character with TTS. Queued to disk if no client is connected, drained on reconnect.
@@ -166,12 +171,9 @@ All backend config via environment variables or `.env` file in `back-end/`:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| OLLAMA_BASE_URL | http://localhost:11434 | Ollama API URL |
-| OLLAMA_MODEL | gemma4-e4b | Primary LLM model |
-| OLLAMA_TIMEOUT | 120 | Request timeout (seconds) |
-| OLLAMA_NUM_CTX | 8192 | LLM context window size |
-| VISION_MODEL | qwen2.5vl:7b | Vision model for screen analysis (hot-swap mode) |
-| VISION_USE_PRIMARY_MODEL | True | Use primary LLM for vision (True) or hot-swap to VISION_MODEL (False) |
+| LLAMA_BASE_URL | http://localhost:8080 | llama-server URL |
+| LLAMA_MODEL | (empty) | Optional label sent in the `model` field (llama-server typically ignores) |
+| LLAMA_TIMEOUT | 120 | Request timeout (seconds) |
 | PERSONA | kuudere | Persona template to load (`base` or `kuudere`) |
 | MEMORY_DIR | data/memory | Directory for per-session conversation JSON files |
 | MEMORY_MAX_TURNS | 20 | Max conversation turns retained per session |
@@ -211,7 +213,7 @@ All backend config via environment variables or `.env` file in `back-end/`:
 - [x] Math rendering — KaTeX support for inline/block LaTeX in chat
 - [x] Auto-inject time — current timestamp in system prompt prevents stale time answers
 - [x] Web search → scrape chaining — companion tools + prompt rule for automatic follow-up
-- [x] Vision via primary model — Gemma4 multimodal direct analysis, no hot-swap needed
+- [x] Vision via primary model — multimodal primary served by llama-server, no hot-swap
 
 ### Proactive Agent (Event Loop)
 - [x] Scheduled tasks — set_reminder (one-shot) + set_scheduled_task (recurring) tools with APScheduler

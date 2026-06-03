@@ -189,9 +189,6 @@ async def websocket_chat(websocket: WebSocket):
         if tts_enabled:
             tts_task = asyncio.create_task(tts_worker(sentence_queue))
 
-        # Track whether current LLM response contains a tool call
-        tts_suppressed = False
-
         try:
             async for event in agent_service.run(
                 user_text, conversation_history,
@@ -209,28 +206,17 @@ async def websocket_chat(websocket: WebSocket):
                 await send_json_safe(event)
 
                 # When a tool call is detected, speak a friendly line
-                # instead of the raw JSON block
                 if tts_enabled and event.get("type") == "agent_action":
                     if event.get("action") == "tool_call":
                         tool_name = event.get("tool", "a tool")
                         friendly = _tool_spoken_name(tool_name)
                         await sentence_queue.put(f"Let me use {friendly}.")
-                        tts_suppressed = False  # Reset for next LLM round
 
-                # Feed completed sentences to TTS (skip tool-call content)
+                # Feed completed sentences to TTS
                 if tts_enabled and event.get("type") == "llm_sentence":
-                    if not tts_suppressed:
-                        clean = sanitize_for_tts(event["text"])
-                        if clean:
-                            # Check if this sentence is starting a tool block
-                            if "```" in event["text"] or event["text"].strip().startswith("{") or '"tool"' in event["text"]:
-                                tts_suppressed = True
-                            else:
-                                await sentence_queue.put(clean)
-
-                # Reset suppression when a new LLM round starts
-                if event.get("type") == "agent_action" and event.get("action") == "thinking":
-                    tts_suppressed = False
+                    clean = sanitize_for_tts(event["text"])
+                    if clean:
+                        await sentence_queue.put(clean)
 
                 # When LLM completes, save to conversation history and persist
                 if event.get("type") == "llm_complete":

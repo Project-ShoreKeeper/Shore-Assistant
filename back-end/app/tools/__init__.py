@@ -12,6 +12,7 @@ from app.tools.n8n_workflow_tools import (
     n8n_build_complex_workflow,
     n8n_manage_workflows,
 )
+from app.tools.cloud_tools import ask_claude, ask_gemini, ask_openai
 
 # All available tools, registered for use by the agent
 ALL_TOOLS = [
@@ -33,6 +34,9 @@ ALL_TOOLS = [
     n8n_create_workflow,
     n8n_build_complex_workflow,
     n8n_manage_workflows,
+    ask_claude,
+    ask_gemini,
+    ask_openai,
 ]
 
 # Map tool names to tool instances for dispatch

@@ -17,7 +17,7 @@ def health_check():
 @router.get("/config")
 def get_config():
     return {
-        "llm_model": settings.OLLAMA_MODEL,
+        "llm_model": settings.LLAMA_MODEL,
     }
 
 

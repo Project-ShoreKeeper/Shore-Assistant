@@ -5,8 +5,6 @@ import io
 
 from langchain_core.tools import tool
 
-from app.core.config import settings
-
 
 def _capture_screen_b64(max_size: int = 1280) -> str:
     """Capture primary monitor and return as base64 JPEG string."""
@@ -33,36 +31,22 @@ def _capture_screen_b64(max_size: int = 1280) -> str:
         return base64.b64encode(buffer.getvalue()).decode("utf-8")
 
 
-async def _analyze_with_primary_model(prompt: str, image_b64: str) -> str:
-    """Send image to the primary LLM (multimodal, no VRAM swap)."""
+async def _analyze(prompt: str, image_b64: str) -> str:
+    """Send image to the primary multimodal LLM via llama-server."""
     from app.services.llm_service import llm_service
     return await llm_service.generate_with_image(prompt, image_b64)
 
 
-async def _analyze_with_hot_swap(prompt: str, image_b64: str) -> str:
-    """Send image to a dedicated vision model via VRAM hot-swap."""
-    from app.services.vram_manager import vram_manager
-    return await vram_manager.request_vision_inference(
-        image_b64=image_b64,
-        prompt=prompt,
-    )
-
-
 @tool
 async def capture_screen(prompt: str = "Describe what you see on the screen") -> str:
-    """Capture the current screen and analyze it using a vision model.
+    """Capture the current screen and analyze it using the vision-capable primary model.
 
     Args:
         prompt: What to look for or analyze in the screenshot.
     """
     try:
         image_b64 = _capture_screen_b64()
-
-        if settings.VISION_USE_PRIMARY_MODEL:
-            result = await _analyze_with_primary_model(prompt, image_b64)
-        else:
-            result = await _analyze_with_hot_swap(prompt, image_b64)
-
+        result = await _analyze(prompt, image_b64)
         return result if result else "Could not analyze the screen."
     except Exception as e:
         return f"Error capturing/analyzing screen: {e}"
@@ -89,12 +73,7 @@ async def analyze_screen(query: str) -> str:
     """
     try:
         image_b64 = _capture_screen_b64()
-
-        if settings.VISION_USE_PRIMARY_MODEL:
-            result = await _analyze_with_primary_model(query, image_b64)
-        else:
-            result = await _analyze_with_hot_swap(query, image_b64)
-
+        result = await _analyze(query, image_b64)
         return result if result else "Vision model returned an empty response."
     except Exception as e:
         return f"Error: Unable to capture or analyze the screen. Details: {e}"

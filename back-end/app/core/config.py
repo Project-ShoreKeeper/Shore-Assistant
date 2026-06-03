@@ -34,6 +34,11 @@ class Settings(BaseSettings):
     SCHEDULER_TASKS_FILE: str = "data/scheduled_tasks.json"
     SCHEDULER_PENDING_FILE: str = "data/pending_notifications.json"
 
+    # Multimodal (images in chat)
+    MULTIMODAL_ENABLED: bool = True
+    MAX_IMAGES_PER_MESSAGE: int = 6
+    MAX_IMAGE_BYTES: int = 6 * 1024 * 1024  # 6 MB after base64 decode
+
     # Tool Retriever
     TOOL_RETRIEVER_MODEL: str = "all-MiniLM-L6-v2"
     TOOL_RETRIEVER_TOP_K: int = 3

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { createVAD, VAD } from "../services/vad.service";
 import {
   chatWebsocketService,
+  type ChatWebSocketService,
   type WebSocketStatus,
   type ChatServerMessage,
 } from "../services/chat-websocket.service";
@@ -107,14 +108,6 @@ export function useAssistant(): UseAssistantReturn {
   useEffect(() => {
     thinkingEnabledRef.current = thinkingEnabled;
   }, [thinkingEnabled]);
-
-  useEffect(() => {
-    voiceModeRef.current = voiceMode;
-  }, [voiceMode]);
-
-  useEffect(() => {
-    fishVoiceRef.current = fishVoice;
-  }, [fishVoice]);
 
   // ── Initialize VAD ──
   useEffect(() => {
@@ -451,7 +444,7 @@ export function useAssistant(): UseAssistantReturn {
         thinking: thinkingEnabled,
       });
     }
-  }, [language, thinkingEnabled, voiceMode, fishVoice, wsStatus]);
+  }, [language, thinkingEnabled, wsStatus]);
 
   // ── Controls ──
 

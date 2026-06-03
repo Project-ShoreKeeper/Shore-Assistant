@@ -1,4 +1,4 @@
-import { OneShotRun } from "../../models/terminal.model";
+import type { OneShotRun } from "../../models/terminal.model";
 
 interface Props {
   runs: OneShotRun[];

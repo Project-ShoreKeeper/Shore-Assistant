@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import {
+import type {
   OneShotRun,
   PendingConfirm,
   TerminalServerMessage,

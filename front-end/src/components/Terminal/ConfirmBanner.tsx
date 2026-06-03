@@ -1,4 +1,4 @@
-import { PendingConfirm } from "../../models/terminal.model";
+import type { PendingConfirm } from "../../models/terminal.model";
 
 interface Props {
   pending: PendingConfirm[];

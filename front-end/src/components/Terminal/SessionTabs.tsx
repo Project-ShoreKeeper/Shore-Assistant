@@ -1,4 +1,4 @@
-import { TerminalSession } from "../../models/terminal.model";
+import type { TerminalSession } from "../../models/terminal.model";
 
 interface Props {
   sessions: TerminalSession[];

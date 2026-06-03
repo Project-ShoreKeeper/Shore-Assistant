@@ -374,7 +374,7 @@ async def websocket_chat(websocket: WebSocket):
                     elif msg_type == "terminal_user_input":
                         name_lookup = next(
                             (n for n, s in terminal_service.sessions.items()
-                             if s.session_id == data["session_id"]),
+                             if s["session_id"] == data["session_id"]),
                             None,
                         )
                         if name_lookup:
@@ -383,20 +383,20 @@ async def websocket_chat(websocket: WebSocket):
                             )
 
                     elif msg_type == "terminal_resize":
-                        name_lookup = next(
-                            (n for n, s in terminal_service.sessions.items()
-                             if s.session_id == data["session_id"]),
+                        entry = next(
+                            (s for s in terminal_service.sessions.values()
+                             if s["session_id"] == data["session_id"]),
                             None,
                         )
-                        if name_lookup:
-                            await terminal_service.sessions[name_lookup].resize(
-                                data["cols"], data["rows"]
+                        if entry:
+                            await terminal_service.backend.resize_session_exec(
+                                entry["session_id"], data["cols"], data["rows"]
                             )
 
                     elif msg_type == "terminal_close_session":
                         name_lookup = next(
                             (n for n, s in terminal_service.sessions.items()
-                             if s.session_id == data["session_id"]),
+                             if s["session_id"] == data["session_id"]),
                             None,
                         )
                         if name_lookup:
@@ -405,11 +405,12 @@ async def websocket_chat(websocket: WebSocket):
                     elif msg_type == "terminal_resync":
                         sessions_list = terminal_service.list_sessions()
                         for s in sessions_list:
-                            session_obj = next((v for v in terminal_service.sessions.values() if v.session_id == s["session_id"]), None)
-                            if session_obj:
-                                s["buffer"] = session_obj._buffer.decode("utf-8", errors="replace")
-                            else:
-                                s["buffer"] = ""
+                            entry = next(
+                                (v for v in terminal_service.sessions.values()
+                                 if v["session_id"] == s["session_id"]),
+                                None,
+                            )
+                            s["buffer"] = entry.get("_buffer_tail", "") if entry else ""
 
                         await send_json_safe({
                             "type": "terminal_sessions_snapshot",

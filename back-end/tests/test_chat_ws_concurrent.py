@@ -91,3 +91,35 @@ def test_terminal_confirm_response_not_blocked_by_running_agent(client, monkeypa
         f"resolve_confirm called {elapsed:.2f}s after user_message; "
         f"expected well under {agent_sleep:.2f}s (agent run blocked the WS loop)"
     )
+
+
+def test_terminal_resync_with_active_session_returns_snapshot(client, monkeypatch):
+    """terminal_service.sessions stores plain dicts, not objects. The resync
+    handler previously did ``v.session_id`` / ``v._buffer`` on those dicts,
+    raising AttributeError → uncaught exception closed the WS → the frontend
+    reconnected → loop. Regression: handler must read the dict by key and the
+    snapshot must arrive in the same connection."""
+    # Seed terminal_service with a fake active session entry (same shape that
+    # TerminalService.open_session() builds — see terminal_service.py).
+    fake_session = {
+        "session_id": "deadbeef1234",
+        "shell": "powershell",
+        "cwd": r"D:\Jupiter",
+        "pid": 9999,
+        "last_activity": time.time(),
+        "_buffer_tail": "PS D:\\Jupiter> ",
+    }
+    terminal_service.sessions["fake-session"] = fake_session
+    try:
+        with client.websocket_connect("/ws/chat") as ws:
+            first = ws.receive_json()
+            assert first["type"] == "history"
+
+            ws.send_json({"type": "terminal_resync"})
+            snapshot = ws.receive_json()
+
+        assert snapshot["type"] == "terminal_sessions_snapshot"
+        names = [s["name"] for s in snapshot["sessions"]]
+        assert "fake-session" in names
+    finally:
+        terminal_service.sessions.pop("fake-session", None)

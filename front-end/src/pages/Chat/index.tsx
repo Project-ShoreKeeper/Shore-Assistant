@@ -8,6 +8,7 @@ import {
   ScrollArea,
   Avatar,
   Badge,
+  Dialog,
 } from "@radix-ui/themes";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -16,6 +17,7 @@ import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
 import { Group as PanelGroup, Panel, Separator as PanelResizeHandle } from "react-resizable-panels";
 import { useAssistant, type ChatMessage } from "../../hooks/useAssistant";
+import type { ImageAttachment } from "../../services/chat-websocket.service";
 import ToolActionCard from "../../components/ToolActionCard";
 import TerminalPanel from "../../components/Terminal/TerminalPanel";
 import SettingsPanel from "./SettingsPanel";
@@ -29,6 +31,45 @@ function linkifyUrls(text: string): string {
       return `[${display}](${url})`;
     }
   );
+}
+
+const MAX_IMAGE_DIM = 1280;
+const MAX_IMAGES = 6;
+const MAX_IMAGE_BYTES = 6 * 1024 * 1024;
+const ALLOWED_IMAGE_MIME = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/gif",
+]);
+
+async function fileToAttachment(file: File): Promise<ImageAttachment | null> {
+  if (!ALLOWED_IMAGE_MIME.has(file.type)) return null;
+  if (file.size > MAX_IMAGE_BYTES) return null;
+
+  const bitmap = await createImageBitmap(file);
+  const { width: w, height: h } = bitmap;
+  const scale = Math.max(w, h) > MAX_IMAGE_DIM ? MAX_IMAGE_DIM / Math.max(w, h) : 1;
+  const targetW = Math.round(w * scale);
+  const targetH = Math.round(h * scale);
+
+  const canvas = document.createElement("canvas");
+  canvas.width = targetW;
+  canvas.height = targetH;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
+  ctx.drawImage(bitmap, 0, 0, targetW, targetH);
+  bitmap.close();
+
+  const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+  const sizeKb = Math.round((dataUrl.length * 0.75) / 1024);
+  return {
+    id: crypto.randomUUID(),
+    dataUrl,
+    width: targetW,
+    height: targetH,
+    sizeKb,
+  };
 }
 
 function PageChat() {
@@ -57,6 +98,8 @@ function PageChat() {
   const [selectedDeviceId, setSelectedDeviceId] = useState<
     string | undefined
   >(undefined);
+  const [imageAttachments, setImageAttachments] = useState<ImageAttachment[]>([]);
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
 
   // Scroll to bottom on new messages
   useEffect(() => {
@@ -69,15 +112,59 @@ function PageChat() {
   }, [messages, isSpeaking, isAssistantThinking]);
 
   const handleSendText = () => {
-    if (!inputText.trim() || !isConnected) return;
-    sendTextMessage(inputText);
+    if (!isConnected) return;
+    const hasText = inputText.trim().length > 0;
+    const hasImages = imageAttachments.length > 0;
+    if (!hasText && !hasImages) return;
+    sendTextMessage(inputText, hasImages ? imageAttachments : undefined);
     setInputText("");
+    setImageAttachments([]);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSendText();
+    }
+  };
+
+  const addImagesFromFiles = async (files: File[]) => {
+    const slots = MAX_IMAGES - imageAttachments.length;
+    if (slots <= 0) return;
+    const accepted: ImageAttachment[] = [];
+    for (const f of files.slice(0, slots)) {
+      const att = await fileToAttachment(f);
+      if (att) accepted.push(att);
+    }
+    if (accepted.length) {
+      setImageAttachments((prev) => [...prev, ...accepted]);
+    }
+  };
+
+  const handlePaste = async (e: React.ClipboardEvent) => {
+    const items = Array.from(e.clipboardData?.items || []);
+    const files = items
+      .filter((it) => it.kind === "file" && it.type.startsWith("image/"))
+      .map((it) => it.getAsFile())
+      .filter((f): f is File => !!f);
+    if (files.length === 0) return;
+    e.preventDefault();
+    await addImagesFromFiles(files);
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    if (!e.dataTransfer?.files?.length) return;
+    e.preventDefault();
+    const files = Array.from(e.dataTransfer.files).filter((f) =>
+      ALLOWED_IMAGE_MIME.has(f.type)
+    );
+    if (files.length === 0) return;
+    await addImagesFromFiles(files);
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    if (Array.from(e.dataTransfer?.items || []).some((it) => it.kind === "file")) {
+      e.preventDefault();
     }
   };
 
@@ -154,6 +241,31 @@ function PageChat() {
                   }}
                 />
               </Box>
+            )}
+
+            {/* Image thumbnails in user bubbles */}
+            {isUser && msg.images && msg.images.length > 0 && (
+              <Flex gap="2" wrap="wrap" mb="2">
+                {msg.images.map((img) => (
+                  <Box
+                    key={img.id}
+                    onClick={() => setLightboxUrl(img.dataUrl)}
+                    style={{
+                      cursor: "zoom-in",
+                      width: 120,
+                      height: 120,
+                      borderRadius: 8,
+                      overflow: "hidden",
+                    }}
+                  >
+                    <img
+                      src={img.dataUrl}
+                      alt=""
+                      style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                    />
+                  </Box>
+                ))}
+              </Flex>
             )}
 
             {/* Tool action cards */}
@@ -440,7 +552,12 @@ function PageChat() {
       <PanelGroup orientation="horizontal" style={{ flex: 1 }}>
         <Panel defaultSize={55} minSize={30}>
           {/* Left column: Chat interface */}
-          <Flex direction="column" style={{ height: "100%", position: "relative" }}>
+          <Flex
+            direction="column"
+            style={{ height: "100%", position: "relative" }}
+            onDrop={handleDrop}
+            onDragOver={handleDragOver}
+          >
         {/* Chat body */}
         <ScrollArea
           type="auto"
@@ -525,13 +642,57 @@ function PageChat() {
 
         {/* Input area */}
         <Box
-          p="3"
           style={{
             borderTop: "1px solid var(--gray-5)",
             backgroundColor: "var(--color-panel-solid)",
           }}
         >
-          <Flex gap="3" align="center">
+          {/* Attachment thumbnail row */}
+          {imageAttachments.length > 0 && (
+            <Flex gap="2" px="3" pt="2" wrap="wrap">
+              {imageAttachments.map((att) => (
+                <Box
+                  key={att.id}
+                  style={{
+                    position: "relative",
+                    width: 64,
+                    height: 64,
+                    borderRadius: 8,
+                    overflow: "hidden",
+                    background: "var(--gray-3)",
+                  }}
+                >
+                  <img
+                    src={att.dataUrl}
+                    alt=""
+                    style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                  />
+                  <IconButton
+                    size="1"
+                    variant="solid"
+                    color="gray"
+                    style={{
+                      position: "absolute",
+                      top: 2,
+                      right: 2,
+                      padding: 0,
+                      width: 18,
+                      height: 18,
+                      borderRadius: 9,
+                      lineHeight: "18px",
+                    }}
+                    onClick={() =>
+                      setImageAttachments((prev) => prev.filter((p) => p.id !== att.id))
+                    }
+                  >
+                    ×
+                  </IconButton>
+                </Box>
+              ))}
+            </Flex>
+          )}
+
+          <Flex gap="3" align="center" p="3">
             <TextField.Root
               placeholder="Type a message..."
               size="3"
@@ -541,6 +702,7 @@ function PageChat() {
                 setInputText(e.target.value)
               }
               onKeyDown={handleKeyDown}
+              onPaste={handlePaste}
               disabled={!isConnected}
             />
 
@@ -591,7 +753,7 @@ function PageChat() {
                 radius="full"
                 style={{ width: "44px", height: "44px", cursor: "pointer" }}
                 onClick={handleSendText}
-                disabled={!inputText.trim() || !isConnected}
+                disabled={(!inputText.trim() && imageAttachments.length === 0) || !isConnected}
               >
                 <span style={{ fontSize: "18px", paddingLeft: "2px" }}>
                   &gt;
@@ -646,6 +808,25 @@ function PageChat() {
         onClearMessages={clearMessages}
         messageCount={messages.length}
       />
+
+      {/* Lightbox dialog */}
+      <Dialog.Root open={!!lightboxUrl} onOpenChange={(o) => !o && setLightboxUrl(null)}>
+        <Dialog.Content maxWidth="90vw" style={{ background: "transparent", boxShadow: "none" }}>
+          {lightboxUrl && (
+            <img
+              src={lightboxUrl}
+              alt=""
+              style={{
+                width: "100%",
+                height: "auto",
+                maxHeight: "85vh",
+                objectFit: "contain",
+              }}
+              onClick={() => setLightboxUrl(null)}
+            />
+          )}
+        </Dialog.Content>
+      </Dialog.Root>
     </Flex>
   );
 }

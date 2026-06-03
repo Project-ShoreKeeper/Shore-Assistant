@@ -88,11 +88,14 @@ async def websocket_chat(websocket: WebSocket):
     from app.services.terminal_service import terminal_service
     terminal_service.broadcast = send_json_safe
 
-    # Load persisted history
+    # Load persisted history (full dicts including any extras)
     persisted = memory_service.load(session_id="default")
     conversation_history: list[dict] = [
         {"role": m["role"], "content": m["content"]} for m in persisted
     ]
+
+    # Push history snapshot to client so the UI can rehydrate
+    await send_json_safe({"type": "history", "messages": persisted})
 
 
     session_config = {
@@ -173,7 +176,11 @@ async def websocket_chat(websocket: WebSocket):
         if started:
             await send_json_safe({"type": "tts_end"})
 
-    async def run_agent_pipeline(user_text: str, source: str = "keyboard"):
+    async def run_agent_pipeline(
+        user_text: str,
+        source: str = "keyboard",
+        task_id: str | None = None,
+    ):
         """Run the full agent pipeline and stream results to the client."""
         nonlocal is_cancelled
 
@@ -183,6 +190,10 @@ async def websocket_chat(websocket: WebSocket):
         if not is_notification:
             conversation_history.append({"role": "user", "content": user_text})
             memory_service.append(session_id="default", role="user", content=user_text)
+
+        # Accumulate metadata for persistence alongside the assistant response
+        current_thinking: str = ""
+        current_actions: list[dict] = []
 
         # Set up TTS sentence queue if TTS is enabled
         tts_enabled = session_config.get("tts_enabled", True)
@@ -208,12 +219,36 @@ async def websocket_chat(websocket: WebSocket):
 
                 await send_json_safe(event)
 
-                # When a tool call is detected, speak a friendly line
-                if tts_enabled and event.get("type") == "agent_action":
+                # Collect tool call metadata
+                if event.get("type") == "agent_action":
                     if event.get("action") == "tool_call":
-                        tool_name = event.get("tool", "a tool")
-                        friendly = _tool_spoken_name(tool_name)
-                        await sentence_queue.put(f"Let me use {friendly}.")
+                        current_actions.append({
+                            "action": "tool_call",
+                            "tool": event.get("tool"),
+                            "args": event.get("args"),
+                            "result": None,
+                            "status": "running",
+                            "timestamp": event.get("timestamp", time.time()),
+                        })
+                        # When a tool call is detected, speak a friendly line
+                        if tts_enabled:
+                            tool_name = event.get("tool", "a tool")
+                            friendly = _tool_spoken_name(tool_name)
+                            await sentence_queue.put(f"Let me use {friendly}.")
+                    elif event.get("action") == "tool_result":
+                        # Update the most recent running action for this tool
+                        for action in reversed(current_actions):
+                            if (
+                                action.get("tool") == event.get("tool")
+                                and action.get("status") == "running"
+                            ):
+                                action["result"] = event.get("result")
+                                action["status"] = event.get("status", "completed")
+                                break
+
+                # Collect final thinking text
+                if event.get("type") == "llm_thinking_done":
+                    current_thinking = event.get("text", "")
 
                 # Feed completed sentences to TTS
                 if tts_enabled and event.get("type") == "llm_sentence":
@@ -231,10 +266,17 @@ async def websocket_chat(websocket: WebSocket):
                             "role": "assistant",
                             "content": assistant_text,
                         })
+                        extras = {
+                            "thinking_text": current_thinking or None,
+                            "agent_actions": current_actions or None,
+                            "is_notification": is_notification,
+                            "task_id": task_id,
+                        }
                         memory_service.append(
                             session_id="default",
                             role="assistant",
                             content=assistant_text,
+                            extras=extras,
                         )
 
                     # Keep in-memory history manageable
@@ -253,10 +295,28 @@ async def websocket_chat(websocket: WebSocket):
                 await sentence_queue.put(None)
                 await tts_task
 
+    # Active agent task — keep a handle so we can cancel on disconnect and so
+    # we never await it inline (otherwise the WS receive loop deadlocks: the
+    # agent is waiting for control messages — terminal_confirm_response — that
+    # we can only deliver from this very loop).
+    agent_task: asyncio.Task | None = None
+
+    async def _start_agent(user_text: str, source: str, task_id: str | None = None):
+        nonlocal agent_task
+        if agent_task and not agent_task.done():
+            agent_task.cancel()
+            try:
+                await agent_task
+            except (asyncio.CancelledError, Exception):
+                pass
+        agent_task = asyncio.create_task(
+            run_agent_pipeline(user_text, source, task_id=task_id)
+        )
+
     # Register agent callback for proactive notifications
-    async def run_notification(prompt: str):
+    async def run_notification(prompt: str, task_id: str | None = None):
         """Run a notification prompt through the full agent pipeline."""
-        await run_agent_pipeline(prompt, source="notification")
+        await _start_agent(prompt, source="notification", task_id=task_id)
 
     notification_service.set_agent_callback(run_notification)
 
@@ -277,7 +337,7 @@ async def websocket_chat(websocket: WebSocket):
                         user_text = data.get("text", "").strip()
                         source = data.get("source", "keyboard")
                         if user_text:
-                            await run_agent_pipeline(user_text, source)
+                            await _start_agent(user_text, source)
 
                     elif msg_type == "config":
                         config_data = data.get("data", {})
@@ -290,6 +350,8 @@ async def websocket_chat(websocket: WebSocket):
 
                     elif msg_type == "cancel":
                         is_cancelled = True
+                        if agent_task and not agent_task.done():
+                            agent_task.cancel()
 
 
                     elif msg_type == "clear_memory":
@@ -302,6 +364,9 @@ async def websocket_chat(websocket: WebSocket):
                         })
 
                     elif msg_type == "terminal_confirm_response":
+                        import sys
+                        sys.stderr.write(f"[chat_ws] terminal_confirm_response received: {data}\n")
+                        sys.stderr.flush()
                         terminal_service.resolve_confirm(
                             data["request_id"], data["decision"]
                         )
@@ -338,9 +403,17 @@ async def websocket_chat(websocket: WebSocket):
                             await terminal_service.close_session(name_lookup)
 
                     elif msg_type == "terminal_resync":
+                        sessions_list = terminal_service.list_sessions()
+                        for s in sessions_list:
+                            session_obj = next((v for v in terminal_service.sessions.values() if v.session_id == s["session_id"]), None)
+                            if session_obj:
+                                s["buffer"] = session_obj._buffer.decode("utf-8", errors="replace")
+                            else:
+                                s["buffer"] = ""
+
                         await send_json_safe({
                             "type": "terminal_sessions_snapshot",
-                            "sessions": terminal_service.list_sessions(),
+                            "sessions": sessions_list,
                         })
 
                     else:
@@ -417,7 +490,7 @@ async def websocket_chat(websocket: WebSocket):
 
                 # Feed transcript to agent (if non-empty)
                 if transcript_text:
-                    await run_agent_pipeline(transcript_text, source="voice")
+                    await _start_agent(transcript_text, source="voice")
 
     except WebSocketDisconnect:
         pass
@@ -430,6 +503,12 @@ async def websocket_chat(websocket: WebSocket):
             "message": f"Server error: {str(e)}",
         })
     finally:
+        if agent_task and not agent_task.done():
+            agent_task.cancel()
+            try:
+                await agent_task
+            except (asyncio.CancelledError, Exception):
+                pass
         # Only unregister if we're still the active connection
         if connection_manager._send_json is my_send_json:
             notification_service.clear_agent_callback()

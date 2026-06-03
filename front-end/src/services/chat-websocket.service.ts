@@ -10,6 +10,14 @@ export type WebSocketStatus =
   | "CLOSED"
   | "ERROR";
 
+export type ImageAttachment = {
+  id: string;
+  dataUrl: string;
+  width: number;
+  height: number;
+  sizeKb: number;
+};
+
 // ─── Server -> Client message types ───
 
 export interface TranscriptMessage {
@@ -93,6 +101,30 @@ export interface NotificationMessage {
   timestamp: number;
 }
 
+export interface PersistedAgentAction {
+  action: "tool_call";
+  tool: string;
+  args: Record<string, unknown>;
+  result?: string | null;
+  status: "completed" | "error" | "running";
+  timestamp: number;
+}
+
+export interface PersistedMessage {
+  role: "user" | "assistant";
+  content: string;
+  timestamp: number;
+  thinking_text?: string | null;
+  agent_actions?: PersistedAgentAction[] | null;
+  is_notification?: boolean;
+  task_id?: string | null;
+}
+
+export interface HistoryMessage {
+  type: "history";
+  messages: PersistedMessage[];
+}
+
 export type ChatServerMessage =
   | TranscriptMessage
   | AgentActionMessage
@@ -105,7 +137,8 @@ export type ChatServerMessage =
   | TTSEndMessage
   | StatusMessage
   | ErrorMessage
-  | NotificationMessage;
+  | NotificationMessage
+  | HistoryMessage;
 
 // ─── Event system ───
 
@@ -193,9 +226,28 @@ export class ChatWebSocketService {
 
   // ─── Send methods ───
 
-  public sendUserMessage(text: string, source: "voice" | "keyboard" = "keyboard"): void {
+  public sendUserMessage(
+    text: string,
+    source: "voice" | "keyboard" = "keyboard",
+    images?: ImageAttachment[],
+  ): void {
     if (!this.isReady()) return;
-    this.socket!.send(JSON.stringify({ type: "user_message", text, source }));
+    this.socket!.send(
+      JSON.stringify({
+        type: "user_message",
+        text,
+        source,
+        ...(images && images.length > 0
+          ? {
+              images: images.map((i) => ({
+                data_url: i.dataUrl,
+                width: i.width,
+                height: i.height,
+              })),
+            }
+          : {}),
+      }),
+    );
   }
 
   public sendAudioBuffer(buffer: Float32Array): void {
@@ -316,8 +368,8 @@ export class ChatWebSocketService {
 
 // ─── Singleton ───
 // Shared instance used by useAssistant and useTerminal so both operate on the same socket.
-const _backendHost = `${window.location.hostname}:8000`;
-const _wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+const _backendHost = "api.shore-keeper.com";
+const _wsProtocol = "wss:";
 const _chatWsUrl = `${_wsProtocol}//${_backendHost}/ws/chat`;
 export const chatWebsocketService = new ChatWebSocketService(_chatWsUrl);
 export default chatWebsocketService;

@@ -5,6 +5,7 @@ import {
   type ChatWebSocketService,
   type WebSocketStatus,
   type ChatServerMessage,
+  type ImageAttachment,
 } from "../services/chat-websocket.service";
 import { float32ToWav } from "../utils/audio.util";
 import { TTSPlayer } from "../utils/tts-player.util";
@@ -24,6 +25,7 @@ export interface ChatMessage {
   taskId?: string;
   timestamp: Date;
   agentActions?: AgentAction[];
+  images?: ImageAttachment[];
 }
 
 export interface AgentAction {
@@ -61,7 +63,7 @@ export interface UseAssistantReturn {
   // Controls
   startRecording: (deviceId?: string) => void;
   stopRecording: () => void;
-  sendTextMessage: (text: string) => void;
+  sendTextMessage: (text: string, images?: ImageAttachment[]) => void;
   cancelGeneration: () => void;
   clearMessages: () => void;
 }
@@ -173,17 +175,47 @@ export function useAssistant(): UseAssistantReturn {
     const ws = chatWebsocketService;
     wsRef.current = ws;
 
-    ws.on("statusChange", (status) => setWsStatus(status));
+    const handleStatusChange = (status: WebSocketStatus) => setWsStatus(status);
 
-    ws.on("open", () => {
+    const handleOpen = () => {
       ws.sendConfig({
         language: languageRef.current,
         thinking: thinkingEnabledRef.current,
       });
-    });
+    };
 
-    ws.on("message", (msg: ChatServerMessage) => {
+    const handleMessage = (msg: ChatServerMessage) => {
       switch (msg.type) {
+        case "history": {
+          const rand = () => Math.random().toString(36).slice(2, 7);
+          const hydrated: ChatMessage[] = msg.messages.map((m) => {
+            const actions: AgentAction[] = (m.agent_actions || []).map((a) => ({
+              id: `hist-act-${a.timestamp}-${rand()}`,
+              action: a.action,
+              detail: "",
+              tool: a.tool,
+              args: a.args,
+              result: a.result ?? undefined,
+              status: a.status,
+              timestamp: new Date(a.timestamp * 1000),
+            }));
+            return {
+              id: `hist-${m.timestamp}-${rand()}`,
+              role: m.role,
+              text: m.content,
+              thinkingText: m.thinking_text || undefined,
+              isThinkingPhase: false,
+              isStreaming: false,
+              isNotification: m.is_notification || false,
+              taskId: m.task_id || undefined,
+              timestamp: new Date(m.timestamp * 1000),
+              agentActions: actions.length > 0 ? actions : undefined,
+            };
+          });
+          setMessages(hydrated);
+          break;
+        }
+
         case "transcript": {
           if (msg.data?.skipped) break;
           const text = msg.text || "";
@@ -199,10 +231,28 @@ export function useAssistant(): UseAssistantReturn {
                 text,
                 isStreaming: false,
               };
+              // Add a streaming assistant placeholder so the "Thinking..."
+              // indicator appears immediately while waiting for the first token.
+              if (text.trim()) {
+                const placeholderId =
+                  Date.now().toString(36) +
+                  Math.random().toString(36).slice(2, 7);
+                streamingMsgIdRef.current = placeholderId;
+                updated.push({
+                  id: placeholderId,
+                  role: "assistant",
+                  text: "",
+                  isStreaming: true,
+                  timestamp: new Date(),
+                });
+              }
               return updated;
             }
             return prev;
           });
+          if (text.trim()) {
+            setIsAssistantThinking(true);
+          }
           break;
         }
 
@@ -222,8 +272,12 @@ export function useAssistant(): UseAssistantReturn {
               const lastMsg = prev[prev.length - 1];
               if (lastMsg?.role === "assistant" && lastMsg.isStreaming) {
                 const updated = [...prev];
+                // Clear any pre-tool-call text so round-2 tokens stream into
+                // a clean bubble (avoids "Let me check..." being awkwardly
+                // overwritten character-by-character by the post-tool answer).
                 updated[updated.length - 1] = {
                   ...lastMsg,
+                  text: "",
                   agentActions: [...(lastMsg.agentActions || []), actionItem],
                 };
                 return updated;
@@ -369,33 +423,23 @@ export function useAssistant(): UseAssistantReturn {
 
         case "llm_complete": {
           setIsAssistantThinking(false);
+          const targetId = streamingMsgIdRef.current;
           streamingMsgIdRef.current = null;
-          // Finalize the streaming message
+          // Finalize the bubble that llm_token / agent_action already created.
+          // Never create a new bubble here — that would duplicate the response
+          // (the streaming bubble already shows msg.text from the last token).
+          if (!targetId) break;
           setMessages((prev) => {
-            const lastMsg = prev[prev.length - 1];
-            if (lastMsg?.role === "assistant" && lastMsg.isStreaming) {
-              const updated = [...prev];
-              updated[updated.length - 1] = {
-                ...lastMsg,
-                text: msg.text,
-                isStreaming: false,
-              };
-              return updated;
-            } else {
-              // No streaming message found, create complete one
-              return [
-                ...prev,
-                {
-                  id:
-                    Date.now().toString(36) +
-                    Math.random().toString(36).slice(2, 7),
-                  role: "assistant",
-                  text: msg.text,
-                  isStreaming: false,
-                  timestamp: new Date(),
-                },
-              ];
-            }
+            const idx = prev.findIndex((m) => m.id === targetId);
+            if (idx < 0) return prev;
+            const updated = [...prev];
+            updated[idx] = {
+              ...updated[idx],
+              text: msg.text,
+              isStreaming: false,
+              isThinkingPhase: false,
+            };
+            return updated;
           });
           break;
         }
@@ -451,18 +495,27 @@ export function useAssistant(): UseAssistantReturn {
           break;
         }
       }
-    });
+    };
 
     // Handle binary messages (TTS audio chunks)
-    ws.on("binaryMessage", (data: ArrayBuffer) => {
+    const handleBinaryMessage = (data: ArrayBuffer) => {
       if (ttsPlayerRef.current) {
         ttsPlayerRef.current.enqueueChunk(data);
       }
-    });
+    };
+
+    ws.on("statusChange", handleStatusChange);
+    ws.on("open", handleOpen);
+    ws.on("message", handleMessage);
+    ws.on("binaryMessage", handleBinaryMessage);
 
     ws.connect();
 
     return () => {
+      ws.off("statusChange", handleStatusChange);
+      ws.off("open", handleOpen);
+      ws.off("message", handleMessage);
+      ws.off("binaryMessage", handleBinaryMessage);
       // Do not disconnect the singleton — it's shared with useTerminal
       wsRef.current = null;
     };
@@ -570,40 +623,74 @@ export function useAssistant(): UseAssistantReturn {
     setIsSpeaking(false);
   }, []);
 
-  const sendTextMessage = useCallback((text: string) => {
-    if (!text.trim()) return;
+  const sendTextMessage = useCallback(
+    (text: string, images?: ImageAttachment[]) => {
+      const trimmed = text.trim();
+      if (!trimmed && !(images && images.length > 0)) return;
 
-    // Add user message to UI
-    const id =
-      Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
-    setMessages((prev) => [
-      ...prev,
-      {
-        id,
-        role: "user",
-        text: text.trim(),
-        timestamp: new Date(),
-      },
-    ]);
+      // Add user message + streaming assistant placeholder so the
+      // "Thinking..." indicator shows immediately while we wait for the
+      // first LLM token.
+      const userId =
+        Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+      const placeholderId =
+        Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+      streamingMsgIdRef.current = placeholderId;
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: userId,
+          role: "user",
+          text: trimmed,
+          images,
+          timestamp: new Date(),
+        },
+        {
+          id: placeholderId,
+          role: "assistant",
+          text: "",
+          isStreaming: true,
+          timestamp: new Date(),
+        },
+      ]);
+      setIsAssistantThinking(true);
 
-    // Stop any ongoing TTS before sending new input
-    if (ttsPlayerRef.current) {
-      ttsPlayerRef.current.stop();
-      ttsPlayerRef.current = null;
-      setIsAssistantSpeaking(false);
-    }
+      // Stop any ongoing TTS before sending new input
+      if (ttsPlayerRef.current) {
+        ttsPlayerRef.current.stop();
+        ttsPlayerRef.current = null;
+        setIsAssistantSpeaking(false);
+      }
 
-    // Send to backend
-    if (wsRef.current) {
-      wsRef.current.sendUserMessage(text.trim(), "keyboard");
-    }
-  }, []);
+      // Send to backend
+      if (wsRef.current) {
+        wsRef.current.sendUserMessage(trimmed, "keyboard", images);
+      }
+    },
+    [],
+  );
 
   const cancelGeneration = useCallback(() => {
     if (wsRef.current) {
       wsRef.current.sendCancel();
     }
     setIsAssistantThinking(false);
+    // Finalize any in-flight streaming assistant bubble so it stops
+    // showing "Thinking..." forever. Drop it if it has no content at all.
+    setMessages((prev) => {
+      const lastIdx = prev.length - 1;
+      const last = prev[lastIdx];
+      if (!last || last.role !== "assistant" || !last.isStreaming) return prev;
+      const hasContent =
+        (last.text && last.text.trim()) ||
+        (last.thinkingText && last.thinkingText.trim()) ||
+        (last.agentActions && last.agentActions.length > 0);
+      if (!hasContent) return prev.slice(0, -1);
+      const updated = [...prev];
+      updated[lastIdx] = { ...last, isStreaming: false, isThinkingPhase: false };
+      return updated;
+    });
+    streamingMsgIdRef.current = null;
     if (ttsPlayerRef.current) {
       ttsPlayerRef.current.stop();
       ttsPlayerRef.current = null;

@@ -6,6 +6,7 @@ Handles the full pipeline: audio/text input -> STT -> Agent -> LLM streaming -> 
 import asyncio
 import re
 import uuid
+import base64 as _b64
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from app.services.stt_service import stt_service
@@ -18,6 +19,52 @@ from app.core.config import settings
 import numpy as np
 import json
 import time
+
+_ALLOWED_IMAGE_MIME_RE = re.compile(r"^data:image/(png|jpeg|webp);base64,")
+
+
+def _validate_images(images):
+    """Return None if images is acceptable, else an error string for the client."""
+    if not settings.MULTIMODAL_ENABLED:
+        return "Vision is not enabled on this server."
+    if not isinstance(images, list):
+        return "Invalid images payload."
+    if len(images) > settings.MAX_IMAGES_PER_MESSAGE:
+        return f"Too many images (max {settings.MAX_IMAGES_PER_MESSAGE})."
+    for img in images:
+        url = img.get("data_url") if isinstance(img, dict) else None
+        if not url or not _ALLOWED_IMAGE_MIME_RE.match(url):
+            return "Unsupported image format (allowed: png, jpeg, webp)."
+        try:
+            payload = url.split(",", 1)[1]
+            size = len(_b64.b64decode(payload, validate=False))
+        except Exception:
+            return "Malformed image data."
+        if size > settings.MAX_IMAGE_BYTES:
+            return "Image too large."
+    return None
+
+
+def _build_memory_message(user_text, images):
+    """Text-only user message that goes on conversation_history / memory_service."""
+    parts = []
+    if user_text and user_text.strip():
+        parts.append(user_text.strip())
+    if images:
+        dims = ", ".join(f"{i['width']}x{i['height']}" for i in images)
+        parts.append(f"[Attached {len(images)} image(s): {dims}]")
+    return {"role": "user", "content": "\n\n".join(parts) if parts else ""}
+
+
+def _build_live_message(user_text, images):
+    """OpenAI multimodal content array — the version llama-server sees this turn only."""
+    text_part = user_text if (user_text and user_text.strip()) else " "
+    content = [{"type": "text", "text": text_part}]
+    for img in images:
+        content.append({"type": "image_url",
+                        "image_url": {"url": img["data_url"]}})
+    return {"role": "user", "content": content}
+
 
 router = APIRouter()
 
@@ -180,16 +227,27 @@ async def websocket_chat(websocket: WebSocket):
         user_text: str,
         source: str = "keyboard",
         task_id: str | None = None,
+        images: list[dict] | None = None,
     ):
         """Run the full agent pipeline and stream results to the client."""
         nonlocal is_cancelled
 
         is_notification = source == "notification"
 
-        # Don't persist notification prompts as user messages
+        # Build the text-only "memory" form of the user turn (image bytes never
+        # land on disk or in conversation_history), and the multimodal "live"
+        # form that llama-server sees just this turn.
         if not is_notification:
-            conversation_history.append({"role": "user", "content": user_text})
-            memory_service.append(session_id="default", role="user", content=user_text)
+            memory_message = _build_memory_message(user_text, images or [])
+            conversation_history.append(memory_message)
+            memory_service.append(
+                session_id="default",
+                role="user",
+                content=memory_message["content"],
+            )
+        live_user_message = (
+            _build_live_message(user_text, images) if images else None
+        )
 
         # Accumulate metadata for persistence alongside the assistant response
         current_thinking: str = ""
@@ -208,6 +266,7 @@ async def websocket_chat(websocket: WebSocket):
                 user_text, conversation_history,
                 thinking=session_config.get("thinking", False),
                 no_tools=is_notification,
+                live_user_message=live_user_message,
             ):
                 if is_cancelled:
                     is_cancelled = False
@@ -301,7 +360,12 @@ async def websocket_chat(websocket: WebSocket):
     # we can only deliver from this very loop).
     agent_task: asyncio.Task | None = None
 
-    async def _start_agent(user_text: str, source: str, task_id: str | None = None):
+    async def _start_agent(
+        user_text: str,
+        source: str = "keyboard",
+        task_id: str | None = None,
+        images: list[dict] | None = None,
+    ):
         nonlocal agent_task
         if agent_task and not agent_task.done():
             agent_task.cancel()
@@ -310,7 +374,7 @@ async def websocket_chat(websocket: WebSocket):
             except (asyncio.CancelledError, Exception):
                 pass
         agent_task = asyncio.create_task(
-            run_agent_pipeline(user_text, source, task_id=task_id)
+            run_agent_pipeline(user_text, source, task_id=task_id, images=images)
         )
 
     # Register agent callback for proactive notifications
@@ -336,8 +400,14 @@ async def websocket_chat(websocket: WebSocket):
                     if msg_type == "user_message":
                         user_text = data.get("text", "").strip()
                         source = data.get("source", "keyboard")
-                        if user_text:
-                            await _start_agent(user_text, source)
+                        images = data.get("images") or []
+                        if images:
+                            err = _validate_images(images)
+                            if err:
+                                await send_json_safe({"type": "status", "message": err})
+                                continue
+                        if user_text or images:
+                            await _start_agent(user_text, source, images=images)
 
                     elif msg_type == "config":
                         config_data = data.get("data", {})

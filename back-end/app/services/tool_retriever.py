@@ -115,7 +115,7 @@ class ToolRetriever:
         return "\n".join(lines)
 
     def get_tool_schemas(self, tool_names: list[str], all_tools: list) -> list[dict]:
-        """Convert selected tools to OpenAI-compatible JSON schema for Ollama's native tool calling.
+        """Convert selected tools to OpenAI-compatible JSON schema for llama-server's native tool calling.
 
         Args:
             tool_names: list of tool names to include in the output.

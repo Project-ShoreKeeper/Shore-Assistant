@@ -1,6 +1,6 @@
 """
 LangGraph-based agent service.
-Orchestrates tool execution and LLM response streaming using Ollama's native tool calling.
+Orchestrates tool execution and LLM response streaming using llama-server's OpenAI-compatible tool calling.
 """
 
 import time
@@ -81,7 +81,7 @@ class AgentService:
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S (%A)")
         system_prompt = f"[Current time: {current_time}]\n\n" + build_system_prompt()
 
-        # Build messages for Ollama
+        # Build messages for llama-server
         messages = [m for m in conversation_history if m["content"].strip()]
         current_history_var.set(conversation_history)
 

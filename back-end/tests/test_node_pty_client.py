@@ -155,3 +155,27 @@ async def test_reconnect_after_drop(server_factory):
     result = await client.call("ping", {})
     assert result["pong"] is True
     await client.close()
+
+
+async def test_heartbeat_closes_on_pong_timeout(server_factory):
+    async def handler(ws):
+        try:
+            while True:
+                await ws.recv()
+        except Exception:
+            pass
+
+    port = await server_factory(handler, port=19108)
+    client = NodePtyClient(
+        url=f"ws://127.0.0.1:{port}",
+        ping_interval=0.2,
+        ping_timeout=0.3,
+    )
+    await client.connect()
+    client.start_heartbeat()
+    for _ in range(20):
+        if not client.is_connected:
+            break
+        await asyncio.sleep(0.1)
+    assert not client.is_connected
+    await client.close()

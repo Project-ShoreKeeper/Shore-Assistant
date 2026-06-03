@@ -41,6 +41,7 @@ class NodePtyClient:
         self._connect_lock = asyncio.Lock()
         self._auto_reconnect = False
         self._reconnect_task: Optional[asyncio.Task] = None
+        self._heartbeat_task: Optional[asyncio.Task] = None
 
     @property
     def is_connected(self) -> bool:
@@ -53,6 +54,22 @@ class NodePtyClient:
         self._auto_reconnect = True
         if self._reconnect_task is None or self._reconnect_task.done():
             self._reconnect_task = asyncio.create_task(self._reconnect_loop())
+
+    def start_heartbeat(self) -> None:
+        if self._heartbeat_task is None or self._heartbeat_task.done():
+            self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+
+    async def _heartbeat_loop(self) -> None:
+        while True:
+            await asyncio.sleep(self.ping_interval)
+            if not self.is_connected:
+                continue
+            try:
+                await self.call("ping", {}, timeout=self.ping_timeout)
+            except Exception as e:
+                log.warning("heartbeat failed (%s); closing socket to trigger reconnect", e)
+                if self._ws:
+                    await self._ws.close()
 
     async def _reconnect_loop(self) -> None:
         backoff_ms = self.reconnect_base_ms
@@ -103,6 +120,13 @@ class NodePtyClient:
             except asyncio.CancelledError:
                 pass
             self._reconnect_task = None
+        if self._heartbeat_task and not self._heartbeat_task.done():
+            self._heartbeat_task.cancel()
+            try:
+                await self._heartbeat_task
+            except asyncio.CancelledError:
+                pass
+            self._heartbeat_task = None
         if self._reader_task:
             self._reader_task.cancel()
             try:

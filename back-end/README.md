@@ -2,6 +2,19 @@
 
 Đây là module Backend sử dụng **FastAPI** phục vụ cho Speech-To-Text processing.
 
+## Prerequisites
+
+Before starting the FastAPI server with `TERMINAL_BACKEND=node` (the default), run the `shore-pty-service` microservice separately:
+
+```bash
+cd shore-pty-service
+npm install
+npm run build
+npm start          # Starts WS server at ws://127.0.0.1:9100
+```
+
+See `shore-pty-service/README.md` for full setup details. For architecture and configuration options, refer to the top-level `CLAUDE.md`.
+
 ## Yêu cầu môi trường
 
 - Python 3.9+
@@ -30,7 +43,7 @@ Trong khi vẫn đang kích hoạt môi trường ảo (`venv`), chạy lệnh:
 uvicorn app.main:app --reload
 ```
 
-Server sẽ khởi động và lắng nghe tại `http://localhost:8000`.
+Server sẽ khởi động và lắng nghe tại `http://localhost:9000`.
 
-- Giao diện Swagger UI (xem các API): [http://localhost:8000/docs](http://localhost:8000/docs)
-- Redoc UI: [http://localhost:8000/redoc](http://localhost:8000/redoc)
+- Giao diện Swagger UI (xem các API): [http://localhost:9000/docs](http://localhost:9000/docs)
+- Redoc UI: [http://localhost:9000/redoc](http://localhost:9000/redoc)

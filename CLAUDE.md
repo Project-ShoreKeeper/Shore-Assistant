@@ -11,7 +11,7 @@ A voice-first AI assistant running locally with LLM reasoning, tool execution, v
 ```
 Browser (React + TypeScript + Vite)
   ├── Silero VAD (in-browser ONNX, 16kHz/512-sample chunks)
-  ├── Chat WebSocket client → ws://localhost:8000/ws/chat
+  ├── Chat WebSocket client → ws://localhost:9000/ws/chat
   └── TTS PCM audio player (AudioContext)
 
 FastAPI Backend (Python)
@@ -27,12 +27,16 @@ FastAPI Backend (Python)
   ├── TTS          (Kokoro TTS → Int16 PCM streaming, local/offline, multi-language)
   ├── Vision       (mss screen capture → primary multimodal model via /v1/chat/completions)
   └── n8n          (two-way integration: dynamic workflow tools + inbound webhook notifications)
+
+Node PTY microservice (shore-pty-service)
+  └── node-pty executor — PTY/process host at ws://127.0.0.1:9100 (used by terminal_service when TERMINAL_BACKEND=node)
 ```
 
 ## Project Structure
 
 ```
 Shore-Assistant/
+├── shore-pty-service/    # Node + TypeScript microservice: node-pty + child_process executor (ws://127.0.0.1:9100)
 ├── back-end/
 │   └── app/
 │       ├── main.py                     # FastAPI app factory + router includes
@@ -113,7 +117,15 @@ pip install torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 --index-url https
 pip install -r requirements.txt
 
 # Start server (must run from back-end/ directory)
-python -m uvicorn app.main:app --reload --port 8000
+python -m uvicorn app.main:app --reload --port 9000
+```
+
+### Terminal Microservice (shore-pty-service)
+```bash
+cd shore-pty-service
+npm install
+npm run build
+npm start          # Starts WS server at ws://127.0.0.1:9100
 ```
 
 ### Frontend
@@ -187,6 +199,13 @@ All backend config via environment variables or `.env` file in `back-end/`:
 | N8N_API_KEY | (empty) | n8n REST API key (Settings → API in n8n UI) |
 | N8N_WEBHOOK_SECRET | (empty) | Shared secret for n8n → Shore webhook auth |
 | N8N_REFRESH_INTERVAL_MINUTES | 0 | Auto-refresh workflow discovery (0 = disabled) |
+| TERMINAL_BACKEND | node | `node` or `pywinpty` — which PTY executor backend to use |
+| NODE_PTY_WS_URL | ws://127.0.0.1:9100 | URL of shore-pty-service WS endpoint |
+| NODE_PTY_AUTH_TOKEN | (empty) | Optional Bearer token required by shore-pty-service |
+| NODE_PTY_RECONNECT_BASE_MS | 1000 | Initial reconnect backoff (milliseconds) |
+| NODE_PTY_RECONNECT_MAX_MS | 30000 | Max reconnect backoff (milliseconds) |
+| NODE_PTY_PING_INTERVAL_SECONDS | 30 | Heartbeat ping interval |
+| NODE_PTY_PING_TIMEOUT_SECONDS | 5 | Pong deadline before treating connection as disconnected |
 
 ## Conventions
 
@@ -214,6 +233,7 @@ All backend config via environment variables or `.env` file in `back-end/`:
 - [x] Auto-inject time — current timestamp in system prompt prevents stale time answers
 - [x] Web search → scrape chaining — companion tools + prompt rule for automatic follow-up
 - [x] Vision via primary model — multimodal primary served by llama-server, no hot-swap
+- [x] Terminal interaction — PTY sessions + one-shot commands via shore-pty-service (node-pty) + xterm.js UI
 
 ### Proactive Agent (Event Loop)
 - [x] Scheduled tasks — set_reminder (one-shot) + set_scheduled_task (recurring) tools with APScheduler

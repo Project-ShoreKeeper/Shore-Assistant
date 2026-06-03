@@ -169,11 +169,11 @@ class AgentService:
                     "timestamp": time.time(),
                 }
 
-                # Add tool result in Ollama's expected format
+                # Add tool result in OpenAI-compatible format
                 messages.append({
                     "role": "tool",
                     "content": result,
-                    "tool_name": tool_name,
+                    "tool_call_id": tc.get("id"),
                 })
 
         # Exhausted tool rounds

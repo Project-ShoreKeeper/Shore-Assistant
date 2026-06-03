@@ -109,6 +109,32 @@ class TerminalService:
         })
         return decision
 
+    async def _gate(self, kind: str, command: str, shell: str, cwd: str, reason: str) -> Optional[str]:
+        """Run command through whitelist + confirm flow. Returns None if execution
+        is permitted, or an error string (already audited) if blocked/denied/timed out."""
+        if not self.whitelist:
+            return None
+        check = self.whitelist.check(command, shell)
+        if check.decision == "block":
+            self._audit({"kind": kind, "command": command, "shell": shell, "cwd": cwd,
+                         "decision": "blocked", "reason": check.reason})
+            return f"Blocked: {check.reason}"
+        if check.decision == "confirm":
+            response = await self._request_confirm(command, shell, cwd, reason or check.reason)
+            if response == "always_allow":
+                head = command.strip().split()[0] if command.strip() else ""
+                if head:
+                    self.whitelist.add_user_allow(head)
+                return None
+            if response == "approve":
+                return None
+            audit_decision = "timed_out" if response == "timeout" else "denied"
+            self._audit({"kind": kind, "command": command, "shell": shell, "cwd": cwd,
+                         "decision": audit_decision})
+            return ("Confirmation timed out; ask user to retry"
+                    if response == "timeout" else "User denied execution")
+        return None
+
     async def run_oneshot(
         self,
         command: str,
@@ -124,33 +150,10 @@ class TerminalService:
             return {"exit_code": -1, "stdout": "", "stderr": f"CWD not found: {cwd}",
                     "truncated": False, "duration_ms": 0, "log_path": ""}
 
-        # Whitelist gate
-        if self.whitelist:
-            check = self.whitelist.check(command, shell)
-            if check.decision == "block":
-                self._audit({"kind": "oneshot", "command": command, "shell": shell, "cwd": cwd,
-                             "decision": "blocked", "reason": check.reason})
-                return {"exit_code": -1, "stdout": "",
-                        "stderr": f"Blocked: {check.reason}",
-                        "truncated": False, "duration_ms": 0, "log_path": ""}
-            if check.decision == "confirm":
-                response = await self._request_confirm(command, shell, cwd, reason or check.reason)
-                if response == "always_allow":
-                    head = command.strip().split()[0] if command.strip() else ""
-                    if head:
-                        self.whitelist.add_user_allow(head)
-                elif response != "approve":
-                    audit_decision = "timed_out" if response == "timeout" else "denied"
-                    stderr_msg = (
-                        "Confirmation timed out; ask user to retry"
-                        if response == "timeout"
-                        else "User denied execution"
-                    )
-                    self._audit({"kind": "oneshot", "command": command, "shell": shell, "cwd": cwd,
-                                 "decision": audit_decision})
-                    return {"exit_code": -1, "stdout": "",
-                            "stderr": stderr_msg,
-                            "truncated": False, "duration_ms": 0, "log_path": ""}
+        gate_error = await self._gate("oneshot", command, shell, cwd, reason)
+        if gate_error is not None:
+            return {"exit_code": -1, "stdout": "", "stderr": gate_error,
+                    "truncated": False, "duration_ms": 0, "log_path": ""}
 
         await self._broadcast({"type": "terminal_oneshot_start", "run_id": run_id,
                                "command": command, "shell": shell, "cwd": cwd})
@@ -279,7 +282,40 @@ class TerminalService:
         await self.backend.close_session_exec(entry["session_id"])
         return {"closed": True, "message": f"Closed '{name}'"}
 
+    async def start_background(
+        self,
+        name: str,
+        command: str,
+        shell: str = "powershell",
+        cwd: Optional[str] = None,
+        reason: str = "",
+    ) -> dict:
+        """Launch a long-running service detached, hidden (no console window),
+        with combined stdout/stderr captured to a log file. Goes through the same
+        whitelist + confirm flow as run_oneshot."""
+        cwd = cwd or self.default_cwd or os.getcwd()
+        if not Path(cwd).is_dir():
+            return {"error": f"CWD not found: {cwd}"}
+
+        gate_error = await self._gate("bg_service", command, shell, cwd, reason)
+        if gate_error is not None:
+            return {"error": gate_error}
+
+        from app.services.background_service import background_service_manager
+        result = background_service_manager.start(
+            name=name, command=command, shell=shell, cwd=cwd,
+        )
+        self._audit({
+            "kind": "bg_service_start", "name": name, "command": command,
+            "shell": shell, "cwd": cwd, "pid": result.get("pid"),
+            "decision": "executed" if "pid" in result else "error",
+            "reason": reason, "error": result.get("error"),
+        })
+        return result
+
     async def shutdown_all(self):
+        from app.services.background_service import background_service_manager
+        background_service_manager.shutdown_all()
         await self.backend.shutdown()
 
 

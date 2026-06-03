@@ -67,6 +67,7 @@ class Settings(BaseSettings):
     TERMINAL_USER_WHITELIST_FILE: str = "data/terminal_whitelist_user.json"
     TERMINAL_RUNS_DIR: str = "data/terminal_runs"
     TERMINAL_AUDIT_LOG: str = "data/terminal_audit.log"
+    BACKGROUND_SERVICES_LOG_DIR: str = "data/background_services"
 
     # Node PTY microservice
     NODE_PTY_WS_URL: str = "wss://terminal.shore-keeper.com"

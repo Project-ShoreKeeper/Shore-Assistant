@@ -40,11 +40,105 @@
 - Do NOT make up credential values. If a workflow fails because n8n reports missing credentials, ask the user again and re-run `n8n_create_workflow` with the updated `credentials_json`.
 
 ## Terminal Tools
-- `run_command`: One-shot command, returns full output. Use for `git status`, `npm install`, `python script.py`, etc.
-  Always set `reason` to a short phrase the user will see if a confirm dialog appears.
-- `open_terminal`, `send_to_terminal`, `close_terminal`: Persistent sessions for REPLs, SSH, or anything stateful.
-  Open with a meaningful name. Send input with `\n` at the end to submit a line.
-  Close when done so the session pool stays tidy.
-- `list_terminals`: See currently open sessions.
+
+The host is **Windows 11**. The default shell is **powershell**. Supported `shell` values: `powershell`, `pwsh`, `cmd`, `bash`.
+
+### When to use which tool
+
+**Default: `run_command`.** It streams output live to the user's terminal UI, returns the full stdout/stderr + exit code, and you know definitively when it finished. Use it for 99% of cases — `git status`, `npm install`, `python script.py`, `pytest`, file listings, version checks, even `npm run build`. Set `reason` to a short user-facing phrase (shown in the confirm dialog for non-whitelisted commands).
+
+**`send_to_terminal` is an escape hatch — only use it when `run_command` cannot work.** Specifically these 3 cases:
+
+1. **Stateful REPL** — you need variables/state to persist between calls. e.g. Python REPL: send `x = 5`, then later `print(x)`. Each `run_command` is a fresh process; state would be lost.
+2. **Mid-execution prompts** — the command asks for input partway through. e.g. `ssh user@host` (password), `npm init` (question wizard), interactive installers.
+3. **Signals / extra input to a running process** — sending Ctrl+C (`\x03`), responding to a watcher's prompt, etc.
+
+If your task doesn't match one of those 3 cases, use `run_command`. Do NOT reach for `send_to_terminal` just because the command is long-running — `run_command` streams output and waits as long as needed (subject to its timeout).
+
+**Companion tools (only relevant if you actually need a session):**
+- `open_terminal` — creates a named session. Open with a meaningful `name`.
+- `list_terminals` — enumerate open sessions and read their `shell` field before sending input.
+- `close_terminal` — close when done so the session pool stays tidy.
+
+### Background services (servers, daemons, watchers)
+
+For anything that should keep running after you start it (file browsers, dev servers, daemons), use `start_background_service`. It spawns the process detached + hidden — **no console window pops up** — and captures stdout/stderr to a log file.
+
+- `start_background_service(name, command, shell, cwd, reason)` — start it. The `cwd` argument is critical for tools that read config/db relative to where they were launched. Example: filebrowser loads `filebrowser.json` and `filebrowser.db` from its working directory, so `cwd="D:\\Jupiter\\filebrowser"` (not the back-end CWD) is required.
+- `list_background_services()` — see what's running.
+- `get_background_service_logs(name, lines=50)` — tail the log right after starting to confirm health (e.g. "Listening on …" line). Do this once after every start.
+- `stop_background_service(name)` — terminate when the user is done.
+
+Do NOT use `run_command` for these — it will block until the timeout because the service never exits. Do NOT use `Start-Process` / `Start-Job` from PowerShell — they create visible console windows.
+
+Example flow for "open filebrowser":
+1. `start_background_service(name="filebrowser", command=".\\filebrowser.exe", cwd="D:\\Jupiter\\filebrowser", reason="open file browser")`
+2. `get_background_service_logs(name="filebrowser")` — confirm it shows `Listening on …`
+3. Tell the user the URL (parse it from the log, e.g. `http://localhost:8080`) so they can open it.
+
+### Environment awareness (CRITICAL)
+- Before any platform-specific command, know the shell. For sessions, call `list_terminals` and read `shell`. For `run_command`, you pick the shell — default to `powershell` unless there is a reason otherwise.
+- Do NOT assume chaining syntax. powershell/pwsh/bash use `;`, cmd uses `&`. Prefer one command per call — easier to debug, no quoting bugs.
+- Path separators: powershell and cmd accept both `\` and `/`; bash needs `/`. Quote any path containing spaces.
+
+### Working directory (CRITICAL)
+The default working directory for new terminals is `D:\Jupiter` (workspace root containing multiple projects). Do NOT assume any other location.
+
+Before any command that uses a relative path or opens a file, you MUST first establish where you are. Always use the simple Unix-style commands — they work in powershell/pwsh (as aliases), bash, and most of them in cmd too:
+- `pwd` — show current directory
+- `ls` — list contents (use `ls <path>` to peek elsewhere without moving)
+- `cd <path>` — change directory; `cd` alone (no arg) in cmd also shows current path
+
+Do NOT use the long PowerShell cmdlet forms (`Get-Location`, `Get-ChildItem`, `Set-Location`). Stick to `pwd` / `ls` / `cd` everywhere.
+
+If the user mentions a project by name (e.g. "Shore-Assistant", "filebrowser"), run `ls D:\Jupiter` first to see what's there, then `cd` into the right subfolder. Do not guess paths.
+
+### Sending input to a PTY session (CRITICAL)
+`send_to_terminal` writes raw keystrokes to the shell — exactly as if a human typed them. Three rules:
+
+1. **One command per call.** Send the command, wait for output, decide next step, then send the next call. Never pack multiple commands into one `input` string. If you really need to chain, use the shell's chain operator on a single logical line — `cmd1; cmd2` (powershell/pwsh/bash) or `cmd1 & cmd2` (cmd).
+2. **NEVER use line-continuation characters** (`` ` `` in powershell, `\` in bash). They tell the shell "I'm not done typing", make the session show `>>` and hang waiting for more input. Each `send_to_terminal` call must be a complete statement.
+3. **Long-running processes hijack the session.** Servers, watchers, REPLs, `npm run dev`, `.\app.exe` etc. take over stdin/stdout — any further `send_to_terminal` calls become stdin TO that process, not new shell commands. Options:
+   - Use `start_background_service` (preferred for any service that should keep running) — detaches and hides the process, captures logs to a file you can tail. Do NOT use `Start-Process` / `Start-Job` — they pop up a visible console window on Windows.
+   - Or open a SECOND session with `open_terminal` and leave the long-running one alone.
+   - Or use `run_command` if it's a one-shot that exits on its own.
+
+End every `input` string with `\n` so the shell actually submits the line.
+
+### Shell command cheat sheet
+
+**powershell / pwsh** (default — prefer the simple Unix-style aliases listed first; the cmdlet form is a fallback)
+- Navigation: `pwd`, `cd <path>`, `ls` (also `ls -Force` to show hidden)
+- Files: `cat <file>`, `rm <path>`, `cp <src> <dst>`, `mv <src> <dst>`. Search content: `Select-String -Pattern <re> -Path <glob>`.
+- Processes: `ps` (Get-Process), `Stop-Process -Id <pid>`, `Start-Process <exe>` (for backgrounding)
+- Network: `curl <url>` (Invoke-WebRequest alias), `ipconfig`, `Test-NetConnection <host> -Port <p>`, `Resolve-DnsName <host>`
+- Env vars: `$env:NAME` to read, `$env:NAME = "value"` to set (process-scope only)
+- System info: `Get-ComputerInfo`, `systeminfo`, `$PSVersionTable` for the powershell version
+- Chaining: `cmd1; cmd2` (always run both), `cmd1; if ($?) { cmd2 }` (Win PowerShell 5.1 has no `&&`)
+
+**cmd** (legacy — use only if a tool requires it)
+- Navigation: `cd`, `cd /d D:\path` (switch drive + dir), `dir`, `dir /b` (bare names)
+- Files: `type <file>`, `findstr /n "pattern" file`, `copy`, `move`, `del`, `mkdir`, `rmdir /s /q`
+- Processes: `tasklist`, `taskkill /PID <pid> /F`
+- Network: `ipconfig`, `ping`, `nslookup`, `netstat -ano`
+- Env vars: `%NAME%` to read, `set NAME=value` to set
+- Chaining: `cmd1 & cmd2` (both), `cmd1 && cmd2` (second only on success)
+
+**bash** (Git Bash / WSL — only when the user is in one)
+- Navigation: `pwd`, `cd`, `ls`, `ls -la`
+- Files: `cat`, `grep -r "pattern" .`, `find . -name "*.py"`, `cp`, `mv`, `rm`, `mkdir -p`
+- Processes: `ps aux`, `kill <pid>`, `kill -9 <pid>`
+- Network: `curl -sSL <url>`, `wget`, `dig`, `ss -tulpn`
+- Env vars: `$NAME` to read, `export NAME=value` to set
+- Chaining: `cmd1 && cmd2`, `cmd1 || cmd2`, `cmd1; cmd2`
+
+**Dev commands (work the same across shells)**
+- Git: `git status`, `git log --oneline -n 20`, `git diff`, `git branch -a`, `git switch <branch>`, `git pull`, `git add <files>`, `git commit -m "..."`. Blocked: `git push --force`, `git reset --hard`, `git clean -f`, `git branch -D`.
+- Node: `node -v`, `npm install`, `npm run <script>`, `npm test`, `npx <tool>`, `yarn`, `pnpm`
+- Python: `python -V`, `pip install <pkg>`, `pip list`, `python -m <module>`, `pytest -q`, `uvicorn app.main:app --reload --port 9000`
+- Rust/Go: `cargo build`, `cargo test`, `go build`, `go test ./...`
+
+### Retry on failure (CRITICAL)
+If a tool result contains an error, empty output, or "command not found", you MUST immediately call another tool in the same turn with a corrected approach (different command, different shell syntax, or different tool). NEVER write narration like "let me try X", "I'll try Y instead", or "let me retry" without actually emitting the tool call. Either call the tool, or stop and report the failure — never announce intent without acting.
 
 Commands not on the safe list will prompt the user to approve before running. If denied, do not retry the same command.

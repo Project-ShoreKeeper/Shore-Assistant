@@ -5,6 +5,12 @@ from app.tools.web_tools import search_web, web_scrape
 from app.tools.screen_tools import capture_screen, analyze_screen
 from app.tools.scheduler_tools import set_reminder, set_scheduled_task, cancel_task, list_tasks
 from app.tools.terminal_tools import run_command, open_terminal, send_to_terminal, list_terminals, close_terminal
+from app.tools.background_tools import (
+    start_background_service,
+    list_background_services,
+    stop_background_service,
+    get_background_service_logs,
+)
 from app.tools.n8n_workflow_tools import (
     n8n_search_nodes,
     n8n_get_node_schema,
@@ -43,6 +49,10 @@ ALL_TOOLS = [
     send_to_terminal,
     list_terminals,
     close_terminal,
+    start_background_service,
+    list_background_services,
+    stop_background_service,
+    get_background_service_logs,
 ]
 
 # Map tool names to tool instances for dispatch

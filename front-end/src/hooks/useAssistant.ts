@@ -1,13 +1,14 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { createVAD, VAD } from "../services/vad.service";
 import {
-  ChatWebSocketService,
+  chatWebsocketService,
+  type ChatWebSocketService,
   type WebSocketStatus,
   type ChatServerMessage,
 } from "../services/chat-websocket.service";
 import { float32ToWav } from "../utils/audio.util";
 import { TTSPlayer } from "../utils/tts-player.util";
-import { CHAT_WS_URL, STT_DEFAULT_LANGUAGE } from "../constants/stt.constant";
+import { STT_DEFAULT_LANGUAGE } from "../constants/stt.constant";
 
 // ─── Types ───
 
@@ -169,7 +170,7 @@ export function useAssistant(): UseAssistantReturn {
 
   // ── Initialize Chat WebSocket ──
   useEffect(() => {
-    const ws = new ChatWebSocketService(CHAT_WS_URL);
+    const ws = chatWebsocketService;
     wsRef.current = ws;
 
     ws.on("statusChange", (status) => setWsStatus(status));
@@ -462,7 +463,7 @@ export function useAssistant(): UseAssistantReturn {
     ws.connect();
 
     return () => {
-      ws.disconnect();
+      // Do not disconnect the singleton — it's shared with useTerminal
       wsRef.current = null;
     };
   }, []);

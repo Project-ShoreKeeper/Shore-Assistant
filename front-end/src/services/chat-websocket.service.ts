@@ -137,6 +137,19 @@ export class ChatWebSocketService {
     Record<keyof ChatWSEvents, ChatWSEventCallback<keyof ChatWSEvents>[]>
   > = {};
 
+  private terminalListeners: Set<(msg: any) => void> = new Set();
+
+  public onTerminalMessage(cb: (msg: any) => void): () => void {
+    this.terminalListeners.add(cb);
+    return () => this.terminalListeners.delete(cb);
+  }
+
+  public sendTerminalMessage(msg: object): void {
+    if (this.socket?.readyState === WebSocket.OPEN) {
+      this.socket.send(JSON.stringify(msg));
+    }
+  }
+
   constructor(url: string) {
     this.url = url;
   }
@@ -274,8 +287,12 @@ export class ChatWebSocketService {
   private handleMessage(event: MessageEvent): void {
     if (typeof event.data === "string") {
       try {
-        const parsed: ChatServerMessage = JSON.parse(event.data);
-        this.emit("message", parsed);
+        const parsed = JSON.parse(event.data);
+        if (typeof parsed?.type === "string" && parsed.type.startsWith("terminal_")) {
+          this.terminalListeners.forEach((cb) => cb(parsed));
+        } else {
+          this.emit("message", parsed as ChatServerMessage);
+        }
       } catch {
         console.warn("[Chat WS] Could not parse JSON:", event.data);
       }
@@ -296,3 +313,11 @@ export class ChatWebSocketService {
     return !!this.socket && this.socket.readyState === WebSocket.OPEN;
   }
 }
+
+// ─── Singleton ───
+// Shared instance used by useAssistant and useTerminal so both operate on the same socket.
+const _backendHost = `${window.location.hostname}:8000`;
+const _wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+const _chatWsUrl = `${_wsProtocol}//${_backendHost}/ws/chat`;
+export const chatWebsocketService = new ChatWebSocketService(_chatWsUrl);
+export default chatWebsocketService;

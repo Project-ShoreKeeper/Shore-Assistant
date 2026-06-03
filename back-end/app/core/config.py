@@ -54,6 +54,20 @@ class Settings(BaseSettings):
     CLOUD_MAX_TOKENS: int = 4096
     CLOUD_HISTORY_MAX_TURNS: int = 10
 
+    # Terminal
+    TERMINAL_DEFAULT_CWD: str = ""
+    TERMINAL_DEFAULT_SHELL: str = "powershell"
+    TERMINAL_ONESHOT_TIMEOUT_SECONDS: int = 60
+    TERMINAL_SESSION_IDLE_MINUTES: int = 30
+    TERMINAL_ORPHAN_TIMEOUT_MINUTES: int = 5
+    TERMINAL_CONFIRM_TIMEOUT_SECONDS: int = 60
+    TERMINAL_MAX_OUTPUT_BYTES: int = 1_048_576
+    TERMINAL_LLM_OUTPUT_PREVIEW_BYTES: int = 8192
+    TERMINAL_WHITELIST_FILE: str = "data/terminal_whitelist.json"
+    TERMINAL_USER_WHITELIST_FILE: str = "data/terminal_whitelist_user.json"
+    TERMINAL_RUNS_DIR: str = "data/terminal_runs"
+    TERMINAL_AUDIT_LOG: str = "data/terminal_audit.log"
+
     class Config:
         env_file = ".env"
 

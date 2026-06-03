@@ -14,7 +14,6 @@ from app.services.terminal_backend import (
     TerminalBackend,
     ExecResult,
     SessionHandle,
-    PywinptyBackend,
 )
 
 ANSI_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
@@ -32,10 +31,10 @@ class TerminalService:
         runs_dir: Path,
         audit_log_path: Path,
         default_cwd: str,
+        backend: TerminalBackend,
         oneshot_timeout: int = 60,
         max_output_bytes: int = 1_048_576,
         llm_preview_bytes: int = 8192,
-        backend: Optional[TerminalBackend] = None,
     ):
         self.whitelist = whitelist
         self.runs_dir = Path(runs_dir)
@@ -52,7 +51,7 @@ class TerminalService:
         self._pending_confirms: dict[str, asyncio.Future] = {}
         self.sessions: dict[str, dict] = {}
         self.session_idle_seconds = 30 * 60
-        self.backend: TerminalBackend = backend or PywinptyBackend(max_output_bytes=max_output_bytes)
+        self.backend: TerminalBackend = backend
         # Optional startup hook (e.g. for NodePtyBackend: start reconnect + heartbeat tasks)
         self._startup_hook: Optional[callable] = None
 
@@ -75,9 +74,15 @@ class TerminalService:
 
     def resolve_confirm(self, request_id: str, decision: str) -> bool:
         fut = self._pending_confirms.pop(request_id, None)
+        pending_ids = list(self._pending_confirms.keys())
+        import sys
         if fut and not fut.done():
+            sys.stderr.write(f"[confirm] resolved request_id={request_id} decision={decision}\n")
+            sys.stderr.flush()
             fut.set_result(decision)
             return True
+        sys.stderr.write(f"[confirm] STALE click request_id={request_id} decision={decision} pending={pending_ids}\n")
+        sys.stderr.flush()
         return False
 
     async def _request_confirm(self, command: str, shell: str, cwd: str, reason: str) -> str:
@@ -93,10 +98,16 @@ class TerminalService:
             "reason": reason,
         })
         try:
-            return await asyncio.wait_for(fut, timeout=self.confirm_timeout)
+            decision = await asyncio.wait_for(fut, timeout=self.confirm_timeout)
         except asyncio.TimeoutError:
             self._pending_confirms.pop(request_id, None)
-            return "deny"
+            decision = "timeout"
+        await self._broadcast({
+            "type": "terminal_confirm_resolved",
+            "request_id": request_id,
+            "decision": decision,
+        })
+        return decision
 
     async def run_oneshot(
         self,
@@ -129,10 +140,16 @@ class TerminalService:
                     if head:
                         self.whitelist.add_user_allow(head)
                 elif response != "approve":
+                    audit_decision = "timed_out" if response == "timeout" else "denied"
+                    stderr_msg = (
+                        "Confirmation timed out; ask user to retry"
+                        if response == "timeout"
+                        else "User denied execution"
+                    )
                     self._audit({"kind": "oneshot", "command": command, "shell": shell, "cwd": cwd,
-                                 "decision": "denied"})
+                                 "decision": audit_decision})
                     return {"exit_code": -1, "stdout": "",
-                            "stderr": "User denied execution",
+                            "stderr": stderr_msg,
                             "truncated": False, "duration_ms": 0, "log_path": ""}
 
         await self._broadcast({"type": "terminal_oneshot_start", "run_id": run_id,
@@ -281,50 +298,43 @@ async def _idle_reaper(service: "TerminalService"):
 def _build_service() -> TerminalService:
     from app.core.config import settings
     from app.services.terminal_whitelist import WhitelistGuard
+    from app.services.node_pty_client import NodePtyClient
+    from app.services.terminal_backend import NodePtyBackend
+
     default_cwd = settings.TERMINAL_DEFAULT_CWD or os.getcwd()
     guard = WhitelistGuard(
         default_path=settings.TERMINAL_WHITELIST_FILE,
         user_path=settings.TERMINAL_USER_WHITELIST_FILE,
     )
 
-    backend: TerminalBackend
-    startup_hook = None
-    if settings.TERMINAL_BACKEND == "node":
-        from app.services.node_pty_client import NodePtyClient
-        from app.services.terminal_backend import NodePtyBackend
-        client = NodePtyClient(
-            url=settings.NODE_PTY_WS_URL,
-            auth_token=settings.NODE_PTY_AUTH_TOKEN,
-            ping_interval=settings.NODE_PTY_PING_INTERVAL_SECONDS,
-            ping_timeout=settings.NODE_PTY_PING_TIMEOUT_SECONDS,
-            reconnect_base_ms=settings.NODE_PTY_RECONNECT_BASE_MS,
-            reconnect_max_ms=settings.NODE_PTY_RECONNECT_MAX_MS,
-        )
-        backend = NodePtyBackend(client)
+    client = NodePtyClient(
+        url=settings.NODE_PTY_WS_URL,
+        auth_token=settings.NODE_PTY_AUTH_TOKEN,
+        ping_interval=settings.NODE_PTY_PING_INTERVAL_SECONDS,
+        ping_timeout=settings.NODE_PTY_PING_TIMEOUT_SECONDS,
+        reconnect_base_ms=settings.NODE_PTY_RECONNECT_BASE_MS,
+        reconnect_max_ms=settings.NODE_PTY_RECONNECT_MAX_MS,
+    )
+    backend = NodePtyBackend(client)
 
-        async def _node_startup():
-            # asyncio tasks — must be created from a running event loop
-            client.start_auto_reconnect()
-            client.start_heartbeat()
-
-        startup_hook = _node_startup
-    else:
-        from app.services.terminal_backend import PywinptyBackend
-        backend = PywinptyBackend(max_output_bytes=settings.TERMINAL_MAX_OUTPUT_BYTES)
+    async def _node_startup():
+        # asyncio tasks — must be created from a running event loop
+        client.start_auto_reconnect()
+        client.start_heartbeat()
 
     svc = TerminalService(
         whitelist=guard,
         runs_dir=Path(settings.TERMINAL_RUNS_DIR),
         audit_log_path=Path(settings.TERMINAL_AUDIT_LOG),
         default_cwd=default_cwd,
+        backend=backend,
         oneshot_timeout=settings.TERMINAL_ONESHOT_TIMEOUT_SECONDS,
         max_output_bytes=settings.TERMINAL_MAX_OUTPUT_BYTES,
         llm_preview_bytes=settings.TERMINAL_LLM_OUTPUT_PREVIEW_BYTES,
-        backend=backend,
     )
     svc.confirm_timeout = settings.TERMINAL_CONFIRM_TIMEOUT_SECONDS
     svc.session_idle_seconds = settings.TERMINAL_SESSION_IDLE_MINUTES * 60
-    svc._startup_hook = startup_hook
+    svc._startup_hook = _node_startup
     return svc
 
 

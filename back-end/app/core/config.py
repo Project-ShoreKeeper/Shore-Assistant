@@ -55,12 +55,12 @@ class Settings(BaseSettings):
     CLOUD_HISTORY_MAX_TURNS: int = 10
 
     # Terminal
-    TERMINAL_DEFAULT_CWD: str = ""
+    TERMINAL_DEFAULT_CWD: str = r"D:\Jupiter"
     TERMINAL_DEFAULT_SHELL: str = "powershell"
     TERMINAL_ONESHOT_TIMEOUT_SECONDS: int = 60
     TERMINAL_SESSION_IDLE_MINUTES: int = 30
     TERMINAL_ORPHAN_TIMEOUT_MINUTES: int = 5
-    TERMINAL_CONFIRM_TIMEOUT_SECONDS: int = 60
+    TERMINAL_CONFIRM_TIMEOUT_SECONDS: int = 300
     TERMINAL_MAX_OUTPUT_BYTES: int = 1_048_576
     TERMINAL_LLM_OUTPUT_PREVIEW_BYTES: int = 8192
     TERMINAL_WHITELIST_FILE: str = "data/terminal_whitelist.json"
@@ -69,8 +69,7 @@ class Settings(BaseSettings):
     TERMINAL_AUDIT_LOG: str = "data/terminal_audit.log"
 
     # Node PTY microservice
-    TERMINAL_BACKEND: str = "node"  # "node" | "pywinpty"
-    NODE_PTY_WS_URL: str = "ws://127.0.0.1:9100"
+    NODE_PTY_WS_URL: str = "wss://terminal.shore-keeper.com"
     NODE_PTY_AUTH_TOKEN: str = ""
     NODE_PTY_RECONNECT_BASE_MS: int = 1000
     NODE_PTY_RECONNECT_MAX_MS: int = 30000
@@ -79,6 +78,7 @@ class Settings(BaseSettings):
 
     class Config:
         env_file = ".env"
+        extra = "ignore"
 
 
 settings = Settings()

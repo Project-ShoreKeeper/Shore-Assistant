@@ -4,7 +4,7 @@
 
 ## Prerequisites
 
-Before starting the FastAPI server with `TERMINAL_BACKEND=node` (the default), run the `shore-pty-service` microservice separately:
+Before starting the FastAPI server, run the `shore-pty-service` microservice separately — it is the sole PTY executor backend:
 
 ```bash
 cd shore-pty-service

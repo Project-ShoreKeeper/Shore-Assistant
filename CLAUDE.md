@@ -29,7 +29,7 @@ FastAPI Backend (Python)
   └── n8n          (two-way integration: dynamic workflow tools + inbound webhook notifications)
 
 Node PTY microservice (shore-pty-service)
-  └── node-pty executor — PTY/process host at ws://127.0.0.1:9100 (used by terminal_service when TERMINAL_BACKEND=node)
+  └── node-pty executor — PTY/process host at ws://127.0.0.1:9100 (sole backend for terminal_service)
 ```
 
 ## Project Structure
@@ -199,8 +199,7 @@ All backend config via environment variables or `.env` file in `back-end/`:
 | N8N_API_KEY | (empty) | n8n REST API key (Settings → API in n8n UI) |
 | N8N_WEBHOOK_SECRET | (empty) | Shared secret for n8n → Shore webhook auth |
 | N8N_REFRESH_INTERVAL_MINUTES | 0 | Auto-refresh workflow discovery (0 = disabled) |
-| TERMINAL_BACKEND | node | `node` or `pywinpty` — which PTY executor backend to use |
-| NODE_PTY_WS_URL | ws://127.0.0.1:9100 | URL of shore-pty-service WS endpoint |
+| NODE_PTY_WS_URL | wss://terminal.shore-keeper.com | URL of shore-pty-service WS endpoint (reverse-proxied TLS) |
 | NODE_PTY_AUTH_TOKEN | (empty) | Optional Bearer token required by shore-pty-service |
 | NODE_PTY_RECONNECT_BASE_MS | 1000 | Initial reconnect backoff (milliseconds) |
 | NODE_PTY_RECONNECT_MAX_MS | 30000 | Max reconnect backoff (milliseconds) |

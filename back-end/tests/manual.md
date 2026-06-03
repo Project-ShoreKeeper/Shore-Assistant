@@ -13,10 +13,9 @@ Prereqs:
    ```
    Expect log: `shore-pty-service listening { host: '127.0.0.1', port: 9100 }`.
 
-2. **Start FastAPI with node backend**
+2. **Start FastAPI**
    ```bash
    cd back-end
-   $env:TERMINAL_BACKEND="node"
    python -m uvicorn app.main:app --reload --port 9000
    ```
 
@@ -35,10 +34,6 @@ Prereqs:
    - Restart Node: `npm start`.
    - Open a new session — should succeed (Python auto-reconnected).
 
-6. **Fallback test**
-   - Stop Node, set `TERMINAL_BACKEND=pywinpty`, restart FastAPI.
-   - Repeat steps 3–4 — should still work via pywinpty.
-
 ## Pass criteria
-- All 6 steps complete without manual intervention beyond what's listed.
+- All 5 steps complete without manual intervention beyond what's listed.
 - No tracebacks in FastAPI logs except those caused by step 5's intentional kill.

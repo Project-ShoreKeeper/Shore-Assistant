@@ -72,16 +72,22 @@ export class SessionManager {
     e.session.resize(cols, rows);
   }
 
-  close(sessionId: string): Promise<void> {
-    const e = this.entries.get(sessionId);
-    if (!e) return Promise.resolve();
-    return new Promise<void>((resolve) => {
-      const waiters = this.exitWaiters.get(sessionId) ?? [];
-      waiters.push(resolve);
-      this.exitWaiters.set(sessionId, waiters);
-      e.session.kill();
-      // entry will be removed in handleExit
+  async close(sessionId: string): Promise<void> {
+    const entry = this.entries.get(sessionId);
+    if (!entry) return;
+    const waitForExit = new Promise<void>((resolve) => {
+      const arr = this.exitWaiters.get(sessionId) ?? [];
+      arr.push(resolve);
+      this.exitWaiters.set(sessionId, arr);
     });
+    entry.session.kill();
+    const timeout = new Promise<void>((resolve) => setTimeout(resolve, 5000));
+    await Promise.race([waitForExit, timeout]);
+    // If we're here via timeout, exit never fired — clean up so we don't leak.
+    if (this.entries.has(sessionId)) {
+      this.entries.delete(sessionId);
+      this.exitWaiters.delete(sessionId);
+    }
   }
 
   list() {

@@ -196,3 +196,31 @@ async def test_node_backend_session_lifecycle(tmp_path):
     await svc.send_to_session("dev", "ls\r\n", wait_seconds=0)
     close_result = await svc.close_session("dev")
     assert close_result["closed"] is True
+
+
+async def test_node_disconnect_broadcasts_session_closed(tmp_path):
+    """When Node disconnects, every tracked session must broadcast terminal_session_closed."""
+    async def fake_call(method, params, timeout=None):
+        if method == "session.open":
+            return {"session_id": params["session_id"], "pid": 4321}
+        raise AssertionError(f"unexpected: {method}")
+    svc, backend, client = _mk_node_svc(tmp_path, AsyncMock(side_effect=fake_call))
+
+    # Open two sessions through the public API so backend._session_callbacks gets populated.
+    r1 = await svc.open_session("dev1", shell="powershell")
+    r2 = await svc.open_session("dev2", shell="powershell")
+    assert "dev1" in svc.sessions and "dev2" in svc.sessions
+
+    # Simulate Node disconnect.
+    await backend._on_disconnect()
+
+    # Both TerminalService entries removed.
+    assert "dev1" not in svc.sessions
+    assert "dev2" not in svc.sessions
+
+    # Both broadcast events with reason="node_disconnect".
+    broadcasts = [c.args[0] for c in svc.broadcast.call_args_list]
+    closed_events = [m for m in broadcasts if m.get("type") == "terminal_session_closed"]
+    assert len(closed_events) == 2
+    assert all(m["reason"] == "node_disconnect" for m in closed_events)
+    assert {m["name"] for m in closed_events} == {"dev1", "dev2"}

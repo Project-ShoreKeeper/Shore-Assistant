@@ -145,6 +145,7 @@ class NodePtyClient:
 
     async def _read_loop(self) -> None:
         assert self._ws is not None
+        my_task = asyncio.current_task()
         try:
             async for raw in self._ws:
                 await self._handle_message(raw)
@@ -152,7 +153,9 @@ class NodePtyClient:
             log.info("node-pty-service connection closed")
         finally:
             self._reject_all_pending("connection lost")
-            if self._disconnect_handler:
+            # Only fire the disconnect handler if this is still the active reader.
+            # If a reconnect already replaced self._reader_task, the new loop owns the handler.
+            if self._reader_task is my_task and self._disconnect_handler:
                 try:
                     await self._disconnect_handler()
                 except Exception:

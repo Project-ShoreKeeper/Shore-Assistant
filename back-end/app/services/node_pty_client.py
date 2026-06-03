@@ -57,6 +57,21 @@ class NodePtyClient:
             self._ws = await connect(self.url, additional_headers=headers)
             self._reader_task = asyncio.create_task(self._read_loop())
 
+    async def call(self, method: str, params: dict, timeout: float = 30.0) -> dict:
+        if not self.is_connected:
+            raise NodePtyRpcError(-32603, "not connected")
+        msg_id = self._next_id
+        self._next_id += 1
+        fut: asyncio.Future = asyncio.get_running_loop().create_future()
+        self._pending[msg_id] = fut
+        payload = json.dumps({"jsonrpc": "2.0", "id": msg_id, "method": method, "params": params})
+        await self._ws.send(payload)
+        try:
+            return await asyncio.wait_for(fut, timeout=timeout)
+        except asyncio.TimeoutError:
+            self._pending.pop(msg_id, None)
+            raise NodePtyRpcError(-32603, f"timeout waiting for {method}")
+
     async def close(self) -> None:
         if self._reader_task:
             self._reader_task.cancel()

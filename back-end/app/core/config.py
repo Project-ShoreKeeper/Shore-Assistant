@@ -68,6 +68,15 @@ class Settings(BaseSettings):
     TERMINAL_RUNS_DIR: str = "data/terminal_runs"
     TERMINAL_AUDIT_LOG: str = "data/terminal_audit.log"
 
+    # Node PTY microservice
+    TERMINAL_BACKEND: str = "node"  # "node" | "pywinpty"
+    NODE_PTY_WS_URL: str = "ws://127.0.0.1:9100"
+    NODE_PTY_AUTH_TOKEN: str = ""
+    NODE_PTY_RECONNECT_BASE_MS: int = 1000
+    NODE_PTY_RECONNECT_MAX_MS: int = 30000
+    NODE_PTY_PING_INTERVAL_SECONDS: int = 30
+    NODE_PTY_PING_TIMEOUT_SECONDS: int = 5
+
     class Config:
         env_file = ".env"
 

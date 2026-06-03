@@ -73,3 +73,49 @@ async def test_call_raises_on_rpc_error(server_factory):
         await client.call("session.send", {"session_id": "x", "data": "y"})
     assert exc.value.code == -32002
     await client.close()
+
+
+async def test_notification_dispatch(server_factory):
+    async def handler(ws):
+        await ws.send(json.dumps({
+            "jsonrpc": "2.0",
+            "method": "session.output",
+            "params": {"session_id": "s1", "data": "hello"},
+        }))
+        await asyncio.sleep(0.5)
+
+    port = await server_factory(handler, port=19105)
+    client = NodePtyClient(url=f"ws://127.0.0.1:{port}")
+    captured = []
+    async def on_notify(method, params):
+        captured.append((method, params))
+    client.on_notification(on_notify)
+    await client.connect()
+    await asyncio.sleep(0.3)
+    assert ("session.output", {"session_id": "s1", "data": "hello"}) in captured
+    await client.close()
+
+
+async def test_in_flight_rejected_on_close(server_factory):
+    async def handler(ws):
+        try:
+            await ws.recv()
+        except Exception:
+            pass
+        await asyncio.sleep(0.3)
+        await ws.close()
+
+    port = await server_factory(handler, port=19106)
+    client = NodePtyClient(url=f"ws://127.0.0.1:{port}")
+    await client.connect()
+    from app.services.node_pty_client import NodePtyRpcError
+
+    async def make_call():
+        return await client.call("ping", {}, timeout=10)
+
+    task = asyncio.create_task(make_call())
+    await asyncio.sleep(0.5)  # let server close
+    with pytest.raises(NodePtyRpcError) as exc:
+        await task
+    assert exc.value.code == -32603
+    await client.close()

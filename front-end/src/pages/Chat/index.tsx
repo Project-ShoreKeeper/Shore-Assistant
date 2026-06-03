@@ -57,7 +57,10 @@ async function fileToAttachment(file: File): Promise<ImageAttachment | null> {
   canvas.width = targetW;
   canvas.height = targetH;
   const ctx = canvas.getContext("2d");
-  if (!ctx) return null;
+  if (!ctx) {
+    bitmap.close();
+    return null;
+  }
   ctx.drawImage(bitmap, 0, 0, targetW, targetH);
   bitmap.close();
 
@@ -129,16 +132,23 @@ function PageChat() {
   };
 
   const addImagesFromFiles = async (files: File[]) => {
-    const slots = MAX_IMAGES - imageAttachments.length;
-    if (slots <= 0) return;
+    // Bound the in-flight work by the cap at call time (best-effort: avoids
+    // decoding more images than the cap allows). The final enforcement happens
+    // inside setImageAttachments below, which sees the current state at apply
+    // time and is therefore race-free against concurrent paste/drop calls.
+    const optimisticSlots = MAX_IMAGES - imageAttachments.length;
+    if (optimisticSlots <= 0) return;
     const accepted: ImageAttachment[] = [];
-    for (const f of files.slice(0, slots)) {
+    for (const f of files.slice(0, optimisticSlots)) {
       const att = await fileToAttachment(f);
       if (att) accepted.push(att);
     }
-    if (accepted.length) {
-      setImageAttachments((prev) => [...prev, ...accepted]);
-    }
+    if (!accepted.length) return;
+    setImageAttachments((prev) => {
+      const remaining = MAX_IMAGES - prev.length;
+      if (remaining <= 0) return prev;
+      return [...prev, ...accepted.slice(0, remaining)];
+    });
   };
 
   const handlePaste = async (e: React.ClipboardEvent) => {

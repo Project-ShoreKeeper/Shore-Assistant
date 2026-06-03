@@ -43,8 +43,9 @@ async def lifespan(app: FastAPI):
     scheduler_service.set_fire_callback(notification_service.notify)
     scheduler_service.start()
 
-    # Start terminal idle reaper
+    # Start terminal service (deferred tasks e.g. NodePtyClient reconnect/heartbeat)
     from app.services.terminal_service import terminal_service, _idle_reaper
+    await terminal_service.startup()
     idle_reaper_task = asyncio.create_task(_idle_reaper(terminal_service))
 
     yield

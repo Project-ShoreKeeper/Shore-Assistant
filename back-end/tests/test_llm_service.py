@@ -288,3 +288,16 @@ def test_ollama_only_methods_are_gone():
     assert not hasattr(LLMService, "unload_model")
     assert not hasattr(LLMService, "preload_model")
     assert not hasattr(LLMService, "list_running_models")
+
+
+def test_normalize_preserves_list_shaped_content():
+    """Multimodal user messages have content as a list of parts. The filter
+    that strips empty messages must not call .strip() on a list."""
+    messages = [
+        {"role": "user", "content": [
+            {"type": "text", "text": "describe this"},
+            {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,xxx"}},
+        ]},
+    ]
+    out = _normalize_outgoing_messages(messages)
+    assert out == messages

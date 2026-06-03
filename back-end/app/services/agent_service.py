@@ -4,7 +4,6 @@ Orchestrates tool execution and LLM response streaming using llama-server's Open
 """
 
 import time
-from datetime import datetime
 from typing import AsyncGenerator, Optional, TypedDict
 
 from app.services.llm_service import llm_service, build_system_prompt
@@ -60,6 +59,7 @@ class AgentService:
         conversation_history: list[dict],
         thinking: bool = False,
         no_tools: bool = False,
+        live_user_message: Optional[dict] = None,
     ) -> AsyncGenerator[dict, None]:
         """
         Process user input through the agent pipeline.
@@ -71,6 +71,8 @@ class AgentService:
           {"type": "llm_sentence", "text": "..."}
           {"type": "llm_complete", "text": "..."}
         """
+        t0 = time.perf_counter()
+
         # Retrieve relevant tools for this query (skip for notifications)
         if no_tools:
             tool_schemas = None
@@ -78,23 +80,50 @@ class AgentService:
             relevant_tool_names = tool_retriever.retrieve(user_text)
             tool_schemas = tool_retriever.get_tool_schemas(relevant_tool_names, ALL_TOOLS)
 
-        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S (%A)")
-        system_prompt = f"[Current time: {current_time}]\n\n" + build_system_prompt()
+        t1 = time.perf_counter()
+
+        system_prompt = build_system_prompt()
 
         # Build messages for llama-server
-        messages = [m for m in conversation_history if m["content"].strip()]
+        messages = [
+            m for m in conversation_history
+            if (m["content"] if isinstance(m["content"], list)
+                else m["content"].strip())
+        ]
+        if live_user_message is not None and messages:
+            # Swap the text-only user turn (already in history) with the
+            # multimodal version for this LLM call only. conversation_history
+            # itself stays text-only so future turns don't re-ship image bytes.
+            messages[-1] = live_user_message
         current_history_var.set(conversation_history)
+
+        prompt_chars = len(system_prompt) + sum(len(m.get("content") or "") for m in messages)
+        tool_count = len(tool_schemas) if tool_schemas else 0
+        print(
+            f"[Latency] tool_retrieval={(t1 - t0) * 1000:.1f}ms "
+            f"tools={tool_count} prompt_chars={prompt_chars} history_msgs={len(messages)}"
+        )
 
         max_rounds = 1 if no_tools else self.MAX_TOOL_ROUNDS
         for round_num in range(max_rounds):
             # Stream LLM response
             full_response = ""
             pending_tool_calls = []
+            first_token_logged = False
+            t_llm_start = time.perf_counter()
 
             async for event in llm_service.stream_chat_sentences(
                 messages, system_prompt=system_prompt, thinking=thinking,
                 tools=tool_schemas,
             ):
+                if not first_token_logged and event["type"] in ("thinking_token", "token"):
+                    t_first = time.perf_counter()
+                    kind = "thinking" if event["type"] == "thinking_token" else "content"
+                    print(
+                        f"[Latency] round={round_num} llama_ttft={(t_first - t_llm_start) * 1000:.1f}ms "
+                        f"({kind}) total_since_user={(t_first - t0) * 1000:.1f}ms"
+                    )
+                    first_token_logged = True
                 if event["type"] == "thinking_token":
                     yield {
                         "type": "llm_thinking_token",
@@ -127,14 +156,6 @@ class AgentService:
             if not pending_tool_calls:
                 yield {"type": "llm_complete", "text": full_response}
                 return
-
-            # If the model returned text alongside tool calls, emit llm_complete for that text
-            # as a separate assistant message before the tool_call events, so the UI can render
-            # the pre-tool-call narration as its own bubble. (Per spec: "let the text come after
-            # as another message, dont fully delete it" — text appears before tool cards in UI.)
-            # NOTE: Token streaming already sent the text; llm_complete finalizes it.
-            if full_response.strip():
-                yield {"type": "llm_complete", "text": full_response}
 
             # Add the assistant message (with tool_calls) to history
             assistant_msg = {"role": "assistant", "content": full_response}

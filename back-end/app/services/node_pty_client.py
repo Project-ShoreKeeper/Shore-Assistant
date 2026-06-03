@@ -37,6 +37,7 @@ class NodePtyClient:
         self._next_id = 1
         self._pending: dict[int, asyncio.Future] = {}
         self._notification_handler: Optional[NotificationHandler] = None
+        self._disconnect_handler: Optional[Callable[[], Awaitable[None]]] = None
         self._reader_task: Optional[asyncio.Task] = None
         self._connect_lock = asyncio.Lock()
         self._auto_reconnect = False
@@ -49,6 +50,9 @@ class NodePtyClient:
 
     def on_notification(self, handler: NotificationHandler) -> None:
         self._notification_handler = handler
+
+    def on_disconnect(self, handler: Callable[[], Awaitable[None]]) -> None:
+        self._disconnect_handler = handler
 
     def start_auto_reconnect(self) -> None:
         self._auto_reconnect = True
@@ -148,6 +152,11 @@ class NodePtyClient:
             log.info("node-pty-service connection closed")
         finally:
             self._reject_all_pending("connection lost")
+            if self._disconnect_handler:
+                try:
+                    await self._disconnect_handler()
+                except Exception:
+                    log.exception("disconnect handler failed")
 
     async def _handle_message(self, raw: str) -> None:
         try:

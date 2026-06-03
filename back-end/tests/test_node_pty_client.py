@@ -179,3 +179,23 @@ async def test_heartbeat_closes_on_pong_timeout(server_factory):
         await asyncio.sleep(0.1)
     assert not client.is_connected
     await client.close()
+
+
+async def test_disconnect_callback_async(server_factory):
+    async def handler(ws):
+        await asyncio.sleep(0.1)
+        await ws.close()
+
+    port = await server_factory(handler, port=19110)
+    client = NodePtyClient(url=f"ws://127.0.0.1:{port}")
+    fired = []
+    async def on_dc():
+        fired.append(True)
+    client.on_disconnect(on_dc)
+    await client.connect()
+    for _ in range(20):
+        if fired:
+            break
+        await asyncio.sleep(0.1)
+    assert fired
+    await client.close()

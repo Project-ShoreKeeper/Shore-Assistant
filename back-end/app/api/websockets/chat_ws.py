@@ -23,7 +23,7 @@ import time
 _ALLOWED_IMAGE_MIME_RE = re.compile(r"^data:image/(png|jpeg|webp);base64,")
 
 
-def _validate_images(images):
+def _validate_images(images) -> str | None:
     """Return None if images is acceptable, else an error string for the client."""
     if not settings.MULTIMODAL_ENABLED:
         return "Vision is not enabled on this server."
@@ -45,7 +45,7 @@ def _validate_images(images):
     return None
 
 
-def _build_memory_message(user_text, images):
+def _build_memory_message(user_text: str, images: list[dict]) -> dict:
     """Text-only user message that goes on conversation_history / memory_service."""
     parts = []
     if user_text and user_text.strip():
@@ -56,7 +56,7 @@ def _build_memory_message(user_text, images):
     return {"role": "user", "content": "\n\n".join(parts) if parts else ""}
 
 
-def _build_live_message(user_text, images):
+def _build_live_message(user_text: str, images: list[dict]) -> dict:
     """OpenAI multimodal content array — the version llama-server sees this turn only."""
     text_part = user_text if (user_text and user_text.strip()) else " "
     content = [{"type": "text", "text": text_part}]

@@ -1,5 +1,5 @@
 import * as pty from "node-pty";
-import { resolveShell } from "./shellResolver";
+import { resolveShell } from "./shellResolver.js";
 
 export interface PtySessionOptions {
   sessionId: string;

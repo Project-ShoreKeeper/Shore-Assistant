@@ -1,6 +1,6 @@
-import { SessionManager } from "./sessionManager";
-import { runOneshot } from "./oneshotRunner";
-import { ErrorCode } from "./rpc";
+import { SessionManager } from "./sessionManager.js";
+import { runOneshot } from "./oneshotRunner.js";
+import { ErrorCode } from "./rpc.js";
 
 const VERSION = "0.1.0";
 

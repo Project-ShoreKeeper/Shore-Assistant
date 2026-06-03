@@ -1,4 +1,4 @@
-import { PtySession } from "./ptySession";
+import { PtySession } from "./ptySession.js";
 
 export interface SessionManagerOptions {
   onData: (sessionId: string, data: string) => void;

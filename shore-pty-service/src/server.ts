@@ -1,9 +1,9 @@
 import { WebSocketServer, WebSocket } from "ws";
 import type { IncomingMessage } from "node:http";
-import { parseMessage, encodeResponse, encodeError, encodeNotification, ErrorCode } from "./rpc";
-import { SessionManager } from "./sessionManager";
-import { buildHandlers, MethodError } from "./methods";
-import { logger } from "./logger";
+import { parseMessage, encodeResponse, encodeError, encodeNotification, ErrorCode } from "./rpc.js";
+import { SessionManager } from "./sessionManager.js";
+import { buildHandlers, MethodError } from "./methods.js";
+import { logger } from "./logger.js";
 
 export interface ServerConfig {
   host: string;

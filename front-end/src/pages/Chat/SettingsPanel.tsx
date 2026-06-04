@@ -3,7 +3,7 @@ import { Flex, Box, Text, Select, Separator, Badge, Button, Switch } from "@radi
 import type { WebSocketStatus } from "../../services/chat-websocket.service";
 import { STT_LANGUAGES } from "../../constants/stt.constant";
 
-const BACKEND_URL = `${window.location.protocol}//${window.location.hostname}:8000`;
+const BACKEND_URL = "https://api.shore-keeper.com";
 
 export interface SettingsPanelProps {
   isLoaded: boolean;

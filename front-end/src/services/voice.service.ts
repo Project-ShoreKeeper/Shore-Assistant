@@ -8,11 +8,7 @@ class VoiceService {
   private baseUrl: string;
 
   constructor() {
-    // Determine backend URL
-    const protocol = window.location.protocol;
-    const host = window.location.hostname;
-    const port = "8000"; // Shore-Assistant backend port
-    this.baseUrl = `${protocol}//${host}:${port}/api/voices`;
+    this.baseUrl = "https://api.shore-keeper.com/api/voices";
   }
 
   async getVoices(): Promise<VoiceInfo[]> {

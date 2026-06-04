@@ -2,9 +2,9 @@
  * Cấu hình cho module STT
  */
 
-// Auto-detect backend host from browser URL (works with Tailscale, localhost, etc.)
-const BACKEND_HOST = `${window.location.hostname}:8000`;
-const WS_PROTOCOL = window.location.protocol === "https:" ? "wss:" : "ws:";
+// Production backend via Cloudflare Tunnel (standard HTTPS 443 → localhost:9000)
+const BACKEND_HOST = "api.shore-keeper.com";
+const WS_PROTOCOL = "wss:";
 
 // WebSocket URL kết nối tới Backend STT Server
 export const STT_WS_URL = `${WS_PROTOCOL}//${BACKEND_HOST}/ws/audio`;

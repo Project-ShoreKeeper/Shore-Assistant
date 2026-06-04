@@ -17,9 +17,23 @@ async def health_check():
         if memory_facade.short_term is not None
         else False
     )
+    pg_ok = await memory_facade.profile.health()
+    qd_ok = await memory_facade.episodic.health()
+
+    if redis_ok and pg_ok and qd_ok:
+        status = "healthy"
+    elif redis_ok:
+        status = "degraded"
+    else:
+        status = "unhealthy"
+
     return {
-        "status": "ok",
-        "memory": {"redis": redis_ok},
+        "status": status,
+        "memory": {
+            "redis": "ok" if redis_ok else "down",
+            "postgres": "ok" if pg_ok else "down",
+            "qdrant": "ok" if qd_ok else "down",
+        },
     }
 
 

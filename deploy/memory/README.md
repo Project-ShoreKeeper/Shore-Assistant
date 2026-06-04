@@ -47,3 +47,28 @@ and `QDRANT_URL` use the same non-default ports.
 
 ## Reset (destroys ALL memory)
 `docker compose down -v && sudo rm -rf /var/lib/shore/{redis,postgres,qdrant}/*`
+
+## Phase 2 schema
+
+`postgres/init.sql` is mounted into `/docker-entrypoint-initdb.d/`. Postgres
+executes it **once**, the first time the container starts against an empty
+`/var/lib/shore/postgres` data volume. To re-apply on an existing volume:
+
+1. Stop and remove just the postgres container.
+2. Either drop the relevant tables and run `init.sql` manually:
+
+   ```bash
+   docker exec -i shore-postgres psql -U shore -d shore_memory < postgres/init.sql
+   ```
+
+3. Or wipe the volume (destroys all data) and restart:
+
+   ```bash
+   docker compose down
+   rm -rf /var/lib/shore/postgres
+   docker compose up -d
+   ```
+
+The schema creates `profile` (single JSONB row) and `profile_history`
+(append-only audit log). The seed inserts the single `profile` row with an
+empty JSON object.

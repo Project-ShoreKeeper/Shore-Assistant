@@ -38,6 +38,7 @@ services:
       - "${LAN_BIND_IP}:${POSTGRES_HOST_PORT:-5432}:5432"
     volumes:
       - /var/lib/shore/postgres:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U shore -d shore_memory"]
       interval: 10s

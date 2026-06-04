@@ -30,9 +30,16 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379/0"
     REDIS_SHORT_TERM_KEY: str = "shore:short_term:messages"
 
-    # ── Reserved for Phase 2 (declared, unused in P1) ──
+    # ── Phase 2: Profile (Postgres) + Episodic (Qdrant) ──
     POSTGRES_URL: str = "postgresql://shore:changeme@localhost:5432/shore_memory"
+    POSTGRES_POOL_MIN: int = 1
+    POSTGRES_POOL_MAX: int = 5
     QDRANT_URL: str = "http://localhost:6333"
+    QDRANT_COLLECTION: str = "shore_episodic"
+    MEMORY_EPISODIC_TOP_K: int = 5
+    MEMORY_EPISODIC_MIN_SCORE: float = 0.3
+    MEMORY_PROFILE_MAX_BYTES: int = 2048
+    DEBUG_MEMORY: bool = False
 
     # Persona
     PERSONA: str = "kuudere"  # "base" or "kuudere"

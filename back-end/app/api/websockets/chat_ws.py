@@ -269,9 +269,21 @@ async def websocket_chat(websocket: WebSocket):
         if tts_enabled:
             tts_task = asyncio.create_task(tts_worker(sentence_queue))
 
+        # Per-turn memory: pull Profile + Episodic in parallel with Redis.
+        # bundle.short_term is intentionally unused — the local
+        # conversation_history list above is the source of truth for the LLM
+        # because it already reflects the in-progress append.
+        # Notifications skip this entirely to avoid the Postgres+Qdrant
+        # round-trip; agent_service.run would drop the bundle anyway.
+        bundle = (
+            await memory_facade.assemble_context(user_text)
+            if not is_notification else None
+        )
+
         try:
             async for event in agent_service.run(
                 user_text, conversation_history,
+                memory_bundle=bundle,
                 thinking=session_config.get("thinking", False),
                 no_tools=is_notification,
                 live_user_message=live_user_message,

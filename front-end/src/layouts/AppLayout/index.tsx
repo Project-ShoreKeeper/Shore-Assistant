@@ -3,6 +3,7 @@ import { Outlet, useLocation } from "react-router-dom";
 import Sidebar from "./Sidebar";
 import Header from "./Header";
 import Footer from "./Footer";
+import { MemoryHealthBanner } from "./MemoryHealthBanner";
 
 export default function AppLayout() {
   const location = useLocation();
@@ -15,6 +16,7 @@ export default function AppLayout() {
         direction="column"
         style={{ flex: 1, overflow: "hidden", minWidth: 0 }}
       >
+        <MemoryHealthBanner />
         <Header />
         <Box
           style={{

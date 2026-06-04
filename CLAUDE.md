@@ -23,7 +23,7 @@ FastAPI Backend (Python)
   ├── Tools        (system_time, read_file, list_directory, clear_memory, search_web, web_scrape, capture_screen, analyze_screen, set_reminder, set_scheduled_task, cancel_task, list_tasks, run_command + PTY tools, start_background_service + list/stop/logs + dynamic n8n workflow tools)
   ├── Scheduler    (APScheduler — one-shot reminders + recurring tasks, persisted to JSON)
   ├── Notifications (proactive push via ConnectionManager → agent pipeline → TTS; sources: scheduler, n8n webhooks)
-  ├── Memory       (Redis sliding window on LAN DB server, survives restarts, max 15 turns)
+  ├── Memory       (Hybrid: Redis short-term + Postgres profile + Qdrant episodic; circuit-broken per layer)
   ├── TTS          (Kokoro TTS → Int16 PCM streaming, local/offline, multi-language)
   ├── Vision       (mss screen capture → primary multimodal model via /v1/chat/completions)
   └── n8n          (two-way integration: dynamic workflow tools + inbound webhook notifications)
@@ -43,7 +43,8 @@ Shore-Assistant/
 │       ├── core/config.py              # Pydantic settings (llama-server, TTS, Vision)
 │       ├── api/
 │       │   ├── endpoints/
-│       │   │   ├── health.py           # GET / and /health
+│       │   │   ├── health.py           # GET / and /health (tri-state: healthy/degraded/unhealthy)
+│       │   │   ├── memory_debug.py     # /api/memory/* — gated by DEBUG_MEMORY (Phase 2 seeding)
 │       │   │   └── n8n_webhook.py      # POST /api/n8n/webhook, /refresh, GET /status
 │       │   └── websockets/
 │       │       ├── stt_ws.py           # /ws/audio (STT only)
@@ -59,21 +60,23 @@ Shore-Assistant/
 │       │   └── user.txt                # Optional user context appended to persona
 │       ├── services/
 │       │   ├── stt_service.py          # Whisper via Transformers
-│       │   ├── llm_service.py          # llama-server OpenAI-compatible streaming client (httpx), persona loader
-│       │   ├── agent_service.py        # LangGraph StateGraph agent loop
+│       │   ├── llm_service.py          # llama-server OpenAI-compatible streaming client (httpx), persona + memory block loader
+│       │   ├── agent_service.py        # LangGraph StateGraph agent loop (accepts memory_bundle)
 │       │   ├── tts_service.py          # Kokoro TTS, CPU inference, 24kHz PCM, en/ja/zh voices
+│       │   ├── embedding_service.py    # Shared SentenceTransformer singleton (used by tool_retriever + memory.embedder)
 │       │   ├── memory/                  # Hybrid memory package
 │       │   │   ├── __init__.py          # exposes memory_facade singleton
 │       │   │   ├── types.py             # Pydantic contracts for every layer
-│       │   │   ├── short_term.py        # Redis sliding window (sole real backend in P1)
-│       │   │   ├── embedder.py          # Stub (P2)
-│       │   │   ├── profile.py           # Stub (P2)
-│       │   │   ├── episodic.py          # Stub (P2)
-│       │   │   └── facade.py            # MemoryFacade — single entry-point
+│       │   │   ├── short_term.py        # Redis sliding window
+│       │   │   ├── embedder.py          # Async wrapper over embedding_service
+│       │   │   ├── profile.py           # Postgres JSONB single-row snapshot + append-only audit log
+│       │   │   ├── episodic.py          # Qdrant async client; deterministic uuid5 point_id for idempotent worker writes
+│       │   │   ├── pruning.py           # Prune Profile JSON by oldest top-level key until ≤ MEMORY_PROFILE_MAX_BYTES
+│       │   │   └── facade.py            # MemoryFacade — single entry-point; 500ms per-layer circuit breaker
 │       │   ├── scheduler_service.py    # APScheduler: one-shot & recurring tasks
 │       │   ├── notification_service.py # Scheduler/n8n → agent pipeline → proactive TTS
 │       │   ├── connection_manager.py   # Singleton WebSocket send handle for background push
-│       │   ├── tool_retriever.py       # Embedding-based tool selection (sentence-transformers)
+│       │   ├── tool_retriever.py       # Embedding-based tool selection (uses shared embedding_service)
 │       │   └── n8n_service.py          # n8n workflow discovery, dynamic tool creation, webhook trigger
 │       ├── tools/
 │       │   ├── __init__.py             # Tool registry (ALL_TOOLS, TOOL_MAP, register/unregister dynamic tools)
@@ -190,7 +193,9 @@ docker compose -f docker-compose.n8n.yml up -d
 - **Math rendering**: Chat uses remark-math + rehype-katex for inline (`$...$`) and block (`$$...$$`) LaTeX formulas.
 - **analyze_screen captures server display**, not the client's browser screen. For client-side screen capture, `getDisplayMedia` would be needed.
 - **n8n integration**: Two-way — Shore discovers active n8n webhook workflows via REST API at startup and registers them as dynamic tools; n8n can push notifications to Shore via `POST /api/n8n/webhook`. Opt-in via `N8N_ENABLED=True`.
-- **Conversation memory**: Redis sliding window on the LAN DB server (key `shore:short_term:messages`), 15 turns by default, AOF persistence. Phase 2 will add Profile (Postgres) and Episodic (Qdrant) layers via the same `MemoryFacade`.
+- **Conversation memory**: Three layers behind `MemoryFacade.assemble_context()`. Short-term (Redis LIST `shore:short_term:messages`, 15 turns, AOF). Profile (Postgres JSONB single-row + append-only audit log). Episodic (Qdrant `shore_episodic` collection with payload-indexed `entity_tags`/`created_at`/`valence`). Per-layer 500 ms circuit breaker; chat degrades to short-term only if Postgres / Qdrant are down. Phase 3 will add a LOCOMO worker that writes to Profile + Episodic from chat history.
+- **Memory injection into system prompt**: `chat_ws` calls `memory_facade.assemble_context(user_text)` per turn and threads the `ContextBundle` into `agent_service.run`, which passes it to `build_system_prompt`. The system prompt then appends `[Profile]` (compact JSON, capped at `MEMORY_PROFILE_MAX_BYTES`, pruned by per-key `updated_at`) and `[Relevant memories]` (top-K bullet list by cosine similarity — fact + tags only, no emotion in P2). Notifications (`no_tools=True`) drop the bundle to keep proactive nudges free of identity content.
+- **Memory debug API**: `DEBUG_MEMORY=True` enables `/api/memory/profile/change`, `GET /api/memory/profile`, `/profile/history?key=...`, `/episodic/upsert`, `/episodic/search?q=...` for manual seeding. Default off; enable temporarily during Phase 2 verification.
 
 ## Configuration
 
@@ -205,8 +210,15 @@ All backend config via environment variables or `.env` file in `back-end/`:
 | MEMORY_MAX_TURNS | 15 | Max conversation turns retained per session |
 | REDIS_URL | redis://localhost:6379/0 | Redis URL for short-term memory |
 | REDIS_SHORT_TERM_KEY | shore:short_term:messages | Redis LIST key for the sliding window |
-| POSTGRES_URL | postgresql://shore:changeme@localhost:5432/shore_memory | Reserved for Phase 2 |
-| QDRANT_URL | http://localhost:6333 | Reserved for Phase 2 |
+| POSTGRES_URL | postgresql://shore:changeme@localhost:5432/shore_memory | Postgres DSN for Profile (Phase 2) |
+| POSTGRES_POOL_MIN | 1 | asyncpg pool min size |
+| POSTGRES_POOL_MAX | 5 | asyncpg pool max size |
+| QDRANT_URL | http://localhost:6333 | Qdrant URL for Episodic (Phase 2) |
+| QDRANT_COLLECTION | shore_episodic | Qdrant collection name for episodic facts |
+| MEMORY_EPISODIC_TOP_K | 5 | Max episodic facts injected into system prompt per turn |
+| MEMORY_EPISODIC_MIN_SCORE | 0.3 | Minimum cosine score for episodic retrieval |
+| MEMORY_PROFILE_MAX_BYTES | 2048 | Hard cap for Profile JSON injected into system prompt (compact bytes) |
+| DEBUG_MEMORY | False | Enable `/api/memory/...` debug REST endpoints (Phase 2 seeding) |
 | SCHEDULER_TASKS_FILE | data/scheduled_tasks.json | Persisted scheduler task list |
 | SCHEDULER_PENDING_FILE | data/pending_notifications.json | Queued notifications for offline client |
 | TOOL_RETRIEVER_MODEL | all-MiniLM-L6-v2 | Sentence-transformers model for tool embedding |
@@ -241,6 +253,8 @@ All backend config via environment variables or `.env` file in `back-end/`:
 
 - [ ] Client-side screen capture — use `getDisplayMedia` in browser, send image over WebSocket for vision analysis
 - [x] Memory backend Phase 1 — Redis short-term + Docker stack
+- [x] Memory backend Phase 2 — Profile (Postgres) + Episodic (Qdrant) + read-path integration + debug API + /health probes + frontend banner
+- [ ] Memory backend Phase 3 — LOCOMO worker (Gemini Flash) + canonicalizer (auto-extract facts from chat history)
 - [ ] Wake word detection — trigger VAD only on a keyword (e.g. "Hey Shore")
 - [ ] Tool result streaming — show tool output progressively in the agent log
 - [ ] Voice selection UI — let user pick Kokoro voice from settings panel

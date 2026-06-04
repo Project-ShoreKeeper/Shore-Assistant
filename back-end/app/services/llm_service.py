@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import AsyncGenerator, Optional
 
 from app.core.config import settings
+from app.services.memory.types import ContextBundle
 
 # Load persona template from file
 PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
@@ -46,12 +47,33 @@ _SECTION_CACHE: dict[str, str] = {name: _read_prompt(name) for name in _SECTION_
 _SECTION_CACHE[_N8N_SECTION] = _read_prompt(_N8N_SECTION)
 
 
-def build_system_prompt(retrieved_tool_names: list[str] | None = None) -> str:
+def _format_memory_block(bundle: "ContextBundle") -> str:
+    """Render the [Profile] + [Relevant memories] section appended to system prompt."""
+    lines: list[str] = []
+    if bundle.profile:
+        lines.append("[Profile]")
+        lines.append(
+            json.dumps(bundle.profile, ensure_ascii=False, indent=2)
+        )
+    if bundle.episodic_hits:
+        if lines:
+            lines.append("")
+        lines.append("[Relevant memories]")
+        for sf in bundle.episodic_hits:
+            tags = ", ".join(sf.fact.entity_tags) if sf.fact.entity_tags else "—"
+            lines.append(f"- {sf.fact.fact} [tags: {tags}]")
+    return "\n".join(lines)
+
+
+def build_system_prompt(
+    retrieved_tool_names: list[str] | None = None,
+    memory_bundle: "ContextBundle | None" = None,
+) -> str:
     """Assemble the system prompt.
 
     retrieved_tool_names=None signals no-tools mode (notifications): persona +
-    user context only, no tool rules. Otherwise append tools_core.txt plus any
-    section whose trigger tools appear in the retrieved set.
+    user context only, no tool rules. memory_bundle=None means no memory
+    block; otherwise append [Profile] + [Relevant memories].
     """
     parts = [_PERSONA_TEXT]
     if retrieved_tool_names is not None:
@@ -61,10 +83,16 @@ def build_system_prompt(retrieved_tool_names: list[str] | None = None) -> str:
         for section_name, triggers in _SECTION_TRIGGERS.items():
             if names & triggers and _SECTION_CACHE[section_name]:
                 parts.append(_SECTION_CACHE[section_name])
-        if _SECTION_CACHE[_N8N_SECTION] and any(n.startswith("n8n_") for n in names):
+        if _SECTION_CACHE[_N8N_SECTION] and any(
+            n.startswith("n8n_") for n in names
+        ):
             parts.append(_SECTION_CACHE[_N8N_SECTION])
     if _USER_TEXT:
         parts.append(_USER_TEXT)
+    if memory_bundle is not None:
+        mem_block = _format_memory_block(memory_bundle)
+        if mem_block:
+            parts.append(mem_block)
     return "\n\n".join(p for p in parts if p)
 
 

@@ -24,7 +24,6 @@ class Settings(BaseSettings):
     TTS_SAMPLE_RATE: int = 22050
 
     # Conversation Memory
-    MEMORY_DIR: str = "data/memory"
     MEMORY_MAX_TURNS: int = 15
 
     # ── Short-term memory (Phase 1) ──

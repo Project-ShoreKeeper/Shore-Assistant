@@ -7,6 +7,7 @@ import time
 from typing import AsyncGenerator, Optional, TypedDict
 
 from app.services.llm_service import llm_service, build_system_prompt
+from app.services.memory.types import ContextBundle
 from app.services.tool_retriever import tool_retriever
 from app.services.cloud_llm_service import current_history_var
 from app.tools import TOOL_MAP, ALL_TOOLS
@@ -57,6 +58,7 @@ class AgentService:
         self,
         user_text: str,
         conversation_history: list[dict],
+        memory_bundle: ContextBundle | None = None,
         thinking: bool = False,
         no_tools: bool = False,
         live_user_message: Optional[dict] = None,
@@ -85,7 +87,10 @@ class AgentService:
 
         # Pass retrieved names so the system prompt only includes rules for
         # tool groups actually in scope this turn.
-        system_prompt = build_system_prompt(relevant_tool_names)
+        system_prompt = build_system_prompt(
+            relevant_tool_names,
+            memory_bundle=memory_bundle if not no_tools else None,
+        )
 
         # Build messages for llama-server
         messages = [

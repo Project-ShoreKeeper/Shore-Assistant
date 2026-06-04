@@ -1,9 +1,29 @@
 """Profile memory — Postgres JSONB single-row snapshot + audit log."""
 import asyncpg
+import json
 from typing import Optional
 
 from app.core.config import settings
 from app.services.memory.types import ProfileChange
+
+
+async def _init_pg_conn(conn: asyncpg.Connection) -> None:
+    """Register a JSONB / JSON codec on every connection acquired from the pool.
+    Without this, asyncpg cannot serialize Python dicts/values into JSONB
+    columns or deserialize JSONB rows back into Python dicts.
+    """
+    await conn.set_type_codec(
+        "jsonb",
+        encoder=json.dumps,
+        decoder=json.loads,
+        schema="pg_catalog",
+    )
+    await conn.set_type_codec(
+        "json",
+        encoder=json.dumps,
+        decoder=json.loads,
+        schema="pg_catalog",
+    )
 
 
 def _key_path_to_pg_path(key_path: str) -> list[str]:
@@ -21,6 +41,7 @@ class ProfileMemory:
             min_size=settings.POSTGRES_POOL_MIN,
             max_size=settings.POSTGRES_POOL_MAX,
             command_timeout=2.0,
+            init=_init_pg_conn,
         )
 
     async def shutdown(self) -> None:
@@ -52,7 +73,7 @@ class ProfileMemory:
                 else:
                     await conn.execute(
                         "UPDATE profile SET data = jsonb_set("
-                        "data, $1, $2::jsonb, true), "
+                        "data, $1, $2, true), "
                         "updated_at = NOW() WHERE id = 1",
                         path, change.new_value,
                     )

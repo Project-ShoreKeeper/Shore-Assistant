@@ -156,3 +156,20 @@ async def test_health_true_after_successful_select():
     pm = ProfileMemory()
     pm._pool = pool
     assert await pm.health() is True
+
+
+async def test_startup_registers_jsonb_codec_init_callback(monkeypatch):
+    """asyncpg.create_pool must be called with init=_init_pg_conn so JSONB encode/decode works."""
+    from app.services.memory import profile as profile_module
+
+    captured = {}
+
+    async def fake_create_pool(**kwargs):
+        captured.update(kwargs)
+        return AsyncMock()
+
+    monkeypatch.setattr(profile_module.asyncpg, "create_pool", fake_create_pool)
+
+    pm = ProfileMemory()
+    await pm.startup()
+    assert captured.get("init") is profile_module._init_pg_conn

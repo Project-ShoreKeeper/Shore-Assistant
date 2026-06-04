@@ -5,9 +5,9 @@ instead of injecting all tools into every LLM prompt.
 """
 
 import numpy as np
-from sentence_transformers import SentenceTransformer
 
 from app.core.config import settings
+from app.services.embedding_service import embedding_service
 
 
 # Tools that are always injected regardless of retrieval score
@@ -29,28 +29,15 @@ class ToolRetriever:
     """Retrieve relevant tools for a user query using cosine similarity."""
 
     def __init__(self):
-        self._model: SentenceTransformer | None = None
         self._tool_texts: list[str] = []
         self._tool_names: list[str] = []
         self._tool_embeddings: np.ndarray | None = None
 
     def initialize(self, tools: list) -> None:
-        """
-        Embed all tool descriptions at startup.
-        Args:
-            tools: list of langchain tool objects with .name and .description
-        """
-        print(f"[ToolRetriever] Loading embedding model: {settings.TOOL_RETRIEVER_MODEL}")
-        self._model = SentenceTransformer(
-            settings.TOOL_RETRIEVER_MODEL,
-            device="cpu",
-        )
-
+        """Embed all tool descriptions at startup using the shared service."""
         self._tool_names = [t.name for t in tools]
         self._tool_texts = [f"{t.name}: {t.description}" for t in tools]
-        self._tool_embeddings = self._model.encode(
-            self._tool_texts, normalize_embeddings=True
-        )
+        self._tool_embeddings = embedding_service.encode(self._tool_texts)
         print(f"[ToolRetriever] Indexed {len(tools)} tools")
 
     def retrieve(self, query: str, top_k: int | None = None) -> list[str]:
@@ -58,15 +45,13 @@ class ToolRetriever:
         Return the names of the top-K most relevant tools for the query.
         Falls back to all tools if scores are below threshold.
         """
-        if self._model is None or self._tool_embeddings is None:
+        if self._tool_embeddings is None:
             return list(self._tool_names)
 
         k = top_k or settings.TOOL_RETRIEVER_TOP_K
         threshold = settings.TOOL_RETRIEVER_THRESHOLD
 
-        query_embedding = self._model.encode(
-            [query], normalize_embeddings=True
-        )
+        query_embedding = embedding_service.encode([query])
         # Cosine similarity (embeddings are already normalized)
         scores = (self._tool_embeddings @ query_embedding.T).flatten()
 
@@ -109,13 +94,11 @@ class ToolRetriever:
 
     def reindex(self, tools: list) -> None:
         """Re-embed all tools after dynamic tools are added/removed."""
-        if self._model is None:
+        if self._tool_embeddings is None:
             return
         self._tool_names = [t.name for t in tools]
         self._tool_texts = [f"{t.name}: {t.description}" for t in tools]
-        self._tool_embeddings = self._model.encode(
-            self._tool_texts, normalize_embeddings=True
-        )
+        self._tool_embeddings = embedding_service.encode(self._tool_texts)
         print(f"[ToolRetriever] Re-indexed {len(tools)} tools")
 
     def get_tool_descriptions(self, tool_names: list[str], all_tools: list) -> str:

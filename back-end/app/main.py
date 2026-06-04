@@ -25,6 +25,9 @@ async def lifespan(app: FastAPI):
         print("[Startup] STT disabled — skipping Whisper model load")
     tts_service.warmup()
 
+    from app.services.embedding_service import embedding_service
+    embedding_service.startup()
+
     tool_retriever.initialize(ALL_TOOLS)
 
     # n8n workflow discovery + n8nac init

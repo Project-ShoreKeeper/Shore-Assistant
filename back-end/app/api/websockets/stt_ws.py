@@ -17,7 +17,7 @@ async def websocket_audio(websocket: WebSocket):
     WebSocket endpoint nhận đoạn audio hoàn chỉnh từ frontend (VAD-based).
 
     Flow:
-      1. Frontend kết nối tới ws://localhost:8000/ws/audio
+      1. Frontend kết nối tới ws://localhost:9000/ws/audio
       2. Frontend có thể gửi JSON (config/control) hoặc Binary (audio)
       3. Khi VAD phát hiện người dùng nói xong → Frontend gửi toàn bộ
          đoạn audio dạng Float32 PCM (16kHz, Mono)

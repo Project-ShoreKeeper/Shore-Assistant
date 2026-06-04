@@ -4,7 +4,7 @@ import json
 import numpy as np
 
 async def test_stt():
-    uri = "ws://localhost:8000/ws/audio"
+    uri = "ws://localhost:9000/ws/audio"
     async with websockets.connect(uri) as websocket:
         print("--- Đã kết nối tới server ---")
 

@@ -29,4 +29,4 @@ volumes:
 #
 # Networking:
 #   Shore reaches n8n at: http://localhost:5678 (port-mapped)
-#   n8n reaches Shore at: http://host.docker.internal:8000 (Docker Desktop)
+#   n8n reaches Shore at: http://host.docker.internal:9000 (Docker Desktop)

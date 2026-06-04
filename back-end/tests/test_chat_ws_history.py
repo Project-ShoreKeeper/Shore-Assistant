@@ -42,6 +42,24 @@ def client(monkeypatch, _stub_short_term):
 
 
 def test_history_message_sent_on_connect_with_persisted_data(client, monkeypatch):
+    # Assistant turn carries thinking + tool actions in `extras`, the schema
+    # rehydration relies on. The test asserts they survive the load/serialize
+    # round-trip end-to-end through the websocket history frame.
+    assistant_extras = {
+        "thinking_text": "be friendly",
+        "agent_actions": [
+            {
+                "action": "tool_call",
+                "tool": "get_system_time",
+                "args": {},
+                "result": "noon",
+                "status": "completed",
+                "timestamp": 1.5,
+            }
+        ],
+        "is_notification": False,
+        "task_id": None,
+    }
     fake_history = [
         {
             "role": "user",
@@ -52,7 +70,7 @@ def test_history_message_sent_on_connect_with_persisted_data(client, monkeypatch
             "role": "assistant",
             "content": "hi back",
             "timestamp": 2.0,
-            "extras": None,
+            "extras": assistant_extras,
         },
     ]
 
@@ -64,12 +82,16 @@ def test_history_message_sent_on_connect_with_persisted_data(client, monkeypatch
     with client.websocket_connect("/ws/chat") as ws:
         first = ws.receive_json()
         assert first["type"] == "history"
-        # The response will contain Message objects serialized to dicts
         assert len(first["messages"]) == 2
         assert first["messages"][0]["role"] == "user"
         assert first["messages"][0]["content"] == "hello"
+        assert first["messages"][0].get("extras") in (None, {})
         assert first["messages"][1]["role"] == "assistant"
         assert first["messages"][1]["content"] == "hi back"
+        # Rehydration coverage: extras round-trip must preserve thinking +
+        # agent_actions verbatim so the frontend can re-render the assistant
+        # bubble exactly as it appeared live.
+        assert first["messages"][1]["extras"] == assistant_extras
 
 
 def test_history_message_sent_on_connect_when_empty(client, monkeypatch):

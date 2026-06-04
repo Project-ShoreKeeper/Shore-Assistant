@@ -25,7 +25,15 @@ class Settings(BaseSettings):
 
     # Conversation Memory
     MEMORY_DIR: str = "data/memory"
-    MEMORY_MAX_TURNS: int = 20
+    MEMORY_MAX_TURNS: int = 15
+
+    # ── Short-term memory (Phase 1) ──
+    REDIS_URL: str = "redis://localhost:6379/0"
+    REDIS_SHORT_TERM_KEY: str = "shore:short_term:messages"
+
+    # ── Reserved for Phase 2 (declared, unused in P1) ──
+    POSTGRES_URL: str = "postgresql://shore:changeme@localhost:5432/shore_memory"
+    QDRANT_URL: str = "http://localhost:6333"
 
     # Persona
     PERSONA: str = "kuudere"  # "base" or "kuudere"

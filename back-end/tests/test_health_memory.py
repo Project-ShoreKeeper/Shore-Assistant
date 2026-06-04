@@ -12,13 +12,17 @@ from app.api.endpoints.health import router as health_router
 @pytest.fixture
 def client(monkeypatch):
     # Pretend the facade is started so short_term is not None.
+    # Use monkeypatch.setattr so the stub is restored after the test — raw
+    # `memory_facade.short_term = ...` would leak the StubST across the rest
+    # of the pytest session and break any test that expects the un-started
+    # singleton state.
     from app.services.memory import memory_facade
 
     class StubST:
         async def health(self):
             return True
 
-    memory_facade.short_term = StubST()
+    monkeypatch.setattr(memory_facade, "short_term", StubST())
     monkeypatch.setattr(
         "app.services.memory.memory_facade.profile.health",
         AsyncMock(return_value=True),
@@ -61,10 +65,12 @@ def test_degraded_when_qdrant_down(monkeypatch, client):
 
 
 def test_unhealthy_when_redis_down(monkeypatch, client):
+    from app.services.memory import memory_facade
+
     class StubST:
         async def health(self):
             return False
-    from app.services.memory import memory_facade
-    memory_facade.short_term = StubST()
+
+    monkeypatch.setattr(memory_facade, "short_term", StubST())
     r = client.get("/health")
     assert r.json()["status"] == "unhealthy"

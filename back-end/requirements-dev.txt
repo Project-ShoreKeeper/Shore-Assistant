@@ -1,0 +1,8 @@
+-r requirements.txt
+
+# Unit-test fakes
+fakeredis[lua]>=2.20.0
+
+# Test runner (already a transitive in many envs; pin explicitly)
+pytest>=8.0.0
+pytest-asyncio>=0.23.0

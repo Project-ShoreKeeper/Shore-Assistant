@@ -23,7 +23,7 @@ FastAPI Backend (Python)
   ├── Tools        (system_time, read_file, list_directory, clear_memory, search_web, web_scrape, capture_screen, analyze_screen, set_reminder, set_scheduled_task, cancel_task, list_tasks, run_command + PTY tools, start_background_service + list/stop/logs + dynamic n8n workflow tools)
   ├── Scheduler    (APScheduler — one-shot reminders + recurring tasks, persisted to JSON)
   ├── Notifications (proactive push via ConnectionManager → agent pipeline → TTS; sources: scheduler, n8n webhooks)
-  ├── Memory       (per-session JSON history, survives restarts, max 20 turns)
+  ├── Memory       (Redis sliding window on LAN DB server, survives restarts, max 15 turns)
   ├── TTS          (Kokoro TTS → Int16 PCM streaming, local/offline, multi-language)
   ├── Vision       (mss screen capture → primary multimodal model via /v1/chat/completions)
   └── n8n          (two-way integration: dynamic workflow tools + inbound webhook notifications)
@@ -62,7 +62,14 @@ Shore-Assistant/
 │       │   ├── llm_service.py          # llama-server OpenAI-compatible streaming client (httpx), persona loader
 │       │   ├── agent_service.py        # LangGraph StateGraph agent loop
 │       │   ├── tts_service.py          # Kokoro TTS, CPU inference, 24kHz PCM, en/ja/zh voices
-│       │   ├── memory_service.py       # Per-session JSON conversation history
+│       │   ├── memory/                  # Hybrid memory package
+│       │   │   ├── __init__.py          # exposes memory_facade singleton
+│       │   │   ├── types.py             # Pydantic contracts for every layer
+│       │   │   ├── short_term.py        # Redis sliding window (sole real backend in P1)
+│       │   │   ├── embedder.py          # Stub (P2)
+│       │   │   ├── profile.py           # Stub (P2)
+│       │   │   ├── episodic.py          # Stub (P2)
+│       │   │   └── facade.py            # MemoryFacade — single entry-point
 │       │   ├── scheduler_service.py    # APScheduler: one-shot & recurring tasks
 │       │   ├── notification_service.py # Scheduler/n8n → agent pipeline → proactive TTS
 │       │   ├── connection_manager.py   # Singleton WebSocket send handle for background push
@@ -121,6 +128,10 @@ pip install -r requirements.txt
 
 # Start server (must run from back-end/ directory)
 python -m uvicorn app.main:app --reload --port 9000
+
+# Start memory stack (on the LAN DB server, once)
+ssh <server>
+cd Shore-Assistant/deploy/memory && docker compose up -d
 ```
 
 ### Terminal Microservice (shore-pty-service)
@@ -179,6 +190,7 @@ docker compose -f docker-compose.n8n.yml up -d
 - **Math rendering**: Chat uses remark-math + rehype-katex for inline (`$...$`) and block (`$$...$$`) LaTeX formulas.
 - **analyze_screen captures server display**, not the client's browser screen. For client-side screen capture, `getDisplayMedia` would be needed.
 - **n8n integration**: Two-way — Shore discovers active n8n webhook workflows via REST API at startup and registers them as dynamic tools; n8n can push notifications to Shore via `POST /api/n8n/webhook`. Opt-in via `N8N_ENABLED=True`.
+- **Conversation memory**: Redis sliding window on the LAN DB server (key `shore:short_term:messages`), 15 turns by default, AOF persistence. Phase 2 will add Profile (Postgres) and Episodic (Qdrant) layers via the same `MemoryFacade`.
 
 ## Configuration
 
@@ -190,8 +202,11 @@ All backend config via environment variables or `.env` file in `back-end/`:
 | LLAMA_MODEL | (empty) | Optional label sent in the `model` field (llama-server typically ignores) |
 | LLAMA_TIMEOUT | 120 | Request timeout (seconds) |
 | PERSONA | kuudere | Persona template to load (`base` or `kuudere`) |
-| MEMORY_DIR | data/memory | Directory for per-session conversation JSON files |
-| MEMORY_MAX_TURNS | 20 | Max conversation turns retained per session |
+| MEMORY_MAX_TURNS | 15 | Max conversation turns retained per session |
+| REDIS_URL | redis://localhost:6379/0 | Redis URL for short-term memory |
+| REDIS_SHORT_TERM_KEY | shore:short_term:messages | Redis LIST key for the sliding window |
+| POSTGRES_URL | postgresql://shore:changeme@localhost:5432/shore_memory | Reserved for Phase 2 |
+| QDRANT_URL | http://localhost:6333 | Reserved for Phase 2 |
 | SCHEDULER_TASKS_FILE | data/scheduled_tasks.json | Persisted scheduler task list |
 | SCHEDULER_PENDING_FILE | data/pending_notifications.json | Queued notifications for offline client |
 | TOOL_RETRIEVER_MODEL | all-MiniLM-L6-v2 | Sentence-transformers model for tool embedding |
@@ -225,7 +240,7 @@ All backend config via environment variables or `.env` file in `back-end/`:
 ## Backlog
 
 - [ ] Client-side screen capture — use `getDisplayMedia` in browser, send image over WebSocket for vision analysis
-- [x] Conversation memory — persist history to disk so context survives server restarts
+- [x] Memory backend Phase 1 — Redis short-term + Docker stack
 - [ ] Wake word detection — trigger VAD only on a keyword (e.g. "Hey Shore")
 - [ ] Tool result streaming — show tool output progressively in the agent log
 - [ ] Voice selection UI — let user pick Kokoro voice from settings panel

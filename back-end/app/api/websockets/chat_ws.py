@@ -12,7 +12,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from app.services.stt_service import stt_service
 from app.services.agent_service import agent_service
 from app.services.tts_service import tts_service
-from app.services.memory_service import memory_service
+from app.services.memory import memory_facade
 from app.services.connection_manager import connection_manager
 from app.services.notification_service import notification_service
 from app.core.config import settings
@@ -46,7 +46,7 @@ def _validate_images(images) -> str | None:
 
 
 def _build_memory_message(user_text: str, images: list[dict]) -> dict:
-    """Text-only user message that goes on conversation_history / memory_service."""
+    """Text-only user message that goes on conversation_history / short-term memory."""
     parts = []
     if user_text and user_text.strip():
         parts.append(user_text.strip())
@@ -136,7 +136,8 @@ async def websocket_chat(websocket: WebSocket):
     terminal_service.broadcast = send_json_safe
 
     # Load persisted history (full dicts including any extras)
-    persisted = memory_service.load(session_id="default")
+    persisted_msgs = await memory_facade.short_term.load() if memory_facade.short_term else []
+    persisted = [m.model_dump() for m in persisted_msgs]
     conversation_history: list[dict] = [
         {"role": m["role"], "content": m["content"]} for m in persisted
     ]
@@ -240,9 +241,7 @@ async def websocket_chat(websocket: WebSocket):
         if not is_notification:
             memory_message = _build_memory_message(user_text, images or [])
             conversation_history.append(memory_message)
-            memory_service.append(
-                session_id="default",
-                role="user",
+            await memory_facade.append_user(
                 content=memory_message["content"],
             )
         live_user_message = (
@@ -331,9 +330,7 @@ async def websocket_chat(websocket: WebSocket):
                             "is_notification": is_notification,
                             "task_id": task_id,
                         }
-                        memory_service.append(
-                            session_id="default",
-                            role="assistant",
+                        await memory_facade.append_assistant(
                             content=assistant_text,
                             extras=extras,
                         )
@@ -426,7 +423,7 @@ async def websocket_chat(websocket: WebSocket):
 
                     elif msg_type == "clear_memory":
                         conversation_history.clear()
-                        memory_service.clear("default")
+                        await memory_facade.clear()
 
                         await send_json_safe({
                             "type": "status",

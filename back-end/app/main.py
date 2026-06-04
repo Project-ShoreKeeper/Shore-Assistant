@@ -8,6 +8,7 @@ from app.services.tts_service import tts_service
 from app.services.tool_retriever import tool_retriever
 from app.services.scheduler_service import scheduler_service
 from app.services.notification_service import notification_service
+from app.services.memory import memory_facade
 from app.tools import ALL_TOOLS
 from app.core.config import settings
 from app.api.endpoints.health import router as health_router
@@ -48,10 +49,15 @@ async def lifespan(app: FastAPI):
     await terminal_service.startup()
     idle_reaper_task = asyncio.create_task(_idle_reaper(terminal_service))
 
+    # Initialize memory facade
+    await memory_facade.startup()
+
     yield
 
     idle_reaper_task.cancel()
     await terminal_service.shutdown_all()
+
+    await memory_facade.shutdown()
 
     scheduler_service.shutdown()
 

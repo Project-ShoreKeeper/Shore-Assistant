@@ -1,5 +1,6 @@
 from fastapi import APIRouter
 from app.core.config import settings
+from app.services.memory import memory_facade
 
 router = APIRouter()
 
@@ -10,8 +11,16 @@ def read_root():
 
 
 @router.get("/health")
-def health_check():
-    return {"status": "ok", "service": "STT Backend is running"}
+async def health_check():
+    redis_ok = (
+        await memory_facade.short_term.health()
+        if memory_facade.short_term is not None
+        else False
+    )
+    return {
+        "status": "ok",
+        "memory": {"redis": redis_ok},
+    }
 
 
 @router.get("/config")
@@ -21,8 +30,7 @@ def get_config():
     }
 
 
-@router.delete("/memory")
-def clear_memory():
-    from app.services.memory_service import memory_service
-    cleared = memory_service.clear("default")
+@router.post("/clear-memory")
+async def clear_memory():
+    cleared = await memory_facade.clear()
     return {"cleared": cleared}

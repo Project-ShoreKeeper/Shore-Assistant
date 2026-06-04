@@ -20,23 +20,27 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api.websockets.chat_ws import router as chat_ws_router
-from app.services import memory_service as memory_module
+from app.services.memory import memory_facade
 from app.services.agent_service import agent_service
 from app.services.terminal_service import terminal_service
 
 
 @pytest.fixture
 def client(monkeypatch):
+    # Stub memory_facade.short_term since tests don't run the full lifespan
+    class _Stub:
+        async def load(self):
+            return []
+        async def append(self, m):
+            pass
+        async def clear(self):
+            return True
+        async def health(self):
+            return True
+    monkeypatch.setattr(memory_facade, "short_term", _Stub())
+
     app = FastAPI()
     app.include_router(chat_ws_router)
-    monkeypatch.setattr(
-        memory_module.memory_service, "load", lambda session_id: []
-    )
-    monkeypatch.setattr(
-        memory_module.memory_service,
-        "append",
-        lambda **kwargs: None,
-    )
     return TestClient(app)
 
 

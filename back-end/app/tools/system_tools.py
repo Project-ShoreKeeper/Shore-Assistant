@@ -3,7 +3,7 @@
 import os
 from datetime import datetime
 from langchain_core.tools import tool
-from app.services.memory_service import memory_service
+from app.services.memory import memory_facade
 
 
 @tool
@@ -34,9 +34,9 @@ def read_file(file_path: str) -> str:
 
 
 @tool
-def clear_memory() -> str:
+async def clear_memory() -> str:
     """Clear the conversation memory. Use when the user asks to forget previous conversations or start fresh."""
-    cleared = memory_service.clear(session_id="default")
+    cleared = await memory_facade.clear()
     if cleared:
         return "Conversation memory cleared. Starting fresh."
     return "No conversation memory to clear."

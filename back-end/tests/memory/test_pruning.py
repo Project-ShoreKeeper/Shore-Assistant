@@ -49,3 +49,10 @@ def test_keys_with_no_history_score_zero():
     out = prune_profile(data, ts_map, max_bytes=1200)
     assert "fresh" in out
     assert "old_no_history" not in out
+
+
+def test_single_huge_key_returns_empty_dict():
+    """When the only top-level key alone exceeds the cap, return {} rather than blow the budget."""
+    data = {"only": "x" * 5000}
+    out = prune_profile(data, {"only": 100.0}, max_bytes=2048)
+    assert out == {}

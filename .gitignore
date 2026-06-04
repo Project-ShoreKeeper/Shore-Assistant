@@ -48,3 +48,8 @@ plans/
 
 # Runtime data (memory, scheduler)
 back-end/data/
+
+# Runtime artifacts
+back-end/filebrowser.db
+shore-pty-service/errs.txt
+shore-pty-service/logs.txt

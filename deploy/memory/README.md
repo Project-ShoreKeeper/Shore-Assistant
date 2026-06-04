@@ -16,7 +16,26 @@
    sudo chown 1000:1000  /var/lib/shore/qdrant
    ```
 5. `docker compose up -d`
-6. `docker compose ps` — all three services should be `healthy` in ~30 s.
+6. `docker compose ps` — Redis and Postgres should be `healthy` in
+   ~30 s. Qdrant reports as `Up` only (no health state — its distroless
+   image has no probe tool); verify it with
+   `curl -fsS http://<LAN_BIND_IP>:6333/healthz` from the host.
+
+### Port collisions on a shared server
+
+If another stack on the same box already binds 6379 (Redis), 5432
+(Postgres), or 6333/6334 (Qdrant), uncomment the `*_HOST_PORT`
+overrides in `.env`:
+
+```bash
+REDIS_HOST_PORT=16379
+POSTGRES_HOST_PORT=15432
+QDRANT_REST_PORT=16333
+QDRANT_GRPC_PORT=16334
+```
+
+Update the back-end's `.env` accordingly so `REDIS_URL`, `POSTGRES_URL`,
+and `QDRANT_URL` use the same non-default ports.
 
 ## Updates
 `git pull && docker compose pull && docker compose up -d`.

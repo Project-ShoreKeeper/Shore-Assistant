@@ -52,9 +52,10 @@ def _format_memory_block(bundle: "ContextBundle") -> str:
     lines: list[str] = []
     if bundle.profile:
         lines.append("[Profile]")
-        lines.append(
-            json.dumps(bundle.profile, ensure_ascii=False, indent=2)
-        )
+        # Compact JSON: prune_profile caps size by compact bytes, so render the
+        # same way to keep the cap honest. ensure_ascii=False keeps Vietnamese
+        # / non-ASCII content readable to the LLM (vs \uXXXX escapes).
+        lines.append(json.dumps(bundle.profile, ensure_ascii=False))
     if bundle.episodic_hits:
         if lines:
             lines.append("")

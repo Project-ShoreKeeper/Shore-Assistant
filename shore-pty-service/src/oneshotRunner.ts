@@ -1,9 +1,10 @@
 import { spawn } from "node:child_process";
+import type { ShellName } from "./shellResolver.js";
 
 export interface OneshotOptions {
   runId: string;
   command: string;
-  shell: "powershell" | "pwsh" | "cmd" | "bash";
+  shell: ShellName;
   cwd: string;
   timeoutMs: number;
   onOutput: (stream: "stdout" | "stderr", data: string) => void;
@@ -15,19 +16,46 @@ export interface OneshotResult {
   timedOut: boolean;
 }
 
-const SHELL_INVOCATIONS = {
-  powershell: { file: "powershell.exe", flags: ["-NoLogo", "-NoProfile", "-Command"] },
-  pwsh: { file: "pwsh", flags: ["-NoLogo", "-NoProfile", "-Command"] },
-  cmd: { file: "cmd.exe", flags: ["/c"] },
-  bash: { file: "bash", flags: ["-c"] },
-} as const;
+interface SpawnSpec {
+  file: string;
+  args: string[];
+}
+
+function buildSpawnSpec(shell: ShellName, command: string): SpawnSpec {
+  switch (shell) {
+    case "powershell":
+      return { file: "powershell.exe", args: ["-NoLogo", "-NoProfile", "-Command", command] };
+    case "pwsh":
+      return { file: "pwsh", args: ["-NoLogo", "-NoProfile", "-Command", command] };
+    case "cmd":
+      return { file: "cmd.exe", args: ["/c", command] };
+    case "bash":
+      return { file: "bash", args: ["-c", command] };
+    case "wsl":
+      // wsl.exe forwards the rest to the default distro; -e picks the executable.
+      return { file: "wsl.exe", args: ["-e", "bash", "-c", command] };
+    case "anaconda": {
+      const root = process.env.ANACONDA_ROOT;
+      if (!root) {
+        throw new Error(
+          "anaconda shell requires ANACONDA_ROOT env var pointing at the Anaconda/Miniconda install dir",
+        );
+      }
+      // /s + outer quotes force cmd to treat the whole wrapped string as one command,
+      // so user commands with spaces/quotes are not re-tokenized.
+      const wrapped = `"${root}\\Scripts\\activate.bat" "${root}" && ${command}`;
+      return { file: "cmd.exe", args: ["/s", "/c", wrapped] };
+    }
+    default:
+      throw new Error(`unsupported shell: ${shell}`);
+  }
+}
 
 export async function runOneshot(opts: OneshotOptions): Promise<OneshotResult> {
-  const inv = SHELL_INVOCATIONS[opts.shell];
-  if (!inv) throw new Error(`unsupported shell: ${opts.shell}`);
+  const spec = buildSpawnSpec(opts.shell, opts.command);
   const start = Date.now();
 
-  const proc = spawn(inv.file, [...inv.flags, opts.command], {
+  const proc = spawn(spec.file, spec.args, {
     cwd: opts.cwd,
     windowsHide: true,
     env: process.env,

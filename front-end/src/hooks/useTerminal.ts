@@ -29,6 +29,10 @@ export function useTerminal() {
             },
           ]);
           break;
+        case "terminal_confirm_resolved":
+          console.log("[useTerminal] confirm_resolved", raw);
+          setPendingConfirms((prev) => prev.filter((p) => p.request_id !== raw.request_id));
+          break;
         case "terminal_oneshot_start":
           setOneShotRuns((prev) => [
             ...prev,
@@ -95,13 +99,46 @@ export function useTerminal() {
           break;
         case "terminal_sessions_snapshot":
           setSessions(raw.sessions);
+          setActiveSessionId((cur) => {
+            if (!cur && raw.sessions.length > 0) {
+              return raw.sessions[0].session_id;
+            }
+            // If current active session is no longer in the snapshot, switch to the first one or null
+            if (cur && !raw.sessions.find(s => s.session_id === cur)) {
+              return raw.sessions.length > 0 ? raw.sessions[0].session_id : null;
+            }
+            return cur;
+          });
+          setSessionOutput((prev) => {
+            const next = { ...prev };
+            raw.sessions.forEach((s) => {
+              if (s.buffer) {
+                // Only overwrite if it's a new load to avoid race conditions with live output
+                if (!next[s.session_id]) {
+                  next[s.session_id] = s.buffer;
+                }
+              }
+            });
+            return next;
+          });
           break;
       }
     });
 
-    chatWebsocketService.sendTerminalMessage({ type: "terminal_resync" });
+    const handleOpen = () => {
+      chatWebsocketService.sendTerminalMessage({ type: "terminal_resync" });
+    };
 
-    return unsubscribe;
+    chatWebsocketService.on("open", handleOpen as any);
+
+    if (chatWebsocketService.getStatus() === "OPEN") {
+      chatWebsocketService.sendTerminalMessage({ type: "terminal_resync" });
+    }
+
+    return () => {
+      chatWebsocketService.off("open", handleOpen as any);
+      unsubscribe();
+    };
   }, []);
 
   const respondConfirm = useCallback(

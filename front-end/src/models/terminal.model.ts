@@ -5,6 +5,7 @@ export interface TerminalSession {
   cwd: string;
   idle_seconds?: number;
   last_output_preview?: string;
+  buffer?: string;
 }
 
 export interface OneShotRun {
@@ -30,6 +31,7 @@ export interface PendingConfirm {
 
 export type TerminalServerMessage =
   | { type: "terminal_confirm_request"; request_id: string; command: string; shell: string; cwd: string; reason: string }
+  | { type: "terminal_confirm_resolved"; request_id: string; decision: "approve" | "deny" | "always_allow" | "timeout" }
   | { type: "terminal_oneshot_start"; run_id: string; command: string; shell: string; cwd: string }
   | { type: "terminal_oneshot_output"; run_id: string; stream: "stdout" | "stderr"; data: string }
   | { type: "terminal_oneshot_end"; run_id: string; exit_code: number; duration_ms: number; truncated: boolean }

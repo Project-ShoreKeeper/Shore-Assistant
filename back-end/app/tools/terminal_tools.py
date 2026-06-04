@@ -19,7 +19,7 @@ async def run_command(
 
     Args:
         command: The exact command line to run (e.g. "git status").
-        shell: One of "powershell", "cmd", "bash". Defaults to powershell.
+        shell: One of "powershell", "pwsh", "cmd", "bash", "wsl", "anaconda". Defaults to powershell.
         cwd: Working directory; omit for the configured default.
         timeout: Max seconds to wait before killing the process.
         reason: Short human-readable explanation of why you want to run this (shown to user when confirmation is required).
@@ -42,7 +42,7 @@ async def open_terminal(
 
     Args:
         name: Optional name; server assigns one if omitted.
-        shell: powershell | cmd | bash.
+        shell: powershell | pwsh | cmd | bash | wsl | anaconda.
         cwd: Starting directory.
     """
     result = await terminal_service.open_session(name=name, shell=shell, cwd=cwd)
@@ -50,15 +50,37 @@ async def open_terminal(
 
 
 @tool
-async def send_to_terminal(name: str, input: str, wait_seconds: float = 2.0) -> str:
+async def send_to_terminal(name: str, input: str, wait_seconds: float = 10.0) -> str:
     """Write input to an open terminal session and read the response.
+
+    Output is ANSI-stripped (window-title, color codes, prompt redraws removed).
+    Polling stops as soon as the shell prompt comes back, or after
+    `wait_seconds` if no prompt is seen — increase it for slower commands.
+    The result includes a `prompt_seen` flag; if False, the command is likely
+    still running — use `read_terminal` to poll for more output.
 
     Args:
         name: Session name from open_terminal.
         input: Text to send (include "\\n" to submit a line).
-        wait_seconds: How long to collect output after sending.
+        wait_seconds: Max seconds to wait for the next prompt before returning.
     """
     result = await terminal_service.send_to_session(name=name, data=input, wait_seconds=wait_seconds)
+    return json.dumps(result, ensure_ascii=False)
+
+
+@tool
+async def read_terminal(name: str, tail_chars: int = 4096) -> str:
+    """Read the current tail of a session's buffer without sending any input.
+
+    Use this to poll a long-running command that didn't return a prompt within
+    `send_to_terminal`'s wait window (`prompt_seen=false`). Output is
+    ANSI-stripped.
+
+    Args:
+        name: Session name.
+        tail_chars: How many trailing characters of the stripped buffer to return.
+    """
+    result = terminal_service.read_session(name=name, tail_chars=tail_chars)
     return json.dumps(result, ensure_ascii=False)
 
 

@@ -65,6 +65,7 @@ from app.tools.terminal_tools import (
     run_command,
     open_terminal,
     send_to_terminal,
+    read_terminal,
     list_terminals,
     close_terminal,
 )
@@ -101,6 +102,14 @@ async def test_send_to_terminal_calls_service():
                })):
         result = await send_to_terminal.ainvoke({"name": "py", "input": "print(1)\n"})
         assert "clean" in result or "raw" in result
+
+
+async def test_read_terminal_calls_service():
+    with patch("app.tools.terminal_tools.terminal_service.read_session",
+               return_value={"output": "tail content", "prompt_seen": True, "truncated": False}):
+        result = await read_terminal.ainvoke({"name": "py", "tail_chars": 200})
+        assert "tail content" in result
+        assert "prompt_seen" in result
 
 
 async def test_list_terminals():

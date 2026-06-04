@@ -18,10 +18,33 @@ export default function XtermView({ output, onInput, onResize }: Props) {
   useEffect(() => {
     if (!containerRef.current) return;
     const term = new Terminal({
-      convertEol: false,
+      convertEol: true,
       cursorBlink: true,
       fontFamily: "Cascadia Code, Consolas, monospace",
       fontSize: 13,
+      theme: {
+        background: "#ffffff",
+        foreground: "#333333",
+        cursor: "#333333",
+        cursorAccent: "#ffffff",
+        selectionBackground: "#cce2ff",
+        black: "#000000",
+        red: "#cd3131",
+        green: "#00bc00",
+        yellow: "#949800",
+        blue: "#0451a5",
+        magenta: "#bc05bc",
+        cyan: "#0598bc",
+        white: "#555555",
+        brightBlack: "#666666",
+        brightRed: "#cd3131",
+        brightGreen: "#14ce14",
+        brightYellow: "#b5ba00",
+        brightBlue: "#0451a5",
+        brightMagenta: "#bc05bc",
+        brightCyan: "#0598bc",
+        brightWhite: "#a5a5a5",
+      },
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
@@ -40,6 +63,7 @@ export default function XtermView({ output, onInput, onResize }: Props) {
     return () => {
       ro.disconnect();
       term.dispose();
+      lastWrittenRef.current = 0;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -57,5 +81,5 @@ export default function XtermView({ output, onInput, onResize }: Props) {
     }
   }, [output]);
 
-  return <div ref={containerRef} style={{ width: "100%", height: "100%" }} />;
+  return <div ref={containerRef} style={{ width: "100%", height: "100%", overflow: "hidden" }} />;
 }

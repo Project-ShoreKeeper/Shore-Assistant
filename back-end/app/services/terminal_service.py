@@ -16,11 +16,80 @@ from app.services.terminal_backend import (
     SessionHandle,
 )
 
-ANSI_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+# Comprehensive ESC-sequence matcher covering what ConPTY / PSReadLine actually emits:
+#   - CSI            ESC [ <params> <intermediates> <final 0x40-0x7E>
+#   - OSC            ESC ] ... (BEL | ESC \)         e.g. window title  ESC ]0;…BEL
+#   - DCS/SOS/PM/APC ESC (P|X|^|_) ... ESC \
+#   - Charset desig. ESC (|)|*|+ <one byte>          e.g. ESC ( B
+#   - Single-char    ESC <0x40-0x5F>                 e.g. ESC = , ESC >
+# Use [\s\S] (not .) so multi-line OSC/DCS strings match without DOTALL gymnastics.
+ANSI_RE = re.compile(
+    r"""\x1B
+    (?:
+        \[ [0-?]* [ -/]* [@-~]                          # CSI
+      | \] [\s\S]*? (?: \x07 | \x1B\\ )                 # OSC
+      | [PX^_] [\s\S]*? \x1B\\                          # DCS / SOS / PM / APC
+      | [()*+] [\s\S]                                   # charset designation
+      | [@-_]                                           # single-char C1
+    )""",
+    re.VERBOSE,
+)
+
+# Stray single-byte control chars left over after ESC sequences are stripped.
+# Keep \t and \n; drop BEL, BS, SO, SI, NUL, VT, FF, DEL.
+_STRAY_CTRL_RE = re.compile(r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]")
+
+# 3+ consecutive newlines (prompt redraw spam) collapse to a paragraph break.
+_BLANK_RUN_RE = re.compile(r"\n{3,}")
 
 
 def strip_ansi(text: str) -> str:
-    return ANSI_RE.sub("", text)
+    """Strip ANSI escape sequences and other terminal noise from PTY output.
+
+    Aggressive: also normalizes \\r\\n→\\n, drops bare \\r, removes stray control
+    chars, and collapses long runs of blank lines that come from PSReadLine
+    prompt redraws.
+    """
+    if not text:
+        return text
+    text = ANSI_RE.sub("", text)
+    text = text.replace("\r\n", "\n").replace("\r", "")
+    text = _STRAY_CTRL_RE.sub("", text)
+    text = _BLANK_RUN_RE.sub("\n\n", text)
+    return text
+
+
+# Per-shell prompt detectors used by send_to_session to know when a command
+# finished and the shell is ready for the next input. Match against the END of
+# the *stripped* buffer.
+# IMPORTANT: PowerShell's `>>` continuation prompt is NOT a ready prompt —
+# it means PSReadLine is waiting for more input — so do NOT match it here, or
+# we will falsely return prompt_seen=True for an unfinished command.
+_PROMPT_PATTERNS = {
+    "powershell": re.compile(r"PS\s+[^\r\n]*?>\s*\Z"),
+    "pwsh":       re.compile(r"PS\s+[^\r\n]*?>\s*\Z"),
+    "cmd":        re.compile(r"[A-Za-z]:\\[^\r\n]*?>\s*\Z"),
+    "bash":       re.compile(r"[\$#]\s*\Z"),
+    "wsl":        re.compile(r"[\$#]\s*\Z"),
+    # Anaconda runs inside cmd.exe with an "(envname) C:\path>" prompt — the
+    # trailing "...>\Z" still matches the cmd pattern.
+    "anaconda":   re.compile(r"[A-Za-z]:\\[^\r\n]*?>\s*\Z"),
+}
+
+
+def _normalize_send_data(data: str) -> str:
+    """Translate text-mode line endings to the keystroke ConPTY actually wants
+    for Enter. PSReadLine on ConPTY treats LF as Shift+Enter (newline-in-input,
+    shows the `>>` continuation prompt) — only CR triggers VK_RETURN. PTYs on
+    Linux/macOS/Git-Bash strip CR via ICRNL, so a single CR is also fine there.
+    """
+    if not data:
+        return data
+    # Collapse CRLF first so we don't end up with double Enter.
+    return data.replace("\r\n", "\r").replace("\n", "\r")
+
+# Capacity for the sliding output buffer kept per interactive session.
+_SESSION_BUFFER_CAP = 65536
 
 
 class TerminalService:
@@ -209,7 +278,8 @@ class TerminalService:
             entry = self.sessions.get(name)
             if entry:
                 entry["last_activity"] = time.time()
-                entry["_buffer_tail"] = (entry.get("_buffer_tail", "") + data)[-2048:]
+                entry["_buffer_tail"] = (entry.get("_buffer_tail", "") + data)[-_SESSION_BUFFER_CAP:]
+                entry["_total_bytes"] = entry.get("_total_bytes", 0) + len(data)
             await self._broadcast({"type": "terminal_session_output", "session_id": sid, "data": data})
 
         async def on_exit(sid: str, exit_code, reason: str):
@@ -238,6 +308,8 @@ class TerminalService:
             "pid": handle.pid,
             "last_activity": time.time(),
             "_buffer_tail": "",
+            "_total_bytes": 0,
+            "_prompt_pattern": _PROMPT_PATTERNS.get(shell),
         }
 
         await self._broadcast({"type": "terminal_session_opened",
@@ -246,20 +318,74 @@ class TerminalService:
         self._audit({"kind": "session_opened", "name": name, "shell": shell, "cwd": cwd, "pid": handle.pid})
         return {"session_id": handle.session_id, "name": name, "message": f"Opened {shell} session '{name}'"}
 
-    async def send_to_session(self, name: str, data: str, wait_seconds: float = 2.0) -> dict:
+    async def send_to_session(self, name: str, data: str, wait_seconds: float = 10.0) -> dict:
+        """Send keystrokes to a session, then collect output until the shell
+        prompt comes back (or `wait_seconds` elapses). Output is always
+        ANSI-stripped — raw bytes are not returned.
+        """
         entry = self.sessions.get(name)
         if not entry:
             return {"error": f"No terminal named '{name}'. Open one first.",
                     "available": list(self.sessions.keys())}
-        before = entry.get("_buffer_tail", "")
+        before_bytes = entry.get("_total_bytes", 0)
+        prompt_re: Optional[re.Pattern] = entry.get("_prompt_pattern")
+        normalized = _normalize_send_data(data)
         try:
-            await self.backend.send_to_session_exec(entry["session_id"], data)
+            await self.backend.send_to_session_exec(entry["session_id"], normalized)
         except Exception as e:
             return {"error": str(e)}
-        await asyncio.sleep(wait_seconds)
-        after = entry.get("_buffer_tail", "")
-        delta = after[len(before):] if after.startswith(before) else after
-        return {"output": strip_ansi(delta), "raw_output": delta, "exit_code_if_dead": None}
+
+        poll_interval = 0.1
+        deadline = time.time() + max(0.0, wait_seconds)
+        prompt_seen = False
+        while True:
+            await asyncio.sleep(poll_interval)
+            advanced = entry.get("_total_bytes", 0) - before_bytes
+            if advanced > 0 and prompt_re is not None:
+                stripped_now = strip_ansi(entry.get("_buffer_tail", ""))
+                if prompt_re.search(stripped_now):
+                    prompt_seen = True
+                    break
+            if time.time() >= deadline:
+                break
+
+        new_bytes = entry.get("_total_bytes", 0) - before_bytes
+        tail = entry.get("_buffer_tail", "")
+        if new_bytes <= 0:
+            delta = ""
+            truncated = False
+        elif new_bytes <= len(tail):
+            delta = tail[-new_bytes:]
+            truncated = False
+        else:
+            delta = tail
+            truncated = True
+
+        return {
+            "output": strip_ansi(delta),
+            "prompt_seen": prompt_seen,
+            "truncated": truncated,
+            "exit_code_if_dead": None,
+        }
+
+    def read_session(self, name: str, tail_chars: int = 4096) -> dict:
+        """Return the current tail of a session's buffer without sending input.
+        Intended for polling long-running commands that didn't return a prompt
+        within `send_to_terminal`'s wait window.
+        """
+        entry = self.sessions.get(name)
+        if not entry:
+            return {"error": f"No terminal named '{name}'.",
+                    "available": list(self.sessions.keys())}
+        stripped = strip_ansi(entry.get("_buffer_tail", ""))
+        prompt_re: Optional[re.Pattern] = entry.get("_prompt_pattern")
+        prompt_seen = bool(prompt_re and prompt_re.search(stripped))
+        tail = stripped[-max(1, int(tail_chars)):]
+        return {
+            "output": tail,
+            "prompt_seen": prompt_seen,
+            "truncated": len(stripped) > len(tail),
+        }
 
     def list_sessions(self) -> list:
         now = time.time()

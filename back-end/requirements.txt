@@ -50,3 +50,9 @@ pytest-asyncio>=0.24.0
 
 # Short-term memory (Phase 1)
 redis>=5.0.0,<6.0.0
+
+# Profile (Phase 2)
+asyncpg>=0.29.0
+
+# Episodic (Phase 2)
+qdrant-client>=1.12.0

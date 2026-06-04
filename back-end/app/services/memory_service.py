@@ -40,8 +40,19 @@ class MemoryService:
             print(f"[Memory] Error loading session {session_id}: {e}")
             return []
 
-    def append(self, session_id: str, role: str, content: str):
-        """Append a single message to the session history."""
+    def append(
+        self,
+        session_id: str,
+        role: str,
+        content: str,
+        extras: Optional[dict] = None,
+    ):
+        """Append a single message to the session history.
+
+        `extras` (assistant-only metadata) is merged into the message dict
+        when provided. Keys explicitly set to None are dropped so the file
+        stays compact.
+        """
         path = self._session_path(session_id)
         messages = []
         if path.exists():
@@ -51,11 +62,14 @@ class MemoryService:
             except (json.JSONDecodeError, Exception):
                 messages = []
 
-        messages.append({
+        msg = {
             "role": role,
             "content": content,
             "timestamp": time.time(),
-        })
+        }
+        if extras:
+            msg.update(extras)
+        messages.append(msg)
 
         with open(path, "w", encoding="utf-8") as f:
             json.dump(messages, f, ensure_ascii=False, indent=2)

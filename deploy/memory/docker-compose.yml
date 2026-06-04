@@ -1,0 +1,60 @@
+name: shore-memory
+
+services:
+  redis:
+    image: redis:7.4-alpine
+    container_name: shore-redis
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      - --save
+      - "300 100"
+      - --maxmemory-policy
+      - noeviction
+    ports:
+      - "127.0.0.1:6379:6379"
+      - "${LAN_BIND_IP}:6379:6379"
+    volumes:
+      - /var/lib/shore/redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: shore-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: shore_memory
+      POSTGRES_USER: shore
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "${LAN_BIND_IP}:5432:5432"
+    volumes:
+      - /var/lib/shore/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shore -d shore_memory"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  qdrant:
+    image: qdrant/qdrant:v1.12.4
+    container_name: shore-qdrant
+    restart: unless-stopped
+    ports:
+      - "${LAN_BIND_IP}:6333:6333"
+      - "${LAN_BIND_IP}:6334:6334"
+    volumes:
+      - /var/lib/shore/qdrant:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:6333/healthz || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5

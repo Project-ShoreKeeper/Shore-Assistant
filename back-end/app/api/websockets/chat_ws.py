@@ -135,9 +135,18 @@ async def websocket_chat(websocket: WebSocket):
     from app.services.terminal_service import terminal_service
     terminal_service.broadcast = send_json_safe
 
-    # Load persisted history (full dicts including any extras)
+    # Load persisted history. The frontend rehydration code expects
+    # assistant metadata (thinking_text, agent_actions, ...) at the top
+    # level of each message dict, not nested under `extras` the way the
+    # Redis `Message` schema stores them. Flatten on the way out so the
+    # wire protocol stays stable; storage remains nested.
     persisted_msgs = await memory_facade.short_term.load() if memory_facade.short_term else []
-    persisted = [m.model_dump() for m in persisted_msgs]
+    persisted: list[dict] = []
+    for m in persisted_msgs:
+        out = {"role": m.role, "content": m.content, "timestamp": m.timestamp}
+        if m.extras:
+            out.update(m.extras)
+        persisted.append(out)
     conversation_history: list[dict] = [
         {"role": m["role"], "content": m["content"]} for m in persisted
     ]

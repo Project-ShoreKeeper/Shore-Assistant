@@ -85,13 +85,19 @@ def test_history_message_sent_on_connect_with_persisted_data(client, monkeypatch
         assert len(first["messages"]) == 2
         assert first["messages"][0]["role"] == "user"
         assert first["messages"][0]["content"] == "hello"
-        assert first["messages"][0].get("extras") in (None, {})
+        # No extras on the user turn — neither nested nor flattened.
+        assert "extras" not in first["messages"][0]
+        assert "thinking_text" not in first["messages"][0]
         assert first["messages"][1]["role"] == "assistant"
         assert first["messages"][1]["content"] == "hi back"
-        # Rehydration coverage: extras round-trip must preserve thinking +
-        # agent_actions verbatim so the frontend can re-render the assistant
-        # bubble exactly as it appeared live.
-        assert first["messages"][1]["extras"] == assistant_extras
+        # Rehydration coverage: assistant metadata flattened to the top
+        # level of the wire message (extras is the storage shape; the
+        # frontend rehydration code expects thinking/agent_actions at the
+        # message root).
+        for key, value in assistant_extras.items():
+            assert first["messages"][1][key] == value
+        # And the nested form is NOT also sent — avoids dual rendering.
+        assert "extras" not in first["messages"][1]
 
 
 def test_history_message_sent_on_connect_when_empty(client, monkeypatch):

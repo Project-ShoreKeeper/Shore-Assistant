@@ -93,3 +93,8 @@ app.include_router(chat_ws_router)
 if settings.N8N_ENABLED:
     from app.api.endpoints.n8n_webhook import router as n8n_router
     app.include_router(n8n_router)
+
+if settings.DEBUG_MEMORY:
+    from app.api.endpoints.memory_debug import router as memory_debug_router
+    app.include_router(memory_debug_router)
+    print("[App] DEBUG_MEMORY=True — memory debug endpoints enabled")

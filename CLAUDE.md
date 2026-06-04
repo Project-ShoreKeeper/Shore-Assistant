@@ -52,7 +52,10 @@ Shore-Assistant/
 │       ├── prompts/
 │       │   ├── base.txt                # Base persona system prompt template
 │       │   ├── kuudere.txt             # Kuudere persona system prompt template
-│       │   ├── tools.txt               # Tool usage instructions appended to persona
+│       │   ├── tools_core.txt          # Always-loaded tool rules (general protocol + always-available tools + run_command)
+│       │   ├── tools_terminal.txt      # PTY/session rules (loaded only when terminal tools retrieved)
+│       │   ├── tools_background.txt    # Background service rules (loaded only when background tools retrieved)
+│       │   ├── tools_n8n.txt           # n8n workflow rules (loaded only when an n8n_ tool is retrieved)
 │       │   └── user.txt                # Optional user context appended to persona
 │       ├── services/
 │       │   ├── stt_service.py          # Whisper via Transformers
@@ -166,7 +169,7 @@ docker compose -f docker-compose.n8n.yml up -d
 - **Tool retrieval**: Only relevant tools are injected per request via embedding cosine similarity (`tool_retriever.py`). Always-available tools: `get_system_time`, `clear_memory`, `set_reminder`, `set_scheduled_task`, `list_tasks`, `cancel_task`. Companion tools: `web_search` always includes `web_scrape`. Dynamic n8n tools are auto-registered at startup.
 - **Fresh time via tool**: `get_system_time` is in `ALWAYS_AVAILABLE` (always injected as a tool); `tools.txt` instructs the LLM to call it for any time-related question instead of trusting conversation history.
 - **Thinking mode**: Frontend toggle sends `thinking` config via WebSocket → passed to llama-server as `reasoning_effort: "medium"`. Reasoning tokens stream into collapsible UI block.
-- **Persona system**: System prompt loaded from `prompts/{PERSONA}.txt`, with `tools.txt` and optional `user.txt` appended. Configured via `PERSONA` env var (`base` or `kuudere`).
+- **Persona system**: System prompt = `prompts/{PERSONA}.txt` + `tools_core.txt` + conditional section files (`tools_terminal.txt`, `tools_background.txt`, `tools_n8n.txt`) + optional `user.txt`. Section files are appended only when their trigger tools appear in the retrieved set, keeping notification/simple prompts small. Configured via `PERSONA` env var (`base` or `kuudere`).
 - **Scheduler**: APScheduler manages one-shot reminders and recurring tasks. Tasks persist to `data/scheduled_tasks.json`. Missed tasks fire immediately on restart.
 - **Proactive notifications**: When a task fires, `NotificationService` feeds a prompt to the agent pipeline so Shore responds in-character with TTS. Queued to disk if no client is connected, drained on reconnect.
 - **TTS pipeline**: LLM tokens accumulate → sentence boundary detected → sentence queued → Kokoro synthesizes on CPU → Int16 PCM binary frames sent over WebSocket. Single `tts_start`/`tts_end` per response.

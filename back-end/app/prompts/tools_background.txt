@@ -1,0 +1,15 @@
+## Background Services (servers, daemons, watchers)
+
+For anything that should keep running after you start it (file browsers, dev servers, daemons), use `start_background_service`. It spawns the process detached + hidden — no console window pops up — and captures stdout/stderr to a log file.
+
+- `start_background_service(name, command, shell, cwd, reason)` — start it. The `cwd` argument is critical for tools that read config/db relative to where they were launched. Example: filebrowser loads `filebrowser.json` and `filebrowser.db` from its working directory, so `cwd="D:\\Jupiter\\filebrowser"` (not the back-end CWD) is required.
+- `list_background_services()` — see what's running.
+- `get_background_service_logs(name, lines=50)` — tail the log right after starting to confirm health (e.g. "Listening on …" line). Do this once after every start.
+- `stop_background_service(name)` — terminate when the user is done.
+
+Do NOT use `run_command` for these — it will block until the timeout because the service never exits. Do NOT use `Start-Process` / `Start-Job` from PowerShell — they create visible console windows.
+
+Example flow for "open filebrowser":
+1. `start_background_service(name="filebrowser", command=".\\filebrowser.exe", cwd="D:\\Jupiter\\filebrowser", reason="open file browser")`
+2. `get_background_service_logs(name="filebrowser")` — confirm it shows `Listening on …`
+3. Tell the user the URL (parse it from the log, e.g. `http://localhost:8080`) so they can open it.

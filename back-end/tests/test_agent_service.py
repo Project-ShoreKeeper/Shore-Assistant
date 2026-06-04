@@ -27,7 +27,7 @@ def agent_service_module():
     # Install stubs
     llm_mod = types.ModuleType("app.services.llm_service")
     llm_mod.llm_service = MagicMock()
-    llm_mod.build_system_prompt = lambda: "SYS"
+    llm_mod.build_system_prompt = lambda *args, **kwargs: "SYS"
     sys.modules["app.services.llm_service"] = llm_mod
 
     tr_mod = types.ModuleType("app.services.tool_retriever")

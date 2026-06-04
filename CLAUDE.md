@@ -164,7 +164,7 @@ docker compose -f docker-compose.n8n.yml up -d
 - **Two WebSocket endpoints**: `/ws/audio` (binary-only STT) and `/ws/chat` (mixed JSON + binary for full pipeline). Don't merge them.
 - **Tool call format**: LLM outputs ` ```tool\n{"tool": "name", "args": {...}}\n``` ` blocks. Parsed by regex in `agent_service.py`. Agent loop is a LangGraph `StateGraph`.
 - **Tool retrieval**: Only relevant tools are injected per request via embedding cosine similarity (`tool_retriever.py`). Always-available tools: `get_system_time`, `clear_memory`, `set_reminder`, `set_scheduled_task`, `list_tasks`, `cancel_task`. Companion tools: `web_search` always includes `web_scrape`. Dynamic n8n tools are auto-registered at startup.
-- **Auto-injected time**: Current timestamp is prepended to the system prompt every request so the LLM always has fresh time.
+- **Fresh time via tool**: `get_system_time` is in `ALWAYS_AVAILABLE` (always injected as a tool); `tools.txt` instructs the LLM to call it for any time-related question instead of trusting conversation history.
 - **Thinking mode**: Frontend toggle sends `thinking` config via WebSocket → passed to llama-server as `reasoning_effort: "medium"`. Reasoning tokens stream into collapsible UI block.
 - **Persona system**: System prompt loaded from `prompts/{PERSONA}.txt`, with `tools.txt` and optional `user.txt` appended. Configured via `PERSONA` env var (`base` or `kuudere`).
 - **Scheduler**: APScheduler manages one-shot reminders and recurring tasks. Tasks persist to `data/scheduled_tasks.json`. Missed tasks fire immediately on restart.
@@ -229,7 +229,7 @@ All backend config via environment variables or `.env` file in `back-end/`:
 - [ ] Multi-language TTS — auto-detect language from LLM response and switch Kokoro voice
 - [x] Thinking mode toggle — frontend switch to enable/disable LLM extended thinking
 - [x] Math rendering — KaTeX support for inline/block LaTeX in chat
-- [x] Auto-inject time — current timestamp in system prompt prevents stale time answers
+- [x] Fresh time via always-available `get_system_time` tool — prompt instructs LLM to call it instead of trusting history
 - [x] Web search → scrape chaining — companion tools + prompt rule for automatic follow-up
 - [x] Vision via primary model — multimodal primary served by llama-server, no hot-swap
 - [x] Terminal interaction — PTY sessions + one-shot commands via shore-pty-service (node-pty) + xterm.js UI

@@ -1,0 +1,30 @@
+## Terminal Sessions (PTY)
+
+`send_to_terminal` is an escape hatch — only use it when `run_command` cannot work. The 3 valid cases:
+
+1. **Stateful REPL** — variables/state must persist between calls. e.g. Python REPL: send `x = 5`, then later `print(x)`. Each `run_command` is a fresh process; state would be lost.
+2. **Mid-execution prompts** — the command asks for input partway through. e.g. `ssh user@host` (password), `npm init` (question wizard), interactive installers.
+3. **Signals / extra input to a running process** — sending Ctrl+C (`\x03`), responding to a watcher's prompt, etc.
+
+Long-running commands alone are NOT a valid case — `run_command` streams output and waits as long as needed.
+
+### Companion tools (only if you need a session)
+- `open_terminal` — create a named session with a meaningful `name`.
+- `list_terminals` — enumerate open sessions and read their `shell` field before sending input.
+- `read_terminal(name, tail_chars=4096)` — poll a session's output WITHOUT sending input. Use when `send_to_terminal` returned `prompt_seen=false`. Output is ANSI-stripped.
+- `close_terminal` — close when done so the session pool stays tidy.
+
+`send_to_terminal` returns `{"output": "<ansi-stripped>", "prompt_seen": bool, "truncated": bool}`. ANSI codes and bare `\r` are already filtered out. `prompt_seen=false` means the shell hasn't returned the prompt within `wait_seconds` (default 10s); raise `wait_seconds` for slow commands, or call `read_terminal` to keep polling.
+
+### Sending input rules (CRITICAL)
+`send_to_terminal` writes raw keystrokes — exactly as if a human typed them. Three rules:
+
+1. **One command per call.** Send, wait for output, decide next step, then send the next call. Never pack multiple commands into one `input` string. To chain on a single line, use `;` (powershell/pwsh/bash) or `&` (cmd).
+2. **NEVER use line-continuation characters** (`` ` `` in powershell, `\` in bash). They make the session show `>>` and hang waiting for more input. Each call must be a complete statement.
+3. **Long-running processes hijack the session.** Servers, watchers, REPLs, `npm run dev`, `.\app.exe` take over stdin/stdout — further `send_to_terminal` calls become stdin TO that process. Use `start_background_service` (preferred), or open a SECOND session with `open_terminal`, or use `run_command` if it's a one-shot.
+
+End every `input` string with `\n` so the shell submits the line (`\n` and `\r\n` are normalized to the keystroke ConPTY needs).
+
+If output ends with `>> ` (PowerShell continuation prompt — open quote/bracket/backtick), DO NOT keep sending lines on top. Send `\x03` (Ctrl+C) to abort, then re-send the corrected complete statement.
+
+When using sessions, call `list_terminals` and read `shell` before sending input — shell quirks (chaining syntax, env vars) differ per shell.

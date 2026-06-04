@@ -4,7 +4,14 @@ from app.tools.system_tools import get_system_time, read_file, list_directory, c
 from app.tools.web_tools import search_web, web_scrape
 from app.tools.screen_tools import capture_screen, analyze_screen
 from app.tools.scheduler_tools import set_reminder, set_scheduled_task, cancel_task, list_tasks
-from app.tools.terminal_tools import run_command, open_terminal, send_to_terminal, list_terminals, close_terminal
+from app.tools.terminal_tools import (
+    run_command,
+    open_terminal,
+    send_to_terminal,
+    read_terminal,
+    list_terminals,
+    close_terminal,
+)
 from app.tools.background_tools import (
     start_background_service,
     list_background_services,
@@ -47,6 +54,7 @@ ALL_TOOLS = [
     run_command,
     open_terminal,
     send_to_terminal,
+    read_terminal,
     list_terminals,
     close_terminal,
     start_background_service,

@@ -83,15 +83,26 @@ class ToolRetriever:
             if name not in retrieved:
                 retrieved.append(name)
 
-        # Add companion tools (e.g. web_search always brings web_scrape)
+        # Add companion tools (e.g. web_search always brings web_scrape).
+        # Terminal tools are bidirectional companions: retrieving any one of
+        # them brings the rest, since "list sessions" almost always implies
+        # "send to a session" as a follow-up call.
+        TERMINAL_GROUP = [
+            "open_terminal", "send_to_terminal", "read_terminal",
+            "list_terminals", "close_terminal",
+        ]
         COMPANION_TOOLS = {
             "web_search": ["web_scrape"],
-            "open_terminal": ["send_to_terminal", "list_terminals", "close_terminal"],
+            "open_terminal": TERMINAL_GROUP,
+            "send_to_terminal": TERMINAL_GROUP,
+            "read_terminal": TERMINAL_GROUP,
+            "list_terminals": TERMINAL_GROUP,
+            "close_terminal": TERMINAL_GROUP,
         }
         for tool, companions in COMPANION_TOOLS.items():
             if tool in retrieved:
                 for companion in companions:
-                    if companion not in retrieved:
+                    if companion != tool and companion not in retrieved:
                         retrieved.append(companion)
 
         return retrieved

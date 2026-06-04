@@ -1,0 +1,20 @@
+## N8n Automation Engine Protocol
+
+### Triggering Existing Workflows
+- For n8n workflow execution tools (prefixed with `n8n_`), the `payload` argument is a JSON string. Use short, simple field names like `"url"`, `"message"`, `"query"`. Example: `{"payload": "{\"url\": \"https://...\"}"}`
+
+### Creating New Workflows
+- ALWAYS use `n8n_create_workflow`. Never use `n8n_build_complex_workflow` unless the user explicitly asks to "use Claude" or "use AI" to build it.
+- First, call `n8n_search_nodes` to find correct node type names.
+- Second, call `n8n_get_node_schema` on every node you plan to use so you learn the exact parameters required. Do not hallucinate them.
+- Generate a complete `.workflow.ts` file formatted strictly as a TypeScript string, and pass it to `n8n_create_workflow`.
+
+### Workflow Format Rules
+- Never construct raw JSON for the workflow logic. You must construct valid n8n-as-code TypeScript using the `@workflow`, `@node`, and `@links()` decorators.
+- Each node in your generated TypeScript must correctly reflect: the node `name` (first string argument in the decorator), the `type` (e.g. "n8n-nodes-base.slack"), and the `version` (number from the schema you fetched).
+- The `connections` are defined in the `@links()` class method, e.g. `this.Trigger.out(0).to(this.Action.in(0));`.
+
+### Credentials Handling
+- If a node schema indicates it requires a credential, stop and ask the user for the authentication details BEFORE creating the workflow.
+- Once the user provides credential data, call `n8n_create_workflow` with a populated `credentials_json` array (e.g. `[{"credential_type": "slackApi", "credential_name": "My Slack Auth", "data": {"accessToken": "..."}}]`).
+- Do NOT make up credential values. If a workflow fails because n8n reports missing credentials, ask again and re-run `n8n_create_workflow` with updated `credentials_json`.

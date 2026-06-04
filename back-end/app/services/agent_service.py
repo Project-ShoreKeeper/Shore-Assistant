@@ -76,13 +76,16 @@ class AgentService:
         # Retrieve relevant tools for this query (skip for notifications)
         if no_tools:
             tool_schemas = None
+            relevant_tool_names = None
         else:
             relevant_tool_names = tool_retriever.retrieve(user_text)
             tool_schemas = tool_retriever.get_tool_schemas(relevant_tool_names, ALL_TOOLS)
 
         t1 = time.perf_counter()
 
-        system_prompt = build_system_prompt()
+        # Pass retrieved names so the system prompt only includes rules for
+        # tool groups actually in scope this turn.
+        system_prompt = build_system_prompt(relevant_tool_names)
 
         # Build messages for llama-server
         messages = [

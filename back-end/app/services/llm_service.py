@@ -16,34 +16,60 @@ from app.core.config import settings
 PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 
 
-def _load_persona_template() -> str:
-    """Load the system prompt template for the configured persona, plus tool instructions and user context."""
-    persona_file = PROMPTS_DIR / f"{settings.PERSONA}.txt"
-    if not persona_file.exists():
-        persona_file = PROMPTS_DIR / "base.txt"
-    template = persona_file.read_text(encoding="utf-8")
-
-    # Append tool instructions
-    tools_file = PROMPTS_DIR / "tools.txt"
-    if tools_file.exists():
-        template += "\n\n" + tools_file.read_text(encoding="utf-8")
-
-    # Append user context if it exists
-    user_file = PROMPTS_DIR / "user.txt"
-    if user_file.exists():
-        template += "\n\n" + user_file.read_text(encoding="utf-8")
-
-    return template
+def _read_prompt(name: str) -> str:
+    path = PROMPTS_DIR / name
+    return path.read_text(encoding="utf-8") if path.exists() else ""
 
 
-SYSTEM_PROMPT_TEMPLATE = _load_persona_template()
+# Section files appended only when at least one of their trigger tool names is
+# in the retrieved tool set. This keeps the system prompt small for queries that
+# don't touch the section's tools (e.g. terminal rules aren't loaded for a
+# simple time question).
+_SECTION_TRIGGERS: dict[str, frozenset[str]] = {
+    "tools_terminal.txt": frozenset({
+        "open_terminal", "send_to_terminal", "read_terminal",
+        "list_terminals", "close_terminal",
+    }),
+    "tools_background.txt": frozenset({
+        "start_background_service", "list_background_services",
+        "get_background_service_logs", "stop_background_service",
+    }),
+}
+# n8n workflow tools have dynamic names (n8n_<workflow>), so they're matched by prefix.
+_N8N_SECTION = "tools_n8n.txt"
+
+# Cache file contents at import time so we don't hit disk per request.
+_PERSONA_TEXT = _read_prompt(f"{settings.PERSONA}.txt") or _read_prompt("base.txt")
+_USER_TEXT = _read_prompt("user.txt")
+_CORE_TOOLS_TEXT = _read_prompt("tools_core.txt")
+_SECTION_CACHE: dict[str, str] = {name: _read_prompt(name) for name in _SECTION_TRIGGERS}
+_SECTION_CACHE[_N8N_SECTION] = _read_prompt(_N8N_SECTION)
 
 
-def build_system_prompt() -> str:
-    """Build the system prompt from persona + tool instructions."""
-    return SYSTEM_PROMPT_TEMPLATE
+def build_system_prompt(retrieved_tool_names: list[str] | None = None) -> str:
+    """Assemble the system prompt.
+
+    retrieved_tool_names=None signals no-tools mode (notifications): persona +
+    user context only, no tool rules. Otherwise append tools_core.txt plus any
+    section whose trigger tools appear in the retrieved set.
+    """
+    parts = [_PERSONA_TEXT]
+    if retrieved_tool_names is not None:
+        if _CORE_TOOLS_TEXT:
+            parts.append(_CORE_TOOLS_TEXT)
+        names = set(retrieved_tool_names)
+        for section_name, triggers in _SECTION_TRIGGERS.items():
+            if names & triggers and _SECTION_CACHE[section_name]:
+                parts.append(_SECTION_CACHE[section_name])
+        if _SECTION_CACHE[_N8N_SECTION] and any(n.startswith("n8n_") for n in names):
+            parts.append(_SECTION_CACHE[_N8N_SECTION])
+    if _USER_TEXT:
+        parts.append(_USER_TEXT)
+    return "\n\n".join(p for p in parts if p)
 
 
+# Fallback used when stream_chat / generate_once are called without an explicit
+# system prompt. Defaults to persona + user context (no tool rules).
 SYSTEM_PROMPT = build_system_prompt()
 
 # Punctuation marks that signal a sentence boundary for TTS

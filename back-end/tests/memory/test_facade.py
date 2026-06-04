@@ -107,3 +107,47 @@ async def test_append_user_no_op_when_facade_not_started():
 async def test_clear_returns_false_when_facade_not_started():
     facade = MemoryFacade()
     assert await facade.clear() is False
+
+
+from unittest.mock import AsyncMock
+
+
+async def test_assemble_context_prunes_profile(started_facade, monkeypatch):
+    monkeypatch.setattr(
+        "app.core.config.settings.MEMORY_PROFILE_MAX_BYTES", 50,
+    )
+    big = "x" * 80
+    started_facade.profile.read = AsyncMock(return_value={"a": big, "b": "ok"})
+    started_facade.profile.key_updated_at_map = AsyncMock(
+        return_value={"a": 100.0, "b": 200.0},
+    )
+    started_facade.episodic.search = AsyncMock(return_value=[])
+
+    bundle = await started_facade.assemble_context("hello")
+    assert "b" in bundle.profile        # newer key survives
+    assert "a" not in bundle.profile    # older key pruned
+
+
+async def test_assemble_context_empty_profile_skips_history_query(started_facade):
+    started_facade.profile.read = AsyncMock(return_value={})
+    started_facade.profile.key_updated_at_map = AsyncMock(
+        return_value={"never": "called"},
+    )
+    started_facade.episodic.search = AsyncMock(return_value=[])
+    await started_facade.assemble_context("hello")
+    started_facade.profile.key_updated_at_map.assert_not_awaited()
+
+
+async def test_assemble_context_history_query_failure_falls_back(started_facade, monkeypatch):
+    monkeypatch.setattr(
+        "app.core.config.settings.MEMORY_PROFILE_MAX_BYTES", 50,
+    )
+    big = "x" * 80
+    started_facade.profile.read = AsyncMock(return_value={"a": big, "b": "ok"})
+    async def boom():
+        raise RuntimeError("db gone")
+    started_facade.profile.key_updated_at_map = boom
+    started_facade.episodic.search = AsyncMock(return_value=[])
+    # Should not raise; prune still runs with empty ts_map (alphabetic eviction).
+    bundle = await started_facade.assemble_context("hello")
+    assert isinstance(bundle.profile, dict)

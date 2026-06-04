@@ -16,6 +16,7 @@ from redis.exceptions import RedisError
 from app.core.config import settings
 from app.services.memory.episodic import EpisodicMemory
 from app.services.memory.profile import ProfileMemory
+from app.services.memory.pruning import prune_profile
 from app.services.memory.short_term import ShortTermMemory
 from app.services.memory.types import ContextBundle, Message
 
@@ -31,6 +32,7 @@ class MemoryFacade:
         self.episodic = EpisodicMemory()
 
     async def startup(self) -> None:
+        # Redis (short-term)
         self._redis = Redis.from_url(
             settings.REDIS_URL,
             decode_responses=True,
@@ -39,25 +41,41 @@ class MemoryFacade:
             max_connections=10,
         )
         self.short_term = ShortTermMemory(self._redis)
-        if not await self.short_term.health():
-            print(
-                f"[Memory] WARNING: Redis unreachable at startup "
-                f"({settings.REDIS_URL})"
-            )
-        else:
-            print(f"[Memory] Redis connected at {settings.REDIS_URL}")
-        print("[Memory] Profile/Episodic stubs registered (Phase 2 pending)")
+        redis_ok = await self.short_term.health()
+
+        # Profile (Postgres) — independent failure
+        try:
+            await self.profile.startup()
+            pg_ok = await self.profile.health()
+        except Exception as e:
+            print(f"[Memory] Postgres startup failed: {e}")
+            pg_ok = False
+
+        # Episodic (Qdrant) — independent failure
+        try:
+            await self.episodic.startup()
+            qd_ok = await self.episodic.health()
+        except Exception as e:
+            print(f"[Memory] Qdrant startup failed: {e}")
+            qd_ok = False
+
+        print(
+            f"[Memory] redis={redis_ok} postgres={pg_ok} qdrant={qd_ok}"
+        )
 
     async def shutdown(self) -> None:
         if self._redis is not None:
             await self._redis.aclose()
+        await self.profile.shutdown()
+        await self.episodic.shutdown()
 
     async def assemble_context(self, user_text: str) -> ContextBundle:
-        short_term, profile, episodic = await asyncio.gather(
+        short_term, profile_raw, episodic = await asyncio.gather(
             self._safe_load_short_term(),
             self._safe_read_profile(),
             self._safe_search_episodic(user_text),
         )
+        profile = await self._safe_prune_profile(profile_raw)
         return ContextBundle(
             short_term=short_term,
             profile=profile,
@@ -118,6 +136,20 @@ class MemoryFacade:
         except (Exception, asyncio.TimeoutError) as e:
             print(f"[Memory] episodic.search degraded: {e}")
             return []
+
+    async def _safe_prune_profile(self, raw: dict) -> dict:
+        if not raw:
+            return raw
+        try:
+            ts_map = await asyncio.wait_for(
+                self.profile.key_updated_at_map(), timeout=_TIMEOUT,
+            )
+        except Exception as e:
+            print(f"[Memory] key_updated_at_map degraded: {e}")
+            ts_map = {}
+        return prune_profile(
+            raw, ts_map, max_bytes=settings.MEMORY_PROFILE_MAX_BYTES,
+        )
 
     async def _safe_append(self, message: Message) -> None:
         if self.short_term is None:

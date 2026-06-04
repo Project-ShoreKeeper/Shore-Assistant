@@ -145,11 +145,17 @@ class MemoryFacade:
                 self.profile.key_updated_at_map(), timeout=_TIMEOUT,
             )
         except Exception as e:
-            print(f"[Memory] key_updated_at_map degraded: {e}")
+            print(f"[Memory] key_updated_at_map degraded: {e!r}")
             ts_map = {}
-        return prune_profile(
-            raw, ts_map, max_bytes=settings.MEMORY_PROFILE_MAX_BYTES,
-        )
+        try:
+            return prune_profile(
+                raw, ts_map, max_bytes=settings.MEMORY_PROFILE_MAX_BYTES,
+            )
+        except Exception as e:
+            # prune_profile uses json.dumps; degrade gracefully if a value is not
+            # JSON-serializable rather than breaking the chat turn.
+            print(f"[Memory] prune_profile failed: {e!r}")
+            return raw
 
     async def _safe_append(self, message: Message) -> None:
         if self.short_term is None:

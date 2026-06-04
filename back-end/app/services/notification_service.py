@@ -20,12 +20,14 @@ class NotificationService:
     def __init__(self):
         self._pending_file = Path(settings.SCHEDULER_PENDING_FILE)
         self.tts_lock = asyncio.Lock()
-        self._run_agent: Optional[Callable[[str], Awaitable[None]]] = None
+        self._run_agent: Optional[Callable[[str, Optional[str]], Awaitable[None]]] = None
 
-    def set_agent_callback(self, callback: Callable[[str], Awaitable[None]]):
+    def set_agent_callback(self, callback: Callable[[str, Optional[str]], Awaitable[None]]):
         """
         Register the function that runs a prompt through the full agent pipeline
         (LLM + streaming + TTS). Called by chat_ws.py on connect.
+
+        Signature: callback(prompt: str, task_id: Optional[str]) -> Awaitable[None]
         """
         self._run_agent = callback
 
@@ -50,7 +52,7 @@ class NotificationService:
             # Run through the full agent pipeline — the LLM response IS the notification
             prompt = self._build_reminder_prompt(task)
             print(f"[Notification] Firing through agent: {task['message']}")
-            await self._run_agent(prompt)
+            await self._run_agent(prompt, task["task_id"])
         else:
             self._queue(notification)
             print(f"[Notification] Queued (no client): {task['message']}")
@@ -70,7 +72,7 @@ class NotificationService:
             }
             if self._run_agent:
                 prompt = self._build_reminder_prompt(task)
-                await self._run_agent(prompt)
+                await self._run_agent(prompt, task["task_id"])
             else:
                 # Fallback: just push the raw notification
                 await connection_manager.send_json(item)

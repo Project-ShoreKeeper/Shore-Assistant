@@ -3,14 +3,13 @@
  */
 
 // Production backend via Cloudflare Tunnel (standard HTTPS 443 → localhost:9000)
-const BACKEND_HOST = "api.shore-keeper.com";
-const WS_PROTOCOL = "wss:";
+const WS_BASE_URL = import.meta.env.VITE_WS_URL || "ws://localhost:8000";
 
 // WebSocket URL kết nối tới Backend STT Server
-export const STT_WS_URL = `${WS_PROTOCOL}//${BACKEND_HOST}/ws/audio`;
+export const STT_WS_URL = `${WS_BASE_URL}/ws/audio`;
 
 // WebSocket URL for the unified chat endpoint (STT + LLM + TTS)
-export const CHAT_WS_URL = `${WS_PROTOCOL}//${BACKEND_HOST}/ws/chat`;
+export const CHAT_WS_URL = `${WS_BASE_URL}/ws/chat`;
 
 // Ngôn ngữ mặc định cho STT
 export const STT_DEFAULT_LANGUAGE = "en";

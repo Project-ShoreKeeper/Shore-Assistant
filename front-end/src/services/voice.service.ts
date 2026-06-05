@@ -1,3 +1,5 @@
+import { BACKEND_URL } from "../constants/backend.constant";
+
 export interface VoiceInfo {
   name: string;
   has_transcript: boolean;
@@ -8,7 +10,7 @@ class VoiceService {
   private baseUrl: string;
 
   constructor() {
-    this.baseUrl = "https://api.shore-keeper.com/api/voices";
+    this.baseUrl = `${BACKEND_URL}/api/voices`;
   }
 
   async getVoices(): Promise<VoiceInfo[]> {

@@ -368,8 +368,6 @@ export class ChatWebSocketService {
 
 // ─── Singleton ───
 // Shared instance used by useAssistant and useTerminal so both operate on the same socket.
-const _backendHost = "api.shore-keeper.com";
-const _wsProtocol = "wss:";
-const _chatWsUrl = `${_wsProtocol}//${_backendHost}/ws/chat`;
-export const chatWebsocketService = new ChatWebSocketService(_chatWsUrl);
+import { CHAT_WS_URL } from "../constants/stt.constant";
+export const chatWebsocketService = new ChatWebSocketService(CHAT_WS_URL);
 export default chatWebsocketService;

@@ -1,6 +1,6 @@
 """Integration test — WorkerService writes through to real Postgres + Qdrant.
 
-Skipped unless RUN_REAL_DB_TESTS=1. Mocks Gemini so no API key is required.
+Skipped unless RUN_REAL_DB_TESTS=1. Mocks LLM so no API call is required.
 
 Run from back-end/:
     RUN_REAL_DB_TESTS=1 pytest tests/integration/test_worker_pipeline.py -v

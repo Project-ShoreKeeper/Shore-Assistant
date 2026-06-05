@@ -1,11 +1,12 @@
-"""Unit tests for LocomoExtractor — google.genai client mocked."""
+"""Unit tests for LocomoExtractor — httpx client mocked."""
 
 import asyncio
 import json
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
+import httpx
 
 from app.services.memory.extractor import LocomoExtractor, ExtractorDisabled
 from app.services.memory.types import Message, WorkerOutput
@@ -21,16 +22,19 @@ def _turns():
 
 
 def _fake_response(json_str: str):
-    return SimpleNamespace(text=json_str)
+    response = SimpleNamespace(
+        json=lambda: {"choices": [{"message": {"content": json_str}}]},
+        raise_for_status=lambda: None
+    )
+    return response
 
 
 @pytest.fixture(autouse=True)
 def _enable(monkeypatch):
     monkeypatch.setattr("app.core.config.settings.WORKER_ENABLED", True)
-    monkeypatch.setattr("app.core.config.settings.GEMINI_API_KEY", "test-key")
 
 
-async def test_extract_returns_worker_output_on_happy_path(monkeypatch):
+async def test_extract_returns_worker_output_on_happy_path():
     payload = {
         "profile_changes": [{
             "key_path": "preferences.coffee", "new_value": "oat milk latte",
@@ -40,16 +44,10 @@ async def test_extract_returns_worker_output_on_happy_path(monkeypatch):
         "episodic_facts": [],
     }
     ex = LocomoExtractor()
-    fake_client = SimpleNamespace(
-        aio=SimpleNamespace(
-            models=SimpleNamespace(
-                generate_content=AsyncMock(
-                    return_value=_fake_response(json.dumps(payload))
-                ),
-            )
-        )
-    )
-    ex._client = fake_client
+    fake_client = AsyncMock()
+    fake_client.post.return_value = _fake_response(json.dumps(payload))
+    ex._http_client = fake_client
+    
     out = await ex.extract(turns=_turns(), profile_snapshot={})
     assert isinstance(out, WorkerOutput)
     assert len(out.profile_changes) == 1
@@ -63,30 +61,21 @@ async def test_extract_raises_when_worker_disabled(monkeypatch):
         await ex.extract(turns=_turns(), profile_snapshot={})
 
 
-async def test_extract_raises_when_api_key_missing(monkeypatch):
-    monkeypatch.setattr("app.core.config.settings.GEMINI_API_KEY", "")
-    ex = LocomoExtractor()
-    with pytest.raises(ExtractorDisabled):
-        await ex.extract(turns=_turns(), profile_snapshot={})
-
-
 async def test_extract_retries_once_on_transient_error(monkeypatch):
     payload = {"profile_changes": [], "episodic_facts": []}
     ex = LocomoExtractor()
     call_count = {"n": 0}
 
-    async def flaky(**_kwargs):
+    async def flaky(*args, **kwargs):
         call_count["n"] += 1
         if call_count["n"] == 1:
-            raise asyncio.TimeoutError("first call timed out")
+            raise httpx.ReadTimeout("first call timed out")
         return _fake_response(json.dumps(payload))
 
-    fake_client = SimpleNamespace(
-        aio=SimpleNamespace(
-            models=SimpleNamespace(generate_content=AsyncMock(side_effect=flaky))
-        )
-    )
-    ex._client = fake_client
+    fake_client = AsyncMock()
+    fake_client.post.side_effect = flaky
+    ex._http_client = fake_client
+
     monkeypatch.setattr(
         "app.services.memory.extractor._BACKOFF_BASE_SECONDS", 0.0,
     )
@@ -98,17 +87,15 @@ async def test_extract_retries_once_on_transient_error(monkeypatch):
 async def test_extract_gives_up_after_max_retries(monkeypatch):
     ex = LocomoExtractor()
 
-    async def always_fail(**_kwargs):
-        raise asyncio.TimeoutError("never works")
+    async def always_fail(*args, **kwargs):
+        raise httpx.ReadTimeout("never works")
 
-    fake_client = SimpleNamespace(
-        aio=SimpleNamespace(
-            models=SimpleNamespace(generate_content=AsyncMock(side_effect=always_fail))
-        )
-    )
-    ex._client = fake_client
+    fake_client = AsyncMock()
+    fake_client.post.side_effect = always_fail
+    ex._http_client = fake_client
+
     monkeypatch.setattr(
         "app.services.memory.extractor._BACKOFF_BASE_SECONDS", 0.0,
     )
-    with pytest.raises(asyncio.TimeoutError):
+    with pytest.raises(httpx.ReadTimeout):
         await ex.extract(turns=_turns(), profile_snapshot={})

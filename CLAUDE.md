@@ -240,8 +240,8 @@ All backend config via environment variables or `.env` file in `back-end/`:
 | WORKER_ENABLED | True | Enable LOCOMO worker (Phase 3 auto-extraction) |
 | WORKER_IDLE_DELAY_SECONDS | 30.0 | Idle gap after a turn before the worker fires |
 | WORKER_MAX_UNPROCESSED_MESSAGES | 20 | Safety valve: fire immediately at this many unprocessed turns |
-| WORKER_GEMINI_MODEL | gemini-2.5-flash | Gemini model id for the LOCOMO extractor |
-| WORKER_GEMINI_TIMEOUT | 30.0 | Per-attempt Gemini timeout (seconds) |
+| WORKER_LOCAL_LLM_URL | http://localhost:8080/v1 | OpenAI-compatible local API base URL for LOCOMO extraction |
+| WORKER_LOCAL_TIMEOUT | 60.0 | Per-attempt local API timeout (seconds) |
 | WORKER_LOCK_KEY | shore:worker:lock | Redis SETNX key for cross-process worker mutex |
 | WORKER_LOCK_TTL_SECONDS | 60 | TTL on the Redis lock (auto-release on crash) |
 | WORKER_LAST_TS_KEY | shore:worker:last_extracted_ts | Redis key tracking the newest processed turn timestamp |

@@ -9,7 +9,7 @@ This is the **Master Spec**. It defines the overall architecture, data
 contracts, runtime pipelines, and phase boundaries for replacing the current
 JSON-file `memory_service.py` with a layered hybrid memory system built on
 **Redis (short-term) + Postgres (profile) + Qdrant (episodic)** with a
-**Gemini 2.5 Flash LOCOMO worker** for asynchronous fact / emotion extraction.
+**local Gemma 4 (26B A4B) LOCOMO worker** for asynchronous fact / emotion extraction.
 
 Each implementation phase below will have its own sub-spec that elaborates
 the details left intentionally abstract here.
@@ -90,15 +90,15 @@ the details left intentionally abstract here.
 │       └─────┬──────────────┬──────────────┬────────────┬───────┘     │
 └─────────────┼──────────────┼──────────────┼────────────┼─────────────┘
               │              │              │            │
-              │ asyncpg      │ redis.asyncio│ qdrant-    │ Gemini
-              │              │              │ client     │ REST
+              │ asyncpg      │ redis.asyncio│ qdrant-    │ httpx
+              │              │              │ client     │ (REST)
               │              │              │            │
-┌─────────────▼──────────────▼──────────────▼────────┐  │ ┌──────────┐
-│              LAN SERVER 24/7 (Docker stack)         │  │ │ Google   │
-│                                                     │  └─►│ Gemini   │
-│  ┌──────────────┐ ┌──────────────┐ ┌────────────┐  │    │ 2.5 Flash│
-│  │ Postgres 16  │ │ Redis 7      │ │ Qdrant     │  │    │ (cloud)  │
-│  │ (profile +   │ │ (short-term  │ │ (episodic  │  │    └──────────┘
+┌─────────────▼──────────────▼──────────────▼────────┐  │ ┌────────────┐
+│              LAN SERVER 24/7 (Docker stack)         │  │ │ llama-     │
+│                                                     │  └─►│ server     │
+│  ┌──────────────┐ ┌──────────────┐ ┌────────────┐  │    │ (Gemma 4)  │
+│  │ Postgres 16  │ │ Redis 7      │ │ Qdrant     │  │    │ (GPU local)│
+│  │ (profile +   │ │ (short-term  │ │ (episodic  │  │    └────────────┘
 │  │  audit log)  │ │  AOF enabled)│ │  vectors)  │  │
 │  └──────────────┘ └──────────────┘ └────────────┘  │
 └─────────────────────────────────────────────────────┘
@@ -119,8 +119,9 @@ the details left intentionally abstract here.
 - **LAN server is a single point of failure**. The `MemoryFacade` must
   implement per-layer circuit breakers so chat degrades gracefully rather
   than failing outright.
-- **Gemini is a write-path dependency only**. The read path (chat turn)
-  never calls Gemini; if Gemini is down only extraction is affected.
+- **llama-server is shared for both chat and extraction**. The read path (chat turn)
+  has absolute priority. The worker runs ngầm (background) via REST, and must be strictly
+  cancelled (aborting the HTTP connection) if a new chat turn arrives to prevent compute contention.
 
 ### Alternatives considered and rejected
 
@@ -128,9 +129,8 @@ the details left intentionally abstract here.
   ultimately a single-user idle trigger. Rejected as overkill.
 - **gRPC between back-end and DB stack**: native async clients are simpler
   and sufficient on LAN.
-- **Reusing llama-server as the worker LLM**: considered, but cloud-API
-  worker chosen so VRAM is not contended and extraction quality stays
-  consistent regardless of which primary model is loaded.
+- **Cloud-API worker (e.g. Gemini 2.5 Flash)**: initially considered to avoid VRAM contention,
+  but rejected in favor of 100% offline privacy by reusing the existing Gemma 4 model.
 
 ---
 
@@ -195,7 +195,7 @@ CREATE TABLE profile_history (
     old_value       JSONB,                       -- null on insert
     new_value       JSONB,                       -- null on delete
     source_turn_ts  DOUBLE PRECISION,            -- ts of the turn that produced this change
-    confidence      REAL,                        -- Gemini self-reported (0-1)
+    confidence      REAL,                        -- Model self-reported (0-1)
     reason          TEXT,                        -- worker single-line explanation
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -258,7 +258,7 @@ retriever (reads):
     "source_turn_ts": 1717459200.123,
     "source_role": "user" | "assistant",
     "created_at": 1717459205.456,
-    "confidence": 0.82,                # Gemini self-reported
+    "confidence": 0.82,                # Model self-reported
     "embedding_model_version": "all-MiniLM-L6-v2",
 }
 ```
@@ -322,13 +322,13 @@ class WorkerOutput(BaseModel):
     episodic_facts: list[EpisodicFact]
 ```
 
-`WorkerOutput` is the sole contract between Gemini and the write side.
+`WorkerOutput` is the sole contract between the local LLM and the write side.
 
 ### 3.5 Settled defaults from brainstorming
 
 - `MEMORY_MAX_TURNS = 15` (overriding the legacy default of 20, per design
   brief).
-- Gemini self-reported `confidence` is accepted as-is. Calibration may be
+- Model self-reported `confidence` is accepted as-is. Calibration may be
   revisited in Phase 4 if extraction quality is poor.
 
 ---
@@ -437,14 +437,13 @@ After assistant finishes streaming (read path ends)
 │                    if m.timestamp > last_extracted_ts]       │
 │      If len(unprocessed) == 0 → return.                      │
 │                                                              │
-│   3. Build Gemini prompt:                                    │
-│        - System: LOCOMO extractor instructions + JSON        │
-│          schema (Plutchik 8 + intensity, ProfileChange).     │
+│   3. Build Extraction prompt:                                │
+│        - System: LOCOMO extractor instructions.              │
 │        - User: serialized turns.                             │
 │        - Current profile (so worker can detect conflicts /   │
 │          existing keys).                                     │
 │                                                              │
-│   4. Call Gemini 2.5 Flash with JSON mode →                  │
+│   4. Call local Gemma 4 API with JSON Schema/Grammar →       │
 │      WorkerOutput(profile_changes, episodic_facts)            │
 │                                                              │
 │   5. Apply:                                                  │
@@ -580,27 +579,27 @@ manually via debug endpoints to verify retrieval.
 **Out of scope:** automatic extraction, complex conflict resolution,
 canonicalizer.
 
-### Phase 3 — LOCOMO Worker (Gemini Flash)
+### Phase 3 — LOCOMO Worker (Local Gemma 4)
 
 **Status:** Shipped 2026-06-05 (plan: `docs/superpowers/plans/2026-06-05-hybrid-memory-phase-3.md`).
 
-**Goal:** Automate the write path. 30 s of idle after a turn → Gemini
+**Goal:** Automate the write path. 30 s of idle after a turn → Gemma 4
 extracts → Profile / Episodic updated.
 
 **Scope:**
 
 - `worker.py`:
   - `schedule_extract(delay=30)` — `asyncio.Task` with cancel-on-new-turn.
-  - `extract()` — diff unprocessed turns, prompt Gemini, parse JSON, apply.
+  - `extract()` — diff unprocessed turns, prompt Gemma 4, parse JSON, apply.
   - Safety valve: if `len(unprocessed) >= MAX_UNPROCESSED_MESSAGES`, fire
     immediately.
   - Idempotent `point_id`:
     `uuid5(NAMESPACE_FACT, f"{turn_ts}:{role}:{fact_hash}")`.
-- `app/prompts/locomo_extractor.txt`: Gemini system prompt with the JSON
+- `app/prompts/locomo_extractor.txt`: Extraction system prompt with the JSON
   schema (exported from the `WorkerOutput` Pydantic model).
-- Gemini client: async `httpx`, JSON mode, retry with exponential backoff
+- LLM client: async `httpx` to local API, JSON schema forced generation, retry with exponential backoff
   (max 2).
-- Config: `GEMINI_API_KEY`, `GEMINI_MODEL=gemini-2.5-flash`,
+- Config: `LOCAL_LLM_URL`,
   `WORKER_IDLE_DELAY_SECONDS=30`, `MAX_UNPROCESSED_MESSAGES=20`,
   `WORKER_ENABLED` (kill switch).
 - `canonicalizer.py`: nightly APScheduler job (use existing
@@ -618,7 +617,7 @@ extracts → Profile / Episodic updated.
   cancelled and no fire occurred.
 - 20+ messages of continuous chat with no idle pause → safety valve fires
   the worker before any message is evicted.
-- Gemini API down → worker fails gracefully, logs, no chat impact.
+- Local API down/busy → worker fails gracefully, logs, no chat impact.
 - Re-run worker over the same turns → no duplicate Qdrant points
   (idempotency test).
 - Conflict test: turn 1 "I like tea", turn 5 "I hate tea" → audit log has
@@ -633,8 +632,7 @@ Not required for feature-complete:
 - Frontend memory panel — Profile JSON viewer, recent Episodic list, audit
   log browser.
 - Conflict-review UI — surface low-confidence changes for user confirm.
-- Prometheus metrics — per-layer latency, worker success rate, Gemini
-  token cost.
+- Prometheus metrics — per-layer latency, worker success rate, token cost.
 - Re-embedding job for embedding-model migrations.
 - Backup script (Postgres dump + Qdrant snapshot).
 
@@ -651,14 +649,14 @@ Not required for feature-complete:
 | #   | Risk | Severity | Mitigation |
 |-----|------|----------|------------|
 | R1  | Redis crash loses short-term turns (AOF `everysec` can lose ≤1 s). | Med | AOF `everysec` is adequate for single-user. Add RDB snapshot every 5 min as fallback. Document that a power loss may cost 1-2 turns. |
-| R2  | Gemini API down or rate-limited → worker cannot extract; Profile / Episodic go stale. | Low | Worker retries twice with exponential backoff; failure logged. Next fire re-extracts from `last_extracted_ts`. Chat is independent of Gemini. |
-| R3  | Gemini self-reported confidence is poorly calibrated → wrong facts overwrite right ones. | Med | Accepted as-is under latest-wins. Audit log enables manual rollback. P4 may add a secondary verifier. |
+| R2  | Local LLM busy/down → worker cannot extract; Profile / Episodic go stale. | Low | Worker retries twice with exponential backoff; failure logged. Next fire re-extracts from `last_extracted_ts`. Chat has priority. |
+| R3  | Model self-reported confidence is poorly calibrated → wrong facts overwrite right ones. | Med | Accepted as-is under latest-wins. Audit log enables manual rollback. P4 may add a secondary verifier. |
 | R4  | Entity-tag explosion before canonicalizer runs in P3. | Low | Canonicalizer ships with P3. In P2 (manual seed only) tag count is small. |
 | R5  | LAN server maintenance → all three DBs down simultaneously. | Med | Circuit breaker → degraded chat. Frontend shows "memory offline" banner. Need a Docker-stack restart playbook. |
 | R6  | Embedding-model drift if `all-MiniLM-L6-v2` is replaced — old vectors no longer comparable. | Low | Every point payload tagged with `embedding_model_version`. P4 includes a re-embedding job. |
 | R7  | Profile JSONB bloats — worker invents keys freely → system prompt blows token budget. | Med | Hard cap of ~2 KB when injecting into the prompt; if exceeded, prune top-N by `updated_at` desc. Canonicalizer dedups near-duplicate keys. |
 | R8  | Worker race condition — two extractions fire concurrently from a cancel bug. | High if it occurs | `asyncio.Lock` around `extract()`, plus `SETNX shore:worker:lock` in Redis. Idempotent `point_id` is a second line of defence. |
-| R9  | PII leak via Gemini — chat turns are sent to a cloud API. | High depending on user | Document explicitly that the worker sends raw turns to Gemini. Provide `WORKER_ENABLED=False` kill switch. P4 may add PII redaction before sending. |
+| R9  | PII leak via cloud APIs. | N/A | System is completely offline and private via Gemma 4. Risk mitigated by design. |
 | R10 | Single-user "lock-in" — schema changes hurt if multi-user is wanted later. | Low | Documented; a `user_id` column with `DEFAULT 'luna'` can be added non-breaking. Trade-off accepted in §1. |
 
 ### Overall rollback path
@@ -698,7 +696,7 @@ Per module, no Docker stack required:
 - `tests/memory/test_facade.py` — `assemble_context` with three mocked
   layers; verify `asyncio.gather` parallelism (timing assertion); circuit
   breaker when one layer raises.
-- `tests/memory/test_worker.py` — mock Gemini client, fake `WorkerOutput`
+- `tests/memory/test_worker.py` — mock LLM client, fake `WorkerOutput`
   → idempotent point_id; `last_extracted_ts` only committed after apply;
   cancel-on-new-turn behavior.
 
@@ -757,13 +755,13 @@ Each phase PR runs a simple perf check (not a formal benchmark):
 | `profile.read()` p95 | <15 ms |
 | `episodic.search(top_k=5)` p95 (includes embed) | <60 ms |
 | `MemoryFacade.assemble_context()` p95 | <80 ms |
-| Worker extract end-to-end | <8 s (Gemini dominates) |
+| Worker extract end-to-end | <15 s (Gemma 4 local dominates) |
 
 Over budget → flag in PR description; decide ship-or-tune.
 
 ### 7.6 Explicitly out of scope for tests
 
-- Gemini output correctness (that is model behavior, not code). Golden
+- Model output correctness (that is model behavior, not code). Golden
   tests cover the **JSON shape** only, not content.
 - Multi-user concurrency — single-user, skip.
 - Distributed failure modes (network partition) — LAN trust model.
@@ -781,7 +779,7 @@ Over budget → flag in PR description; decide ship-or-tune.
 
 ### Items intentionally deferred
 
-- Gemini prompt engineering specifics (token counts, few-shot examples)
+- Prompt engineering specifics (token counts, few-shot examples, JSON Schema definitions)
   → Phase 3 sub-spec.
 - Exact Qdrant HNSW / quantization tuning → Phase 2 sub-spec.
 - Backup and restore tooling → ops spec, post-P3.

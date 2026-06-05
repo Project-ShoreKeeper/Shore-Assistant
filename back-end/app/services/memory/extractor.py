@@ -1,18 +1,17 @@
-"""LOCOMO extractor — Gemini 2.5 Flash with JSON-mode structured output."""
+"""LOCOMO extractor — Local Gemma 4 API with JSON Schema/Grammar structured output."""
 import asyncio
 import json
 from pathlib import Path
 from typing import Optional
 
-from google import genai
-from google.genai import types as genai_types
+import httpx
 
 from app.core.config import settings
 from app.services.memory.types import Message, WorkerOutput
 
 
 class ExtractorDisabled(RuntimeError):
-    """Raised when WORKER_ENABLED=False or GEMINI_API_KEY missing."""
+    """Raised when WORKER_ENABLED=False."""
 
 
 _PROMPT_PATH = Path(__file__).parent.parent.parent / "prompts" / "locomo_extractor.txt"
@@ -23,17 +22,15 @@ _BACKOFF_BASE_SECONDS = 1.0
 
 class LocomoExtractor:
     def __init__(self):
-        self._client: Optional["genai.Client"] = None
         self._system_prompt: Optional[str] = None
-
-    def _ensure_client(self) -> "genai.Client":
+        self._http_client: Optional[httpx.AsyncClient] = None
+        
+    def _ensure_client(self) -> httpx.AsyncClient:
         if not settings.WORKER_ENABLED:
             raise ExtractorDisabled("WORKER_ENABLED is False")
-        if not settings.GEMINI_API_KEY:
-            raise ExtractorDisabled("GEMINI_API_KEY is empty")
-        if self._client is None:
-            self._client = genai.Client(api_key=settings.GEMINI_API_KEY)
-        return self._client
+        if self._http_client is None:
+            self._http_client = httpx.AsyncClient(timeout=settings.WORKER_LOCAL_TIMEOUT)
+        return self._http_client
 
     def _load_prompt(self) -> str:
         if self._system_prompt is None:
@@ -58,31 +55,49 @@ class LocomoExtractor:
         client = self._ensure_client()
         user_content = self._build_user_content(turns, profile_snapshot)
 
+        payload = {
+            "model": "gemma-4", # Name usually ignored by local llama-server
+            "messages": [
+                {"role": "system", "content": self._load_prompt()},
+                {"role": "user", "content": user_content}
+            ],
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "worker_output",
+                    "schema": WorkerOutput.model_json_schema()
+                }
+            },
+            "temperature": 0.1
+        }
+        
+        endpoint = f"{settings.WORKER_LOCAL_LLM_URL.rstrip('/')}/chat/completions"
+
         last_error: Optional[BaseException] = None
         for attempt in range(_MAX_ATTEMPTS):
             try:
-                response = await asyncio.wait_for(
-                    client.aio.models.generate_content(
-                        model=settings.WORKER_GEMINI_MODEL,
-                        contents=[
-                            genai_types.Content(
-                                role="user",
-                                parts=[genai_types.Part(text=user_content)],
-                            )
-                        ],
-                        config=genai_types.GenerateContentConfig(
-                            system_instruction=self._load_prompt(),
-                            response_mime_type="application/json",
-                            response_schema=WorkerOutput,
-                        ),
-                    ),
-                    timeout=settings.WORKER_GEMINI_TIMEOUT,
-                )
-                return WorkerOutput.model_validate_json(response.text)
-            except (asyncio.TimeoutError, Exception) as e:
+                response = await client.post(endpoint, json=payload)
+                response.raise_for_status()
+                data = response.json()
+                content = data["choices"][0]["message"]["content"]
+                return WorkerOutput.model_validate_json(content)
+            except asyncio.CancelledError:
+                # IMPORTANT: If the task is cancelled (e.g. new user turn), abort immediately.
+                # httpx natively handles CancelledError by dropping the connection,
+                # signaling the llama-server to abort inference to prevent compute contention.
+                raise
+            except Exception as e:
                 last_error = e
                 if attempt == _MAX_ATTEMPTS - 1:
                     raise
                 await asyncio.sleep(_BACKOFF_BASE_SECONDS * (2 ** attempt))
+        
         # unreachable
         raise last_error  # type: ignore[misc]
+
+    async def close(self):
+        """Clean up HTTP client resources."""
+        if self._http_client:
+            await self._http_client.aclose()
+            self._http_client = None
+

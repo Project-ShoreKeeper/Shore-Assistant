@@ -36,7 +36,7 @@ async def started_facade():
     await facade.shutdown()
 
 
-async def test_worker_extracts_and_persists(started_facade, fake_redis):
+async def test_worker_extracts_and_persists(started_facade):
     # Use the real facade's redis for last_extracted_ts so we observe state
     redis = started_facade._redis
 

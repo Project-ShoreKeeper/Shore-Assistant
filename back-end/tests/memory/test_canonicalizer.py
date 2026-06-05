@@ -50,9 +50,9 @@ async def test_run_canonicalization_updates_payloads(monkeypatch):
         "app.core.config.settings.CANONICALIZER_SIMILARITY_THRESHOLD", 0.85,
     )
 
-    # Two points, one with "coffees", one with "tea"
+    # Two points: point_a has both "coffee" and "coffees" which cluster together
     point_a = SimpleNamespace(
-        id="a", payload={"entity_tags": ["coffees", "morning"]},
+        id="a", payload={"entity_tags": ["coffees", "coffee"]},
     )
     point_b = SimpleNamespace(
         id="b", payload={"entity_tags": ["tea"]},
@@ -71,7 +71,6 @@ async def test_run_canonicalization_updates_payloads(monkeypatch):
         "app.services.memory.canonicalizer.embedder.encode_many",
         new=AsyncMock(side_effect=lambda tags: [
             np.array([1.0, 0.0]) if t in ("coffee", "coffees")
-            else np.array([0.5, 0.5]) if t == "morning"
             else np.array([0.0, 1.0])
             for t in tags
         ]),
@@ -79,5 +78,5 @@ async def test_run_canonicalization_updates_payloads(monkeypatch):
         result = await run_canonicalization()
 
     assert result["status"] == "ok"
-    assert result["clusters"] >= 1
-    fake_client.set_payload.assert_awaited()
+    assert result["updated"] == 1  # only point_a needed rewriting
+    fake_client.set_payload.assert_awaited_once()

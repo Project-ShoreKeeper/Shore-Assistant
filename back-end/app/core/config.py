@@ -48,7 +48,7 @@ class Settings(BaseSettings):
     WORKER_GEMINI_MODEL: str = "gemini-2.5-flash"
     WORKER_GEMINI_TIMEOUT: float = 30.0
     WORKER_LOCK_KEY: str = "shore:worker:lock"
-    WORKER_LOCK_TTL_SECONDS: int = 60
+    WORKER_LOCK_TTL_SECONDS: int = 120  # must exceed WORKER_GEMINI_TIMEOUT * 3 attempts + margin
     WORKER_LAST_TS_KEY: str = "shore:worker:last_extracted_ts"
 
     CANONICALIZER_ENABLED: bool = True

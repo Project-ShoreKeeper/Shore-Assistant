@@ -125,7 +125,7 @@ class WorkerService:
 
         if await self._safety_valve_should_fire():
             await self._cancel_pending()
-            asyncio.create_task(self.extract())
+            self._pending_task = asyncio.create_task(self.extract())
             return
 
         await self._cancel_pending()

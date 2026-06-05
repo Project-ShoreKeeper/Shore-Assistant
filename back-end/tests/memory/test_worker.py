@@ -4,6 +4,7 @@ import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
+from app.core.config import settings
 from app.services.memory.types import (
     EmotionVector, EpisodicFact, Message, ProfileChange, WorkerOutput,
 )
@@ -90,7 +91,8 @@ async def test_extract_skips_when_no_new_turns(worker_with_fake_redis):
 async def test_extract_skips_when_redis_lock_held(worker_with_fake_redis, fake_redis):
     # Pre-acquire the lock so SETNX returns False
     await fake_redis.set(
-        "shore:worker:lock", "other-process", nx=True, ex=60,
+        settings.WORKER_LOCK_KEY, "other-process",
+        nx=True, ex=settings.WORKER_LOCK_TTL_SECONDS,
     )
     w = worker_with_fake_redis
     w._extractor = MagicMock()
@@ -120,7 +122,7 @@ async def test_extract_releases_lock_after_success(worker_with_fake_redis, fake_
     fake_facade.profile.read = AsyncMock(return_value={})
     w._facade = fake_facade
     await w.extract()
-    assert await fake_redis.get("shore:worker:lock") is None
+    assert await fake_redis.get(settings.WORKER_LOCK_KEY) is None
 
 
 async def test_on_turn_completed_schedules_extract_after_delay(

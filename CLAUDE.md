@@ -243,7 +243,7 @@ All backend config via environment variables or `.env` file in `back-end/`:
 | WORKER_GEMINI_MODEL | gemini-2.5-flash | Gemini model id for the LOCOMO extractor |
 | WORKER_GEMINI_TIMEOUT | 30.0 | Per-attempt Gemini timeout (seconds) |
 | WORKER_LOCK_KEY | shore:worker:lock | Redis SETNX key for cross-process worker mutex |
-| WORKER_LOCK_TTL_SECONDS | 60 | TTL on the Redis lock (auto-release on crash) |
+| WORKER_LOCK_TTL_SECONDS | 120 | TTL on the Redis lock (must exceed 3 × WORKER_GEMINI_TIMEOUT + margin) |
 | WORKER_LAST_TS_KEY | shore:worker:last_extracted_ts | Redis key tracking the newest processed turn timestamp |
 | CANONICALIZER_ENABLED | True | Enable nightly entity-tag dedup job |
 | CANONICALIZER_CRON | 0 4 * * * | When to run the canonicalizer (local time) |

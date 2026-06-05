@@ -8,7 +8,7 @@ export interface ToolActionCardProps {
   status: "running" | "completed" | "error";
 }
 
-const RESULT_PREVIEW_LINES = 4;
+const RESULT_MAX_HEIGHT_PX = 320;
 
 const TOOL_DISPLAY_NAMES: Record<string, string> = {
   get_system_time: "System Time",
@@ -89,16 +89,9 @@ export default function ToolActionCard({
 }: ToolActionCardProps) {
   const defaultExpanded = status === "error" || status === "running";
   const [isExpanded, setIsExpanded] = useState(defaultExpanded);
-  const [showFullResult, setShowFullResult] = useState(false);
 
   const hasResult = result !== undefined && result !== null;
   const isCollapsible = status !== "running";
-
-  const resultLines = result?.split("\n") || [];
-  const isResultLong = resultLines.length > RESULT_PREVIEW_LINES;
-  const previewResult = isResultLong && !showFullResult
-    ? resultLines.slice(0, RESULT_PREVIEW_LINES).join("\n") + "\n..."
-    : result;
 
   const borderColor =
     status === "error"
@@ -165,7 +158,11 @@ export default function ToolActionCard({
                 style={{
                   borderTop: "1px solid var(--gray-4)",
                   paddingTop: "6px",
+                  maxHeight: `${RESULT_MAX_HEIGHT_PX}px`,
+                  overflowY: "auto",
+                  overscrollBehavior: "contain",
                 }}
+                onWheelCapture={(e) => e.stopPropagation()}
               >
                 <Text
                   size="1"
@@ -173,30 +170,10 @@ export default function ToolActionCard({
                     whiteSpace: "pre-wrap",
                     color: status === "error" ? "var(--red-11)" : "var(--gray-10)",
                     display: "block",
-                    maxHeight: showFullResult ? "none" : "calc(1.4em * 4 + 4px)",
-                    overflow: "hidden",
                   }}
                 >
-                  {previewResult}
+                  {result}
                 </Text>
-
-                {isResultLong && (
-                  <Text
-                    size="1"
-                    style={{
-                      color: "var(--indigo-9)",
-                      cursor: "pointer",
-                      display: "inline-block",
-                      marginTop: "4px",
-                    }}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setShowFullResult(!showFullResult);
-                    }}
-                  >
-                    {showFullResult ? "Show less" : "Show more"}
-                  </Text>
-                )}
               </Box>
             </Box>
           )}

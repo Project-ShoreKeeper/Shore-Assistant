@@ -8,7 +8,7 @@ function App() {
     <BrowserRouter>
       <Theme accentColor="sky">
         <PublicRoutes />
-        <ThemePanel />
+        <ThemePanel defaultOpen={false} />
       </Theme>
     </BrowserRouter>
   );

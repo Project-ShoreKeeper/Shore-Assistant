@@ -6,11 +6,11 @@ services:
     ports:
       - "5678:5678"
     environment:
-      - N8N_HOST=0.0.0.0
+      - N8N_HOST=n8n.shore-keeper.com
       - N8N_PORT=5678
-      - N8N_PROTOCOL=http
-      - WEBHOOK_URL=http://localhost:5678/
-      - N8N_SECURE_COOKIE=false
+      - N8N_PROTOCOL=https
+      - WEBHOOK_URL=https://n8n.shore-keeper.com/
+      - N8N_SECURE_COOKIE=true
     volumes:
       - n8n_data:/home/node/.n8n
 
@@ -28,5 +28,6 @@ volumes:
 #      N8N_API_KEY=your_api_key_here
 #
 # Networking:
-#   Shore reaches n8n at: http://localhost:5678 (port-mapped)
-#   n8n reaches Shore at: http://host.docker.internal:9000 (Docker Desktop)
+#   Public:  https://n8n.shore-keeper.com  (reverse proxy terminates TLS → container:5678)
+#   Shore (back-end) → n8n: via N8N_BASE_URL in back-end/.env
+#   n8n → Shore (webhooks): http://host.docker.internal:9000 (Docker Desktop)

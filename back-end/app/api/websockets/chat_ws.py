@@ -70,26 +70,6 @@ router = APIRouter()
 
 SAMPLE_RATE = 16000
 
-# Friendly spoken names for tools (used by TTS instead of raw tool names)
-_TOOL_SPOKEN_NAMES = {
-    "get_system_time": "the clock",
-    "read_file": "the file reader",
-    "list_directory": "the directory listing",
-    "clear_memory": "memory clear",
-    "search_web": "web search",
-    "web_scrape": "the web scraper",
-    "capture_screen": "screen capture",
-    "analyze_screen": "screen analysis",
-    "set_reminder": "the reminder system",
-    "set_scheduled_task": "the scheduler",
-    "cancel_task": "task cancellation",
-    "list_tasks": "the task list",
-}
-
-
-def _tool_spoken_name(tool_name: str) -> str:
-    return _TOOL_SPOKEN_NAMES.get(tool_name, tool_name.replace("_", " "))
-
 
 @router.websocket("/ws/chat")
 async def websocket_chat(websocket: WebSocket):
@@ -309,11 +289,6 @@ async def websocket_chat(websocket: WebSocket):
                             "status": "running",
                             "timestamp": event.get("timestamp", time.time()),
                         })
-                        # When a tool call is detected, speak a friendly line
-                        if tts_enabled:
-                            tool_name = event.get("tool", "a tool")
-                            friendly = _tool_spoken_name(tool_name)
-                            await sentence_queue.put(f"Let me use {friendly}.")
                     elif event.get("action") == "tool_result":
                         # Update the most recent running action for this tool
                         for action in reversed(current_actions):

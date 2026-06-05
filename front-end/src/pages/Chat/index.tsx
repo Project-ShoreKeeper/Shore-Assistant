@@ -1,10 +1,8 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   Flex,
   Box,
   Text,
-  TextField,
-  IconButton,
   ScrollArea,
   Avatar,
   Badge,
@@ -15,12 +13,15 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
-import { Group as PanelGroup, Panel, Separator as PanelResizeHandle } from "react-resizable-panels";
 import { useAssistant, type ChatMessage } from "../../hooks/useAssistant";
 import type { ImageAttachment } from "../../services/chat-websocket.service";
 import ToolActionCard from "../../components/ToolActionCard";
-import TerminalPanel from "../../components/Terminal/TerminalPanel";
+import TerminalDrawer from "../../components/Terminal/TerminalDrawer";
+import ConfirmToast from "../../components/Terminal/ConfirmToast";
+import { useTerminal } from "../../hooks/useTerminal";
 import SettingsPanel from "./SettingsPanel";
+import ChatComposer from "./ChatComposer";
+import { useCollapsedSidebar } from "../../hooks/useCollapsedSidebar";
 
 /** Wrap bare URLs in markdown link syntax with truncated display text. */
 function linkifyUrls(text: string): string {
@@ -112,15 +113,71 @@ function PageChat() {
   >(undefined);
   const [imageAttachments, setImageAttachments] = useState<ImageAttachment[]>([]);
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+  const [rightCollapsed, toggleRight] = useCollapsedSidebar("shore.sidebar.right.collapsed");
 
-  // Scroll to bottom on new messages
+  // Terminal drawer state — defaults to closed.
+  const [terminalOpen, setTerminalOpen] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem("shore.terminal.open") === "1";
+  });
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("shore.terminal.open", terminalOpen ? "1" : "0");
+    } catch { /* ignore */ }
+  }, [terminalOpen]);
+  const toggleTerminal = () => setTerminalOpen((o) => !o);
+
+  const [terminalHeight, setTerminalHeight] = useState<number>(() => {
+    if (typeof window === "undefined") return 320;
+    const raw = window.localStorage.getItem("shore.terminal.height");
+    const n = raw ? parseInt(raw, 10) : NaN;
+    return Number.isFinite(n) && n >= 160 ? n : 320;
+  });
+  const handleTerminalHeight = (h: number) => {
+    setTerminalHeight(h);
+    try {
+      window.localStorage.setItem("shore.terminal.height", String(h));
+    } catch { /* ignore */ }
+  };
+
+  const terminal = useTerminal();
+
+  // Track whether user is near the bottom of the chat. Auto-scroll only when
+  // they are — so scrolling up to read tool output / thinking isn't fought by
+  // streaming updates.
+  const isAtBottomRef = useRef(true);
+  const prevMessageCountRef = useRef(0);
+  const NEAR_BOTTOM_PX = 80;
+
   useEffect(() => {
     const viewport = document.querySelector(".rt-ScrollAreaViewport");
-    if (viewport) {
-      setTimeout(() => {
-        viewport.scrollTo({ top: viewport.scrollHeight, behavior: "smooth" });
-      }, 50);
-    }
+    if (!viewport) return;
+    const onScroll = () => {
+      const { scrollTop, scrollHeight, clientHeight } = viewport;
+      isAtBottomRef.current =
+        scrollHeight - scrollTop - clientHeight < NEAR_BOTTOM_PX;
+    };
+    viewport.addEventListener("scroll", onScroll, { passive: true });
+    return () => viewport.removeEventListener("scroll", onScroll);
+  }, []);
+
+  // Auto-scroll on updates, but only if user was at the bottom — except when a
+  // NEW user message arrives (they just sent it, always follow them down).
+  useEffect(() => {
+    const viewport = document.querySelector(".rt-ScrollAreaViewport");
+    if (!viewport) return;
+
+    const newCount = messages.length;
+    const grew = newCount > prevMessageCountRef.current;
+    prevMessageCountRef.current = newCount;
+    const lastIsUser = grew && messages[newCount - 1]?.role === "user";
+
+    if (!lastIsUser && !isAtBottomRef.current) return;
+
+    setTimeout(() => {
+      viewport.scrollTo({ top: viewport.scrollHeight, behavior: "smooth" });
+      isAtBottomRef.current = true;
+    }, 50);
   }, [messages, isSpeaking, isAssistantThinking]);
 
   const handleSendText = () => {
@@ -131,13 +188,6 @@ function PageChat() {
     sendTextMessage(inputText, hasImages ? imageAttachments : undefined);
     setInputText("");
     setImageAttachments([]);
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSendText();
-    }
   };
 
   const addImagesFromFiles = async (files: File[]) => {
@@ -219,8 +269,9 @@ function PageChat() {
         {/* Assistant avatar (left) */}
         {!isUser && (
           <Avatar
+            src="/shore-avatar.jpg"
             fallback="SK"
-            size="2"
+            size="3"
             radius="full"
             color="cyan"
             style={{ flexShrink: 0 }}
@@ -370,10 +421,12 @@ function PageChat() {
                   <Box
                     p="2"
                     style={{
-                      maxHeight: "200px",
+                      maxHeight: "320px",
                       overflowY: "auto",
+                      overscrollBehavior: "contain",
                       backgroundColor: "var(--gray-1)",
                     }}
+                    onWheelCapture={(e) => e.stopPropagation()}
                   >
                     <Text
                       size="1"
@@ -568,15 +621,14 @@ function PageChat() {
 
   return (
     <Flex style={{ height: "100%", width: "100%" }}>
-      <PanelGroup orientation="horizontal" style={{ flex: 1 }}>
-        <Panel defaultSize={55} minSize={30}>
-          {/* Left column: Chat interface */}
-          <Flex
-            direction="column"
-            style={{ height: "100%", position: "relative" }}
-            onDrop={handleDrop}
-            onDragOver={handleDragOver}
-          >
+      <Flex direction="column" style={{ flex: 1, minWidth: 0, height: "100%", position: "relative" }}>
+        {/* Chat column (full width now — terminal is a bottom drawer) */}
+        <Flex
+          direction="column"
+          style={{ flex: 1, minHeight: 0, position: "relative" }}
+          onDrop={handleDrop}
+          onDragOver={handleDragOver}
+        >
         {/* Chat body */}
         <ScrollArea
           type="auto"
@@ -608,198 +660,66 @@ function PageChat() {
 
             {messages.map(renderMessage)}
 
-            {/* Speaking indicator */}
-            {isSpeaking && (
-              <Flex justify="end" mb="4" gap="2">
-                <Flex
-                  direction="column"
-                  align="end"
-                  style={{ maxWidth: "70%" }}
-                >
-                  <Box
-                    p="3"
-                    style={{
-                      backgroundColor: "var(--indigo-9)",
-                      color: "white",
-                      borderRadius: "20px",
-                      borderBottomRightRadius: "4px",
-                    }}
-                  >
-                    <Text
-                      size="2"
-                      style={{
-                        display: "flex",
-                        gap: "8px",
-                        alignItems: "center",
-                      }}
-                    >
-                      <span
-                        style={{
-                          fontSize: "16px",
-                          animation: "pulse 1s infinite",
-                        }}
-                      >
-                        *
-                      </span>
-                      Recording...
-                    </Text>
-                  </Box>
-                </Flex>
-                <Avatar
-                  fallback="ME"
-                  size="2"
-                  radius="full"
-                  color="indigo"
-                  style={{ flexShrink: 0 }}
-                />
-              </Flex>
-            )}
-
             {/* Agent action log rendered inline inside chat bubbles now */}
+            {/* Recording indicator moved into ChatComposer */}
           </Flex>
         </ScrollArea>
 
-        {/* Input area */}
+        {/* Composer (textarea + attachments + mic + send, ChatGPT-style) */}
         <Box
           style={{
             borderTop: "1px solid var(--gray-5)",
             backgroundColor: "var(--color-panel-solid)",
           }}
         >
-          {/* Attachment thumbnail row */}
-          {imageAttachments.length > 0 && (
-            <Flex gap="2" px="3" pt="2" wrap="wrap">
-              {imageAttachments.map((att) => (
-                <Box
-                  key={att.id}
-                  style={{
-                    position: "relative",
-                    width: 64,
-                    height: 64,
-                    borderRadius: 8,
-                    overflow: "hidden",
-                    background: "var(--gray-3)",
-                  }}
-                >
-                  <img
-                    src={att.dataUrl}
-                    alt=""
-                    style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                  />
-                  <IconButton
-                    size="1"
-                    variant="solid"
-                    color="gray"
-                    style={{
-                      position: "absolute",
-                      top: 2,
-                      right: 2,
-                      padding: 0,
-                      width: 18,
-                      height: 18,
-                      borderRadius: 9,
-                      lineHeight: "18px",
-                    }}
-                    onClick={() =>
-                      setImageAttachments((prev) => prev.filter((p) => p.id !== att.id))
-                    }
-                  >
-                    ×
-                  </IconButton>
-                </Box>
-              ))}
-            </Flex>
-          )}
-
-          <Flex gap="3" align="center" p="3">
-            <TextField.Root
-              placeholder="Type a message..."
-              size="3"
-              style={{ flex: 1, borderRadius: "20px" }}
-              value={inputText}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                setInputText(e.target.value)
-              }
-              onKeyDown={handleKeyDown}
-              onPaste={handlePaste}
-              disabled={!isConnected}
-            />
-
-            {/* Microphone button */}
-            <IconButton
-              size="3"
-              color={isRecording ? "red" : "indigo"}
-              variant={isRecording ? "solid" : "soft"}
-              radius="full"
-              onClick={() =>
-                isRecording
-                  ? stopRecording()
-                  : startRecording(selectedDeviceId)
-              }
-              disabled={!isVADLoaded}
-              style={{
-                width: "44px",
-                height: "44px",
-                cursor: isVADLoaded ? "pointer" : "wait",
-                transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
-                boxShadow: isRecording ? "0 0 15px var(--red-9)" : "none",
-              }}
-              title={isRecording ? "Stop mic" : "Start mic"}
-            >
-              <span style={{ fontSize: "20px" }}>
-                {isRecording ? "||" : "Mic"}
-              </span>
-            </IconButton>
-
-            {/* Send / Cancel button */}
-            {isAssistantThinking ? (
-              <IconButton
-                size="3"
-                color="red"
-                variant="soft"
-                radius="full"
-                style={{ width: "44px", height: "44px", cursor: "pointer" }}
-                onClick={cancelGeneration}
-                title="Cancel generation"
-              >
-                <span style={{ fontSize: "18px" }}>X</span>
-              </IconButton>
-            ) : (
-              <IconButton
-                size="3"
-                color="indigo"
-                variant="solid"
-                radius="full"
-                style={{ width: "44px", height: "44px", cursor: "pointer" }}
-                onClick={handleSendText}
-                disabled={(!inputText.trim() && imageAttachments.length === 0) || !isConnected}
-              >
-                <span style={{ fontSize: "18px", paddingLeft: "2px" }}>
-                  &gt;
-                </span>
-              </IconButton>
-            )}
-          </Flex>
-
-          {/* Loading indicator */}
-          {!isVADLoaded && (
-            <Text
-              size="1"
-              color="orange"
-              mt="2"
-              style={{ display: "block", textAlign: "center" }}
-            >
-              Loading VAD model...
-            </Text>
-          )}
+          <ChatComposer
+            value={inputText}
+            onChange={setInputText}
+            onSend={handleSendText}
+            isConnected={isConnected}
+            attachments={imageAttachments}
+            onRemoveAttachment={(id) =>
+              setImageAttachments((prev) => prev.filter((p) => p.id !== id))
+            }
+            onPickFiles={addImagesFromFiles}
+            onPasteImages={handlePaste}
+            isRecording={isRecording}
+            isVADLoaded={isVADLoaded}
+            onToggleMic={() =>
+              isRecording ? stopRecording() : startRecording(selectedDeviceId)
+            }
+            isAssistantThinking={!!isAssistantThinking}
+            onCancel={cancelGeneration}
+          />
         </Box>
-          </Flex>
-        </Panel>
-        <PanelResizeHandle style={{ width: "4px", background: "var(--gray-5)", cursor: "col-resize" }} />
-        <Panel defaultSize={45} minSize={20}>
-          <TerminalPanel />
-        </Panel>
-      </PanelGroup>
+        </Flex>
+
+        {/* Terminal bottom drawer (overlays chat layout when open) */}
+        <TerminalDrawer
+          open={terminalOpen}
+          height={terminalHeight}
+          onClose={() => setTerminalOpen(false)}
+          onHeightChange={handleTerminalHeight}
+          sessions={terminal.sessions}
+          activeSessionId={terminal.activeSessionId}
+          setActiveSessionId={terminal.setActiveSessionId}
+          sessionOutput={terminal.sessionOutput}
+          oneShotRuns={terminal.oneShotRuns}
+          pendingConfirms={terminal.pendingConfirms}
+          onRespondConfirm={terminal.respondConfirm}
+          onSendInput={terminal.sendInput}
+          onCloseSession={terminal.closeSession}
+          onResizeSession={terminal.resizeSession}
+        />
+
+        {/* Floating confirm toast — only when drawer is closed */}
+        {!terminalOpen && (
+          <ConfirmToast
+            pending={terminal.pendingConfirms}
+            onOpenTerminal={() => setTerminalOpen(true)}
+          />
+        )}
+      </Flex>
 
       {/* Right column: Settings */}
       <SettingsPanel
@@ -826,6 +746,12 @@ function PageChat() {
         onThinkingEnabledChange={setThinkingEnabled}
         onClearMessages={clearMessages}
         messageCount={messages.length}
+        collapsed={rightCollapsed}
+        onToggleCollapsed={toggleRight}
+        terminalOpen={terminalOpen}
+        onToggleTerminal={toggleTerminal}
+        pendingConfirmsCount={terminal.pendingConfirms.length}
+        sessionsCount={terminal.sessions.length}
       />
 
       {/* Lightbox dialog */}

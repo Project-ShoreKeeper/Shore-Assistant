@@ -16,6 +16,7 @@ class WorkerService:
         self._extractor: Optional[LocomoExtractor] = None
         self._facade = None  # injected during startup to avoid circular import
         self._lock = asyncio.Lock()
+        self._pending_task: Optional[asyncio.Task] = None
 
     async def get_last_extracted_ts(self) -> float:
         if self._redis is None:
@@ -115,6 +116,49 @@ class WorkerService:
             f"{len(output.episodic_facts)} episodic fact(s); "
             f"last_ts → {newest_ts}"
         )
+
+
+    async def on_turn_completed(self) -> None:
+        """Hook called by chat_ws after each assistant turn is persisted."""
+        if not settings.WORKER_ENABLED:
+            return
+
+        if await self._safety_valve_should_fire():
+            await self._cancel_pending()
+            asyncio.create_task(self.extract())
+            return
+
+        await self._cancel_pending()
+        self._pending_task = asyncio.create_task(self._delayed_extract())
+
+    async def _safety_valve_should_fire(self) -> bool:
+        if self._facade is None:
+            return False
+        try:
+            last_ts = await self.get_last_extracted_ts()
+            turns = await self._facade.short_term.load()
+            unprocessed = sum(1 for m in turns if m.timestamp > last_ts)
+            return unprocessed >= settings.WORKER_MAX_UNPROCESSED_MESSAGES
+        except Exception as e:
+            print(f"[Worker] safety_valve check failed: {e!r}")
+            return False
+
+    async def _delayed_extract(self) -> None:
+        try:
+            await asyncio.sleep(settings.WORKER_IDLE_DELAY_SECONDS)
+        except asyncio.CancelledError:
+            return
+        await self.extract()
+
+    async def _cancel_pending(self) -> None:
+        task = self._pending_task
+        if task and not task.done():
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+        self._pending_task = None
 
 
 worker_service = WorkerService()

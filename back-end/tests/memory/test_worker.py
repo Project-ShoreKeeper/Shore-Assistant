@@ -1,5 +1,6 @@
 """Unit tests for WorkerService — extractor + redis mocked."""
 
+import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
@@ -120,3 +121,80 @@ async def test_extract_releases_lock_after_success(worker_with_fake_redis, fake_
     w._facade = fake_facade
     await w.extract()
     assert await fake_redis.get("shore:worker:lock") is None
+
+
+async def test_on_turn_completed_schedules_extract_after_delay(
+    worker_with_fake_redis, monkeypatch,
+):
+    monkeypatch.setattr(
+        "app.core.config.settings.WORKER_IDLE_DELAY_SECONDS", 0.05,
+    )
+    w = worker_with_fake_redis
+    calls = []
+
+    async def fake_extract():
+        calls.append("extracted")
+
+    w.extract = fake_extract
+    w._facade = MagicMock()
+    w._facade.short_term = MagicMock()
+    w._facade.short_term.load = AsyncMock(return_value=[])
+
+    await w.on_turn_completed()
+    await asyncio.sleep(0.15)
+    assert calls == ["extracted"]
+
+
+async def test_on_turn_completed_cancels_prior_pending(
+    worker_with_fake_redis, monkeypatch,
+):
+    monkeypatch.setattr(
+        "app.core.config.settings.WORKER_IDLE_DELAY_SECONDS", 0.2,
+    )
+    w = worker_with_fake_redis
+    calls = []
+
+    async def fake_extract():
+        calls.append("extracted")
+
+    w.extract = fake_extract
+    w._facade = MagicMock()
+    w._facade.short_term = MagicMock()
+    w._facade.short_term.load = AsyncMock(return_value=[])
+
+    await w.on_turn_completed()
+    await asyncio.sleep(0.05)
+    await w.on_turn_completed()
+    await asyncio.sleep(0.05)
+    assert calls == []  # first cancelled, second still pending
+    await asyncio.sleep(0.25)
+    assert calls == ["extracted"]
+
+
+async def test_on_turn_completed_fires_immediately_at_safety_valve(
+    worker_with_fake_redis, monkeypatch,
+):
+    monkeypatch.setattr(
+        "app.core.config.settings.WORKER_IDLE_DELAY_SECONDS", 10.0,
+    )
+    monkeypatch.setattr(
+        "app.core.config.settings.WORKER_MAX_UNPROCESSED_MESSAGES", 2,
+    )
+    w = worker_with_fake_redis
+    calls = []
+
+    async def fake_extract():
+        calls.append("extracted")
+
+    w.extract = fake_extract
+    w._facade = MagicMock()
+    w._facade.short_term = MagicMock()
+    w._facade.short_term.load = AsyncMock(return_value=[
+        _turn(100.0, "user", "a"),
+        _turn(101.0, "assistant", "b"),
+        _turn(102.0, "user", "c"),
+    ])
+    await w.on_turn_completed()
+    # No sleep — should fire immediately via safety valve
+    await asyncio.sleep(0.01)
+    assert calls == ["extracted"]

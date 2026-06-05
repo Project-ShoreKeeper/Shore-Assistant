@@ -23,7 +23,7 @@ FastAPI Backend (Python)
   ├── Tools        (system_time, read_file, list_directory, clear_memory, search_web, web_scrape, capture_screen, analyze_screen, set_reminder, set_scheduled_task, cancel_task, list_tasks, run_command + PTY tools, start_background_service + list/stop/logs + dynamic n8n workflow tools)
   ├── Scheduler    (APScheduler — one-shot reminders + recurring tasks, persisted to JSON)
   ├── Notifications (proactive push via ConnectionManager → agent pipeline → TTS; sources: scheduler, n8n webhooks)
-  ├── Memory       (Hybrid: Redis short-term + Postgres profile + Qdrant episodic; circuit-broken per layer)
+  ├── Memory       (Hybrid: Redis short-term + Postgres profile + Qdrant episodic; circuit-broken per layer; LOCOMO worker auto-extracts via Gemini 2.5 Flash on 30s idle; nightly canonicalizer dedupes entity tags)
   ├── TTS          (Kokoro TTS → Int16 PCM streaming, local/offline, multi-language)
   ├── Vision       (mss screen capture → primary multimodal model via /v1/chat/completions)
   └── n8n          (two-way integration: dynamic workflow tools + inbound webhook notifications)
@@ -196,6 +196,8 @@ docker compose -f docker-compose.n8n.yml up -d
 - **Conversation memory**: Three layers behind `MemoryFacade.assemble_context()`. Short-term (Redis LIST `shore:short_term:messages`, 15 turns, AOF). Profile (Postgres JSONB single-row + append-only audit log). Episodic (Qdrant `shore_episodic` collection with payload-indexed `entity_tags`/`created_at`/`valence`). Per-layer 500 ms circuit breaker; chat degrades to short-term only if Postgres / Qdrant are down. Phase 3 will add a LOCOMO worker that writes to Profile + Episodic from chat history.
 - **Memory injection into system prompt**: `chat_ws` calls `memory_facade.assemble_context(user_text)` per turn and threads the `ContextBundle` into `agent_service.run`, which passes it to `build_system_prompt`. The system prompt then appends `[Profile]` (compact JSON, capped at `MEMORY_PROFILE_MAX_BYTES`, pruned by per-key `updated_at`) and `[Relevant memories]` (top-K bullet list by cosine similarity — fact + tags only, no emotion in P2). Notifications (`no_tools=True`) drop the bundle to keep proactive nudges free of identity content.
 - **Memory debug API**: `DEBUG_MEMORY=True` enables `/api/memory/profile/change`, `GET /api/memory/profile`, `/profile/history?key=...`, `/episodic/upsert`, `/episodic/search?q=...` for manual seeding. Default off; enable temporarily during Phase 2 verification.
+- **LOCOMO worker (Phase 3)**: Gemini 2.5 Flash with `response_schema=WorkerOutput` runs after 30 s of chat idle. Debounced via `WorkerService.on_turn_completed()` (cancel-on-new-turn). Safety valve fires immediately at `WORKER_MAX_UNPROCESSED_MESSAGES`. Dual-locked via `asyncio.Lock` + Redis `SETNX shore:worker:lock` (TTL 60 s). Disabled by `WORKER_ENABLED=False`. Notifications skip the trigger.
+- **Canonicalizer**: Internal APScheduler job (registered via `scheduler_service.add_system_job`, invisible to `list_tasks`). Cron `0 4 * * *` by default. Greedy single-pass clustering on entity tags at cosine ≥0.85; rewrites Qdrant point payloads in place.
 
 ## Configuration
 
@@ -235,6 +237,17 @@ All backend config via environment variables or `.env` file in `back-end/`:
 | NODE_PTY_RECONNECT_MAX_MS | 30000 | Max reconnect backoff (milliseconds) |
 | NODE_PTY_PING_INTERVAL_SECONDS | 30 | Heartbeat ping interval |
 | NODE_PTY_PING_TIMEOUT_SECONDS | 5 | Pong deadline before treating connection as disconnected |
+| WORKER_ENABLED | True | Enable LOCOMO worker (Phase 3 auto-extraction) |
+| WORKER_IDLE_DELAY_SECONDS | 30.0 | Idle gap after a turn before the worker fires |
+| WORKER_MAX_UNPROCESSED_MESSAGES | 20 | Safety valve: fire immediately at this many unprocessed turns |
+| WORKER_GEMINI_MODEL | gemini-2.5-flash | Gemini model id for the LOCOMO extractor |
+| WORKER_GEMINI_TIMEOUT | 30.0 | Per-attempt Gemini timeout (seconds) |
+| WORKER_LOCK_KEY | shore:worker:lock | Redis SETNX key for cross-process worker mutex |
+| WORKER_LOCK_TTL_SECONDS | 60 | TTL on the Redis lock (auto-release on crash) |
+| WORKER_LAST_TS_KEY | shore:worker:last_extracted_ts | Redis key tracking the newest processed turn timestamp |
+| CANONICALIZER_ENABLED | True | Enable nightly entity-tag dedup job |
+| CANONICALIZER_CRON | 0 4 * * * | When to run the canonicalizer (local time) |
+| CANONICALIZER_SIMILARITY_THRESHOLD | 0.85 | Cosine threshold for merging entity tags |
 
 ## Conventions
 
@@ -254,7 +267,7 @@ All backend config via environment variables or `.env` file in `back-end/`:
 - [ ] Client-side screen capture — use `getDisplayMedia` in browser, send image over WebSocket for vision analysis
 - [x] Memory backend Phase 1 — Redis short-term + Docker stack
 - [x] Memory backend Phase 2 — Profile (Postgres) + Episodic (Qdrant) + read-path integration + debug API + /health probes + frontend banner
-- [ ] Memory backend Phase 3 — LOCOMO worker (Gemini Flash) + canonicalizer (auto-extract facts from chat history)
+- [x] Memory backend Phase 3 — LOCOMO worker (Gemini 2.5 Flash) + canonicalizer (auto-extract facts from chat history)
 - [ ] Wake word detection — trigger VAD only on a keyword (e.g. "Hey Shore")
 - [ ] Tool result streaming — show tool output progressively in the agent log
 - [ ] Voice selection UI — let user pick Kokoro voice from settings panel

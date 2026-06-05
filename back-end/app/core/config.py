@@ -41,6 +41,20 @@ class Settings(BaseSettings):
     MEMORY_PROFILE_MAX_BYTES: int = 2048
     DEBUG_MEMORY: bool = False
 
+    # ── Phase 3: LOCOMO worker + canonicalizer ──
+    WORKER_ENABLED: bool = True
+    WORKER_IDLE_DELAY_SECONDS: float = 30.0
+    WORKER_MAX_UNPROCESSED_MESSAGES: int = 20
+    WORKER_GEMINI_MODEL: str = "gemini-2.5-flash"
+    WORKER_GEMINI_TIMEOUT: float = 30.0
+    WORKER_LOCK_KEY: str = "shore:worker:lock"
+    WORKER_LOCK_TTL_SECONDS: int = 120  # must exceed WORKER_GEMINI_TIMEOUT * 3 attempts + margin
+    WORKER_LAST_TS_KEY: str = "shore:worker:last_extracted_ts"
+
+    CANONICALIZER_ENABLED: bool = True
+    CANONICALIZER_CRON: str = "0 4 * * *"  # daily at 04:00 local
+    CANONICALIZER_SIMILARITY_THRESHOLD: float = 0.85
+
     # Persona
     PERSONA: str = "kuudere"  # "base" or "kuudere"
 

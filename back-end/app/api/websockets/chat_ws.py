@@ -12,7 +12,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from app.services.stt_service import stt_service
 from app.services.agent_service import agent_service
 from app.services.tts_service import tts_service
-from app.services.memory import memory_facade
+from app.services.memory import memory_facade, worker_service
 from app.services.connection_manager import connection_manager
 from app.services.notification_service import notification_service
 from app.core.config import settings
@@ -355,6 +355,12 @@ async def websocket_chat(websocket: WebSocket):
                             content=assistant_text,
                             extras=extras,
                         )
+                        # Phase 3: trigger LOCOMO worker debounce (no-op for notifications)
+                        if not is_notification:
+                            try:
+                                await worker_service.on_turn_completed()
+                            except Exception as e:
+                                print(f"[chat_ws] worker.on_turn_completed failed: {e!r}")
 
                     # Keep in-memory history manageable
                     max_messages = settings.MEMORY_MAX_TURNS * 2

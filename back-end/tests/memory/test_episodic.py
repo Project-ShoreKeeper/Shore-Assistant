@@ -91,14 +91,14 @@ async def test_upsert_same_fact_uses_same_point_id():
 async def test_search_passes_score_threshold_and_no_filter_when_empty():
     em = EpisodicMemory()
     client = AsyncMock()
-    client.search.return_value = []
+    client.query_points.return_value = SimpleNamespace(points=[])
     em._client = client
     with patch(
         "app.services.memory.episodic.embedder.encode",
         new=AsyncMock(return_value=[0.0] * 384),
     ):
         await em.search("query", top_k=3, min_score=0.4)
-    kwargs = client.search.await_args.kwargs
+    kwargs = client.query_points.await_args.kwargs
     assert kwargs["limit"] == 3
     assert kwargs["score_threshold"] == 0.4
     assert kwargs["query_filter"] is None
@@ -107,14 +107,14 @@ async def test_search_passes_score_threshold_and_no_filter_when_empty():
 async def test_search_builds_filter_when_entity_filter_provided():
     em = EpisodicMemory()
     client = AsyncMock()
-    client.search.return_value = []
+    client.query_points.return_value = SimpleNamespace(points=[])
     em._client = client
     with patch(
         "app.services.memory.episodic.embedder.encode",
         new=AsyncMock(return_value=[0.0] * 384),
     ):
         await em.search("q", entity_filter=["coffee"])
-    qf = client.search.await_args.kwargs["query_filter"]
+    qf = client.query_points.await_args.kwargs["query_filter"]
     assert qf is not None  # qm.Filter instance
 
 
@@ -132,9 +132,9 @@ async def test_search_maps_hits_to_scored_facts():
         "confidence": 0.9,
         "embedding_model_version": "all-MiniLM-L6-v2",
     }
-    client.search.return_value = [
+    client.query_points.return_value = SimpleNamespace(points=[
         SimpleNamespace(score=0.92, payload=hit_payload),
-    ]
+    ])
     em._client = client
     with patch(
         "app.services.memory.episodic.embedder.encode",

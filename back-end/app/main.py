@@ -8,7 +8,7 @@ from app.services.tts_service import tts_service
 from app.services.tool_retriever import tool_retriever
 from app.services.scheduler_service import scheduler_service
 from app.services.notification_service import notification_service
-from app.services.memory import memory_facade
+from app.services.memory import memory_facade, worker_service
 from app.tools import ALL_TOOLS
 from app.core.config import settings
 from app.api.endpoints.health import router as health_router
@@ -55,11 +55,27 @@ async def lifespan(app: FastAPI):
     # Initialize memory facade
     await memory_facade.startup()
 
+    # Phase 3: LOCOMO worker
+    if settings.WORKER_ENABLED:
+        await worker_service.startup(
+            redis=memory_facade._redis, facade=memory_facade,
+        )
+
+    # Register canonicalizer as internal scheduler job
+    if settings.CANONICALIZER_ENABLED:
+        from app.services.memory.canonicalizer import run_canonicalization
+        scheduler_service.add_system_job(
+            run_canonicalization,
+            cron=settings.CANONICALIZER_CRON,
+            job_id="memory_canonicalizer",
+        )
+
     yield
 
     idle_reaper_task.cancel()
     await terminal_service.shutdown_all()
 
+    await worker_service.shutdown()
     await memory_facade.shutdown()
 
     scheduler_service.shutdown()

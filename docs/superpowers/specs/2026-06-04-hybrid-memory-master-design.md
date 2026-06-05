@@ -582,6 +582,8 @@ canonicalizer.
 
 ### Phase 3 — LOCOMO Worker (Gemini Flash)
 
+**Status:** Shipped 2026-06-05 (plan: `docs/superpowers/plans/2026-06-05-hybrid-memory-phase-3.md`).
+
 **Goal:** Automate the write path. 30 s of idle after a turn → Gemini
 extracts → Profile / Episodic updated.
 

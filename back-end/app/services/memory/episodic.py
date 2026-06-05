@@ -113,15 +113,15 @@ class EpisodicMemory:
                     match=qm.MatchAny(any=entity_filter),
                 )]
             )
-        hits = await self._client.search(
+        response = await self._client.query_points(
             collection_name=settings.QDRANT_COLLECTION,
-            query_vector=vec,
+            query=vec,
             query_filter=qf,
             limit=top_k,
             score_threshold=min_score,
         )
         results: list[ScoredFact] = []
-        for h in hits:
+        for h in response.points:
             p = h.payload
             fact = EpisodicFact(
                 fact=p["fact"],

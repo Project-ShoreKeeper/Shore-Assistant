@@ -198,3 +198,32 @@ async def test_on_turn_completed_fires_immediately_at_safety_valve(
     # No sleep — should fire immediately via safety valve
     await asyncio.sleep(0.01)
     assert calls == ["extracted"]
+
+
+async def test_startup_wires_redis_extractor_and_facade(fake_redis):
+    from app.services.memory.facade import memory_facade as real_facade
+
+    w = WorkerService()
+    await w.startup(redis=fake_redis, facade=real_facade)
+    assert w._redis is fake_redis
+    assert w._facade is real_facade
+    assert w._extractor is not None
+
+
+async def test_shutdown_cancels_pending_task(worker_with_fake_redis, monkeypatch):
+    monkeypatch.setattr(
+        "app.core.config.settings.WORKER_IDLE_DELAY_SECONDS", 10.0,
+    )
+    w = worker_with_fake_redis
+    w._facade = MagicMock()
+    w._facade.short_term = MagicMock()
+    w._facade.short_term.load = AsyncMock(return_value=[])
+
+    async def slow_extract():
+        await asyncio.sleep(10)
+
+    w.extract = slow_extract
+    await w.on_turn_completed()
+    assert w._pending_task is not None
+    await w.shutdown()
+    assert w._pending_task is None

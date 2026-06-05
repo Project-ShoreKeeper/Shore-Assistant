@@ -131,6 +131,23 @@ class WorkerService:
         await self._cancel_pending()
         self._pending_task = asyncio.create_task(self._delayed_extract())
 
+    async def startup(self, redis: Redis, facade) -> None:
+        """Wire dependencies. Idempotent."""
+        if not settings.WORKER_ENABLED:
+            print("[Worker] disabled — startup skipped")
+            return
+        self._redis = redis
+        self._facade = facade
+        self._extractor = LocomoExtractor()
+        print(
+            f"[Worker] ready — model={settings.WORKER_GEMINI_MODEL} "
+            f"idle_delay={settings.WORKER_IDLE_DELAY_SECONDS}s "
+            f"safety_valve={settings.WORKER_MAX_UNPROCESSED_MESSAGES}"
+        )
+
+    async def shutdown(self) -> None:
+        await self._cancel_pending()
+
     async def _safety_valve_should_fire(self) -> bool:
         if self._facade is None:
             return False

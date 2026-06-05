@@ -143,6 +143,24 @@ class SchedulerService:
         """Return all pending/active tasks."""
         return [t for t in self._tasks.values() if t["status"] == "pending"]
 
+    def add_system_job(self, func, cron: str, job_id: str) -> None:
+        """Register an internal job that bypasses _tasks/list_tasks/persistence.
+
+        Used for infrastructure jobs (e.g. memory canonicalizer) that are not
+        user-facing scheduled tasks.
+        """
+        if self._scheduler is None:
+            print(f"[Scheduler] add_system_job '{job_id}' skipped — not started")
+            return
+        parts = cron.strip().split()
+        fields = ["minute", "hour", "day", "month", "day_of_week"]
+        cron_kwargs = {fields[i]: p for i, p in enumerate(parts) if i < len(fields)}
+        self._scheduler.add_job(
+            func, CronTrigger(**cron_kwargs),
+            id=job_id, replace_existing=True,
+        )
+        print(f"[Scheduler] system job '{job_id}' registered ({cron})")
+
     # ── Internal ──
 
     async def _fire_task(self, task_id: str):

@@ -61,6 +61,15 @@ async def lifespan(app: FastAPI):
             redis=memory_facade._redis, facade=memory_facade,
         )
 
+    # Register canonicalizer as internal scheduler job
+    if settings.CANONICALIZER_ENABLED:
+        from app.services.memory.canonicalizer import run_canonicalization
+        scheduler_service.add_system_job(
+            run_canonicalization,
+            cron=settings.CANONICALIZER_CRON,
+            job_id="memory_canonicalizer",
+        )
+
     yield
 
     idle_reaper_task.cancel()

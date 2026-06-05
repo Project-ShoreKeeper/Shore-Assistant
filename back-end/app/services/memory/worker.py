@@ -15,6 +15,7 @@ class WorkerService:
         self._redis: Optional[Redis] = None
         self._extractor: Optional[LocomoExtractor] = None
         self._facade = None  # injected during startup to avoid circular import
+        self._lock = asyncio.Lock()
 
     async def get_last_extracted_ts(self) -> float:
         if self._redis is None:
@@ -38,7 +39,41 @@ class WorkerService:
         if self._facade is None or self._extractor is None:
             print("[Worker] extract skipped — not started")
             return
+        if self._lock.locked():
+            print("[Worker] extract skipped — asyncio lock held")
+            return
 
+        async with self._lock:
+            if not await self._acquire_redis_lock():
+                print("[Worker] extract skipped — redis lock held by another process")
+                return
+            try:
+                await self._extract_inner()
+            finally:
+                await self._release_redis_lock()
+
+    async def _acquire_redis_lock(self) -> bool:
+        if self._redis is None:
+            return True
+        try:
+            ok = await self._redis.set(
+                settings.WORKER_LOCK_KEY, "1",
+                nx=True, ex=settings.WORKER_LOCK_TTL_SECONDS,
+            )
+            return bool(ok)
+        except RedisError as e:
+            print(f"[Worker] redis SETNX failed: {e}")
+            return False
+
+    async def _release_redis_lock(self) -> None:
+        if self._redis is None:
+            return
+        try:
+            await self._redis.delete(settings.WORKER_LOCK_KEY)
+        except RedisError as e:
+            print(f"[Worker] redis lock release failed: {e}")
+
+    async def _extract_inner(self) -> None:
         last_ts = await self.get_last_extracted_ts()
         all_turns = await self._facade.short_term.load()
         unprocessed: list[Message] = [

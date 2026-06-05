@@ -84,3 +84,39 @@ async def test_extract_skips_when_no_new_turns(worker_with_fake_redis):
 
     await w.extract()
     w._extractor.extract.assert_not_awaited()
+
+
+async def test_extract_skips_when_redis_lock_held(worker_with_fake_redis, fake_redis):
+    # Pre-acquire the lock so SETNX returns False
+    await fake_redis.set(
+        "shore:worker:lock", "other-process", nx=True, ex=60,
+    )
+    w = worker_with_fake_redis
+    w._extractor = MagicMock()
+    w._extractor.extract = AsyncMock()
+    fake_facade = MagicMock()
+    fake_facade.short_term = MagicMock()
+    fake_facade.short_term.load = AsyncMock(return_value=[
+        _turn(100.0, "user", "hi"),
+    ])
+    w._facade = fake_facade
+    await w.extract()
+    w._extractor.extract.assert_not_awaited()
+
+
+async def test_extract_releases_lock_after_success(worker_with_fake_redis, fake_redis):
+    w = worker_with_fake_redis
+    w._extractor = MagicMock()
+    w._extractor.extract = AsyncMock(return_value=WorkerOutput(
+        profile_changes=[], episodic_facts=[],
+    ))
+    fake_facade = MagicMock()
+    fake_facade.short_term = MagicMock()
+    fake_facade.short_term.load = AsyncMock(return_value=[
+        _turn(100.0, "user", "hi"),
+    ])
+    fake_facade.profile = MagicMock()
+    fake_facade.profile.read = AsyncMock(return_value={})
+    w._facade = fake_facade
+    await w.extract()
+    assert await fake_redis.get("shore:worker:lock") is None

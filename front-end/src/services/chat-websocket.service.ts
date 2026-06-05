@@ -101,6 +101,16 @@ export interface NotificationMessage {
   timestamp: number;
 }
 
+export interface MemoryWorkerMessage {
+  type: "memory_worker";
+  stage: "started" | "completed" | "failed";
+  timestamp: number;
+  unprocessed_count?: number;
+  profile_changes?: number;
+  episodic_facts?: number;
+  error?: string;
+}
+
 export interface PersistedAgentAction {
   action: "tool_call";
   tool: string;
@@ -138,6 +148,7 @@ export type ChatServerMessage =
   | StatusMessage
   | ErrorMessage
   | NotificationMessage
+  | MemoryWorkerMessage
   | HistoryMessage;
 
 // ─── Event system ───

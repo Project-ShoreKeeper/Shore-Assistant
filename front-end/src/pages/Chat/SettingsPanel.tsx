@@ -12,6 +12,10 @@ import {
   Tooltip,
 } from "@radix-ui/themes";
 import type { WebSocketStatus } from "../../services/chat-websocket.service";
+import type {
+  MemoryWorkerStatus,
+  MemoryWorkerLogEntry,
+} from "../../hooks/useAssistant";
 import { STT_LANGUAGES } from "../../constants/stt.constant";
 import { BACKEND_URL } from "../../constants/backend.constant";
 
@@ -39,6 +43,8 @@ export interface SettingsPanelProps {
   onToggleTerminal: () => void;
   pendingConfirmsCount: number;
   sessionsCount: number;
+  memoryWorkerStatus: MemoryWorkerStatus;
+  memoryWorkerLog: MemoryWorkerLogEntry[];
 }
 
 // ── Icons (inline SVG to match codebase convention) ───────────────────
@@ -181,6 +187,8 @@ export default function SettingsPanel({
   onToggleTerminal,
   pendingConfirmsCount,
   sessionsCount,
+  memoryWorkerStatus,
+  memoryWorkerLog,
 }: SettingsPanelProps) {
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [ramUsage, setRamUsage] = useState<number | null>(null);
@@ -584,7 +592,7 @@ export default function SettingsPanel({
       <Separator size="4" my="3" style={{ backgroundColor: "var(--gray-5)" }} />
 
       {/* AVAILABLE TOOLS — accordion, closed by default */}
-      <Box px="4" pb="4">
+      <Box px="4">
         <button
           type="button"
           aria-expanded={toolsOpen}
@@ -646,8 +654,109 @@ export default function SettingsPanel({
           </Flex>
         )}
       </Box>
+
+      <Separator size="4" my="3" style={{ backgroundColor: "var(--gray-5)" }} />
+
+      {/* MEMORY — LOCOMO worker status + log */}
+      <Box px="4" pb="4">
+        <Flex justify="between" align="center">
+          <Flex align="center" gap="2">
+            <MemoryDot status={memoryWorkerStatus} />
+            <Text size="1" color="gray" weight="bold" style={{ textTransform: "uppercase", letterSpacing: "1px" }}>
+              Memory
+            </Text>
+          </Flex>
+          <Text size="1" color="gray">
+            {memoryWorkerLabel(memoryWorkerStatus)}
+          </Text>
+        </Flex>
+        <Box
+          mt="2"
+          style={{
+            maxHeight: 140,
+            overflowY: "auto",
+            overscrollBehavior: "contain",
+            backgroundColor: "var(--gray-2)",
+            border: "1px solid var(--gray-5)",
+            borderRadius: 6,
+            padding: "6px 8px",
+            fontFamily: "monospace",
+            fontSize: 11,
+            lineHeight: 1.5,
+          }}
+        >
+          {memoryWorkerLog.length === 0 ? (
+            <Text size="1" color="gray" style={{ fontStyle: "italic" }}>
+              No extraction events yet.
+            </Text>
+          ) : (
+            memoryWorkerLog
+              .slice()
+              .reverse()
+              .map((entry) => (
+                <Box key={entry.id} style={{ color: memoryLogColor(entry.stage) }}>
+                  <span style={{ color: "var(--gray-9)" }}>
+                    {entry.timestamp.toLocaleTimeString([], {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                      second: "2-digit",
+                    })}
+                  </span>{" "}
+                  {memoryLogPrefix(entry.stage)} {entry.message}
+                </Box>
+              ))
+          )}
+        </Box>
+      </Box>
     </Flex>
   );
+}
+
+function MemoryDot({ status }: { status: MemoryWorkerStatus }) {
+  const color: DotColor =
+    status === "extracting" ? "orange"
+    : status === "error" ? "red"
+    : status === "ok" ? "green"
+    : "gray";
+  return (
+    <span
+      style={{
+        display: "inline-block",
+        width: 8,
+        height: 8,
+        borderRadius: "50%",
+        backgroundColor: DOT_STYLE[color],
+        flexShrink: 0,
+        animation: status === "extracting" ? "pulse 1s infinite" : undefined,
+      }}
+    />
+  );
+}
+
+function memoryWorkerLabel(status: MemoryWorkerStatus): string {
+  switch (status) {
+    case "extracting": return "Updating…";
+    case "ok": return "Up to date";
+    case "error": return "Error";
+    case "idle":
+    default: return "Idle";
+  }
+}
+
+function memoryLogPrefix(stage: MemoryWorkerLogEntry["stage"]): string {
+  switch (stage) {
+    case "started": return "•";
+    case "completed": return "✓";
+    case "failed": return "✗";
+  }
+}
+
+function memoryLogColor(stage: MemoryWorkerLogEntry["stage"]): string {
+  switch (stage) {
+    case "started": return "var(--orange-11)";
+    case "completed": return "var(--cyan-11)";
+    case "failed": return "var(--red-11)";
+  }
 }
 
 function ToolGroup({ title, items }: { title: string; items: string[] }) {

@@ -1,11 +1,13 @@
 """LOCOMO worker — debounced extraction of facts from short-term turns."""
 import asyncio
+import time
 from typing import Optional
 
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
 from app.core.config import settings
+from app.services.connection_manager import connection_manager
 from app.services.memory.extractor import LocomoExtractor, ExtractorDisabled
 from app.services.memory.types import Message
 
@@ -36,7 +38,7 @@ class WorkerService:
             print(f"[Worker] set_last_extracted_ts failed: {e}")
 
     async def extract(self) -> None:
-        """Read new short-term turns, extract via Gemini, apply to Profile + Episodic."""
+        """Read new short-term turns, extract via local LLM, apply to Profile + Episodic."""
         if self._facade is None or self._extractor is None:
             print("[Worker] extract skipped — not started")
             return
@@ -83,6 +85,8 @@ class WorkerService:
         if not unprocessed:
             return
 
+        await self._emit_status(stage="started", unprocessed_count=len(unprocessed))
+
         profile_snapshot = await self._facade.profile.read()
 
         try:
@@ -91,9 +95,14 @@ class WorkerService:
             )
         except ExtractorDisabled as e:
             print(f"[Worker] extractor disabled: {e}")
+            await self._emit_status(stage="failed", error=f"extractor disabled: {e}")
             return
+        except asyncio.CancelledError:
+            await self._emit_status(stage="failed", error="cancelled")
+            raise
         except Exception as e:
             print(f"[Worker] extract failed (no state changed): {e!r}")
+            await self._emit_status(stage="failed", error=repr(e))
             return
 
         for change in output.profile_changes:
@@ -116,6 +125,19 @@ class WorkerService:
             f"{len(output.episodic_facts)} episodic fact(s); "
             f"last_ts → {newest_ts}"
         )
+        await self._emit_status(
+            stage="completed",
+            profile_changes=len(output.profile_changes),
+            episodic_facts=len(output.episodic_facts),
+        )
+
+    async def _emit_status(self, stage: str, **fields) -> None:
+        """Push a memory_worker status event to the active client. Best-effort."""
+        payload = {"type": "memory_worker", "stage": stage, "timestamp": time.time(), **fields}
+        try:
+            await connection_manager.send_json(payload)
+        except Exception as e:
+            print(f"[Worker] emit status failed: {e!r}")
 
 
     async def on_turn_completed(self) -> None:
@@ -140,13 +162,15 @@ class WorkerService:
         self._facade = facade
         self._extractor = LocomoExtractor()
         print(
-            f"[Worker] ready — model={settings.WORKER_GEMINI_MODEL} "
+            f"[Worker] ready — local_llm_url={settings.WORKER_LOCAL_LLM_URL} "
             f"idle_delay={settings.WORKER_IDLE_DELAY_SECONDS}s "
             f"safety_valve={settings.WORKER_MAX_UNPROCESSED_MESSAGES}"
         )
 
     async def shutdown(self) -> None:
         await self._cancel_pending()
+        if self._extractor:
+            await self._extractor.close()
 
     async def _safety_valve_should_fire(self) -> bool:
         if self._facade is None:

@@ -95,6 +95,8 @@ function PageChat() {
     isConnected,
     messages,
     isAssistantThinking,
+    memoryWorkerStatus,
+    memoryWorkerLog,
     language,
     setLanguage,
     thinkingEnabled,
@@ -752,6 +754,8 @@ function PageChat() {
         onToggleTerminal={toggleTerminal}
         pendingConfirmsCount={terminal.pendingConfirms.length}
         sessionsCount={terminal.sessions.length}
+        memoryWorkerStatus={memoryWorkerStatus}
+        memoryWorkerLog={memoryWorkerLog}
       />
 
       {/* Lightbox dialog */}

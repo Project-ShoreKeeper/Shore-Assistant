@@ -39,6 +39,17 @@ export interface AgentAction {
   timestamp: Date;
 }
 
+export type MemoryWorkerStatus = "idle" | "extracting" | "ok" | "error";
+
+export interface MemoryWorkerLogEntry {
+  id: string;
+  stage: "started" | "completed" | "failed";
+  message: string;
+  timestamp: Date;
+}
+
+const MEMORY_WORKER_LOG_MAX = 20;
+
 export interface UseAssistantReturn {
   // VAD state
   isVADLoaded: boolean;
@@ -53,6 +64,10 @@ export interface UseAssistantReturn {
   messages: ChatMessage[];
   isAssistantThinking: boolean;
   isAssistantSpeaking: boolean;
+
+  // Memory worker (LOCOMO) status
+  memoryWorkerStatus: MemoryWorkerStatus;
+  memoryWorkerLog: MemoryWorkerLogEntry[];
 
   // Settings
   language: string;
@@ -89,6 +104,13 @@ export function useAssistant(): UseAssistantReturn {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isAssistantThinking, setIsAssistantThinking] = useState(false);
   const [isAssistantSpeaking, setIsAssistantSpeaking] = useState(false);
+
+  // Memory worker state
+  const [memoryWorkerStatus, setMemoryWorkerStatus] =
+    useState<MemoryWorkerStatus>("idle");
+  const [memoryWorkerLog, setMemoryWorkerLog] = useState<MemoryWorkerLogEntry[]>(
+    [],
+  );
 
   // The ID of the currently streaming assistant message
   const streamingMsgIdRef = useRef<string | null>(null);
@@ -475,6 +497,40 @@ export function useAssistant(): UseAssistantReturn {
           break;
         }
 
+        case "memory_worker": {
+          const ts = new Date((msg.timestamp || Date.now() / 1000) * 1000);
+          let label = "";
+          let nextStatus: MemoryWorkerStatus = "idle";
+          if (msg.stage === "started") {
+            const n = msg.unprocessed_count ?? 0;
+            label = `Extracting ${n} message${n === 1 ? "" : "s"}…`;
+            nextStatus = "extracting";
+          } else if (msg.stage === "completed") {
+            const p = msg.profile_changes ?? 0;
+            const f = msg.episodic_facts ?? 0;
+            label = `+${p} profile, +${f} fact${f === 1 ? "" : "s"}`;
+            nextStatus = "ok";
+          } else {
+            label = `Failed: ${msg.error || "unknown error"}`;
+            nextStatus = "error";
+          }
+          setMemoryWorkerStatus(nextStatus);
+          setMemoryWorkerLog((prev) => {
+            const entry: MemoryWorkerLogEntry = {
+              id: `mw-${msg.timestamp}-${Math.random().toString(36).slice(2, 7)}`,
+              stage: msg.stage,
+              message: label,
+              timestamp: ts,
+            };
+            const next = [...prev, entry];
+            if (next.length > MEMORY_WORKER_LOG_MAX) {
+              return next.slice(next.length - MEMORY_WORKER_LOG_MAX);
+            }
+            return next;
+          });
+          break;
+        }
+
         case "notification": {
           // Proactive notification from scheduler (reminder, scheduled task)
           const notifId =
@@ -726,6 +782,9 @@ export function useAssistant(): UseAssistantReturn {
     messages,
     isAssistantThinking,
     isAssistantSpeaking,
+
+    memoryWorkerStatus,
+    memoryWorkerLog,
 
     language,
     setLanguage,

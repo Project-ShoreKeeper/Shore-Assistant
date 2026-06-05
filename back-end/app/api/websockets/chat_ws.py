@@ -598,6 +598,9 @@ async def websocket_chat(websocket: WebSocket):
                 await agent_task
             except (asyncio.CancelledError, Exception):
                 pass
+        # Close the HoM session so its background scheduler consolidates this
+        # conversation into long-term memory (HoM only promotes on session end).
+        await memory_facade.end_hom_session()
         # Only unregister if we're still the active connection
         if connection_manager._send_json is my_send_json:
             notification_service.clear_agent_callback()

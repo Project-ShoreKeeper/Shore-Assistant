@@ -1,6 +1,19 @@
 """Tool registry for the AI agent."""
 
 from app.tools.system_tools import get_system_time, read_file, list_directory, clear_memory
+from app.tools.filesystem_tools import (
+    ft_read_file,
+    ft_list_directory,
+    ft_search_files,
+    ft_file_exists,
+    ft_write_file,
+    ft_create_directory,
+    ft_move_file,
+    ft_copy_file,
+    ft_delete_file,
+    ft_diff_files,
+    ft_patch_file,
+)
 from app.tools.web_tools import search_web, web_scrape
 from app.tools.screen_tools import capture_screen, analyze_screen
 from app.tools.scheduler_tools import set_reminder, set_scheduled_task, cancel_task, list_tasks
@@ -31,6 +44,17 @@ from app.tools.cloud_tools import ask_claude, ask_gemini, ask_openai
 # All available tools, registered for use by the agent
 ALL_TOOLS = [
     get_system_time,
+    ft_read_file,
+    ft_list_directory,
+    ft_search_files,
+    ft_file_exists,
+    ft_write_file,
+    ft_create_directory,
+    ft_move_file,
+    ft_copy_file,
+    ft_delete_file,
+    ft_diff_files,
+    ft_patch_file,
     read_file,
     list_directory,
     clear_memory,

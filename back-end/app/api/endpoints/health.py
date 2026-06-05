@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 from app.core.config import settings
 from app.services.memory import memory_facade
+from app.services.file_tool_client import file_tool_client
 
 router = APIRouter()
 
@@ -19,6 +20,8 @@ async def health_check():
     )
     pg_ok = await memory_facade.profile.health()
     qd_ok = await memory_facade.episodic.health()
+    hom_ok = await memory_facade.hom.health()
+    file_tool_ok = await file_tool_client.health()
 
     if redis_ok and pg_ok and qd_ok:
         status = "healthy"
@@ -33,7 +36,9 @@ async def health_check():
             "redis": "ok" if redis_ok else "down",
             "postgres": "ok" if pg_ok else "down",
             "qdrant": "ok" if qd_ok else "down",
+            "hom": ("ok" if hom_ok else "down") if memory_facade.hom.enabled else "off",
         },
+        "file_tool": "ok" if file_tool_ok else "down",
     }
 
 

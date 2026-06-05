@@ -73,9 +73,24 @@ class ScoredFact(BaseModel):
     score: float
 
 
+class GraphFact(BaseModel):
+    """A memory recalled from House of Memories (cosine + graph traversal).
+
+    Kept separate from EpisodicFact: HoM returns raw conversation memories with
+    a source classification, not worker-distilled facts with emotion vectors.
+    """
+
+    mem_id: str
+    content: str
+    source: str = "event"          # fact | event | preference | reflection
+    confidence: float = 1.0
+    importance: float = 0.0
+
+
 class ContextBundle(BaseModel):
     """Output of MemoryFacade.assemble_context()."""
 
     short_term: list[Message]
     profile: dict
     episodic_hits: list[ScoredFact]
+    graph_hits: list[GraphFact] = []   # House of Memories recall (empty when HOM disabled)

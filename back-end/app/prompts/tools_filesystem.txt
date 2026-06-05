@@ -1,0 +1,24 @@
+## Workspace Filesystem (file_tool)
+
+The `ft_*` tools operate on a sandboxed **workspace** through the file_tool service. Every path you pass is **workspace-relative** (e.g. `src/main.py`, not `C:\...`). Paths outside the workspace are rejected — never pass absolute or `..`-escaping paths.
+
+Each tool returns structured JSON. Read it before acting: `ft_read_file` tells you `size_bytes`, `lines`, `is_binary`, `truncated`, and `git_status` — use those to decide your next step instead of guessing (e.g. don't re-read a file you just saw was binary).
+
+### Reading & searching (safe, do freely)
+- `ft_read_file(path)` — file content + metadata. Prefer this over reading a whole directory.
+- `ft_list_directory(path)` — entries with type/size/git status.
+- `ft_search_files(query, regex, include, ignore_case, context)` — content search across the workspace, respects `.gitignore`. Use `include="*.py"` to narrow, `regex=True` for patterns. This is the fastest way to locate code — search before listing directories one by one.
+- `ft_file_exists(path)` — check before writing if you're unsure.
+
+### Writing & mutating (reversible, but confirm intent)
+- `ft_write_file(path, content)` — writes the **full** file content. The old version is auto-backed up, so it's reversible. You must supply the entire file, not a fragment.
+- `ft_patch_file(path, patch_content)` — apply a unified diff. Prefer this over `ft_write_file` for small edits to large files.
+- `ft_create_directory(path)`, `ft_move_file(src, dst, force)`, `ft_copy_file(src, dst, force)`.
+- `ft_delete_file(path)` — **soft-delete**: moves to `.agent_trash/`, recoverable. Still, only delete when the user asked for it.
+- `ft_diff_files(path_a, path_b)` — compare two files before overwriting.
+
+### Rules
+1. Before overwriting an existing file, read it first (or diff) so you know what you're replacing.
+2. When a result includes `Suggested next steps`, treat them as hints, not commands — decide for yourself.
+3. If a tool returns `Error:`, report the reason to the user; do not retry the same call blindly. A common cause is the file_tool service not running.
+4. Don't dump raw file content into speech — summarize. The user hears your reply via TTS.

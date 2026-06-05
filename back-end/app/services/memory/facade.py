@@ -15,6 +15,7 @@ from redis.exceptions import RedisError
 
 from app.core.config import settings
 from app.services.memory.episodic import EpisodicMemory
+from app.services.memory.hom import HoMMemory
 from app.services.memory.profile import ProfileMemory
 from app.services.memory.pruning import prune_profile
 from app.services.memory.short_term import ShortTermMemory
@@ -30,6 +31,7 @@ class MemoryFacade:
         self.short_term: Optional[ShortTermMemory] = None
         self.profile = ProfileMemory()
         self.episodic = EpisodicMemory()
+        self.hom = HoMMemory()
 
     async def startup(self) -> None:
         # Redis (short-term)
@@ -59,8 +61,18 @@ class MemoryFacade:
             print(f"[Memory] Qdrant startup failed: {e}")
             qd_ok = False
 
+        # House of Memories (Go server) — independent failure, opt-in
+        hom_ok = False
+        if self.hom.enabled:
+            try:
+                await self.hom.startup()
+                hom_ok = await self.hom.health()
+            except Exception as e:
+                print(f"[Memory] HoM startup failed: {e}")
+
         print(
-            f"[Memory] redis={redis_ok} postgres={pg_ok} qdrant={qd_ok}"
+            f"[Memory] redis={redis_ok} postgres={pg_ok} qdrant={qd_ok} "
+            f"hom={hom_ok if self.hom.enabled else 'off'}"
         )
 
     async def shutdown(self) -> None:
@@ -68,18 +80,21 @@ class MemoryFacade:
             await self._redis.aclose()
         await self.profile.shutdown()
         await self.episodic.shutdown()
+        await self.hom.shutdown()
 
     async def assemble_context(self, user_text: str) -> ContextBundle:
-        short_term, profile_raw, episodic = await asyncio.gather(
+        short_term, profile_raw, episodic, graph = await asyncio.gather(
             self._safe_load_short_term(),
             self._safe_read_profile(),
             self._safe_search_episodic(user_text),
+            self._safe_recall_hom(user_text),
         )
         profile = await self._safe_prune_profile(profile_raw)
         return ContextBundle(
             short_term=short_term,
             profile=profile,
             episodic_hits=episodic,
+            graph_hits=graph,
         )
 
     async def append_user(
@@ -88,6 +103,7 @@ class MemoryFacade:
         await self._safe_append(Message(
             role="user", content=content, timestamp=time.time(), extras=extras,
         ))
+        await self._safe_record_hom("user", content)
 
     async def append_assistant(
         self, content: str, extras: Optional[dict] = None,
@@ -96,8 +112,19 @@ class MemoryFacade:
             role="assistant", content=content, timestamp=time.time(),
             extras=extras,
         ))
+        await self._safe_record_hom("assistant", content)
+
+    async def end_hom_session(self) -> int:
+        """Close the HoM session (fires consolidation). Call on WebSocket disconnect."""
+        try:
+            return await self.hom.end_session()
+        except Exception as e:
+            print(f"[Memory] HoM end_session failed: {e}")
+            return 0
 
     async def clear(self) -> bool:
+        # Ending the HoM session here consolidates what was said before the reset.
+        await self.end_hom_session()
         if self.short_term is None:
             return False
         try:
@@ -136,6 +163,28 @@ class MemoryFacade:
         except (Exception, asyncio.TimeoutError) as e:
             print(f"[Memory] episodic.search degraded: {e}")
             return []
+
+    async def _safe_recall_hom(self, query: str):
+        # HoM embeds the query via Gemini (cloud round-trip), so it gets its own
+        # generous timeout instead of the 500 ms layer budget. If it's slow or
+        # down, we skip it — chat never blocks on HoM.
+        if not self.hom.enabled:
+            return []
+        try:
+            return await asyncio.wait_for(
+                self.hom.recall(query), timeout=settings.HOM_RECALL_TIMEOUT,
+            )
+        except (Exception, asyncio.TimeoutError) as e:
+            print(f"[Memory] HoM recall degraded: {e}")
+            return []
+
+    async def _safe_record_hom(self, role: str, content: str) -> None:
+        if not self.hom.enabled:
+            return
+        try:
+            await self.hom.record_turn(role, content)
+        except Exception as e:
+            print(f"[Memory] HoM record_turn failed: {e}")
 
     async def _safe_prune_profile(self, raw: dict) -> dict:
         if not raw:

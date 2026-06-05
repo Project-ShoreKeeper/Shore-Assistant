@@ -88,6 +88,19 @@ class Settings(BaseSettings):
     TERMINAL_AUDIT_LOG: str = "data/terminal_audit.log"
     BACKGROUND_SERVICES_LOG_DIR: str = "data/background_services"
 
+    # file_tool System Core (Rust binary, http://localhost:9001 by default)
+    FILE_TOOL_URL: str = "http://localhost:9001"
+    FILE_TOOL_TOKEN: str = ""
+    FILE_TOOL_ENABLED: bool = False
+
+    # House of Memories (Go long-term memory server)
+    # NOTE: HoM defaults to :8080 which collides with llama-server — run it on another port.
+    HOM_ENABLED: bool = False
+    HOM_BASE_URL: str = "http://localhost:8090"
+    HOM_RECALL_TIMEOUT: float = 2.0          # generous: HoM embeds the query via Gemini (cloud round-trip)
+    HOM_RECALL_TOP_K: int = 5                # max graph/semantic hits injected per turn
+    HOM_SESSION_IDLE_MINUTES: int = 30       # gap that closes a session and triggers consolidation
+
     # Node PTY microservice
     NODE_PTY_WS_URL: str = "wss://terminal.shore-keeper.com"
     NODE_PTY_AUTH_TOKEN: str = ""

@@ -27,6 +27,11 @@ def _read_prompt(name: str) -> str:
 # don't touch the section's tools (e.g. terminal rules aren't loaded for a
 # simple time question).
 _SECTION_TRIGGERS: dict[str, frozenset[str]] = {
+    "tools_filesystem.txt": frozenset({
+        "ft_read_file", "ft_list_directory", "ft_search_files", "ft_file_exists",
+        "ft_write_file", "ft_create_directory", "ft_move_file", "ft_copy_file",
+        "ft_delete_file", "ft_diff_files", "ft_patch_file",
+    }),
     "tools_terminal.txt": frozenset({
         "open_terminal", "send_to_terminal", "read_terminal",
         "list_terminals", "close_terminal",
@@ -63,6 +68,12 @@ def _format_memory_block(bundle: "ContextBundle") -> str:
         for sf in bundle.episodic_hits:
             tags = ", ".join(sf.fact.entity_tags) if sf.fact.entity_tags else "—"
             lines.append(f"- {sf.fact.fact} [tags: {tags}]")
+    if bundle.graph_hits:
+        if lines:
+            lines.append("")
+        lines.append("[Related memories]")
+        for gf in bundle.graph_hits:
+            lines.append(f"- {gf.content} [{gf.source}]")
     return "\n".join(lines)
 
 

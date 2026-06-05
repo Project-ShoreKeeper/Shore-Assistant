@@ -62,6 +62,9 @@ async def lifespan(app: FastAPI):
 
     await memory_facade.shutdown()
 
+    from app.services.file_tool_client import file_tool_client
+    await file_tool_client.close()
+
     scheduler_service.shutdown()
 
     if settings.N8N_ENABLED:

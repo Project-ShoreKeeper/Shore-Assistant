@@ -3,6 +3,7 @@ LangGraph-based agent service.
 Orchestrates tool execution and LLM response streaming using llama-server's OpenAI-compatible tool calling.
 """
 
+import json
 import time
 from typing import AsyncGenerator, Optional, TypedDict
 
@@ -28,6 +29,46 @@ class AgentState(TypedDict):
 
 # ==================== Tool execution ====================
 
+def _unwrap_tool_envelope(result_str: str) -> str:
+    """Flatten a file_tool ToolEnvelope into LLM-friendly text.
+
+    file_tool wraps every response in:
+        {"tool", "status", "duration_ms", "risk_level", "reversible",
+         "result", "suggested_next_actions", "warnings"}
+
+    Plain-string results from legacy tools are returned untouched. The agent
+    loop's error detection relies on the "Error" prefix, so envelope errors
+    are surfaced that way.
+    """
+    try:
+        envelope = json.loads(result_str)
+    except (json.JSONDecodeError, TypeError):
+        return result_str  # legacy tool — plain string
+
+    if not (isinstance(envelope, dict) and "status" in envelope and "result" in envelope):
+        return result_str  # some other JSON the tool happened to return
+
+    if envelope.get("status") == "error":
+        return f"Error: {envelope.get('message', 'unknown file_tool error')}"
+
+    parts: list[str] = []
+
+    # High-risk + irreversible actions get a leading flag so the LLM stays cautious.
+    if envelope.get("risk_level") == "high" and not envelope.get("reversible", True):
+        parts.append("[WARNING: high-risk, irreversible action]")
+
+    parts.append(json.dumps(envelope["result"], ensure_ascii=False))
+
+    if envelope.get("warnings"):
+        parts.append("Warnings: " + "; ".join(str(w) for w in envelope["warnings"]))
+
+    if envelope.get("suggested_next_actions"):
+        hints = "\n".join(f"- {h}" for h in envelope["suggested_next_actions"])
+        parts.append(f"Suggested next steps:\n{hints}")
+
+    return "\n".join(parts)
+
+
 async def execute_tool(tool_name: str, tool_args: dict) -> str:
     """Execute a registered tool by name."""
     tool = TOOL_MAP.get(tool_name)
@@ -39,7 +80,7 @@ async def execute_tool(tool_name: str, tool_args: dict) -> str:
             result = await tool.ainvoke(tool_args)
         else:
             result = tool.invoke(tool_args)
-        return str(result)
+        return _unwrap_tool_envelope(str(result))
     except Exception as e:
         return f"Error executing tool '{tool_name}': {e}"
 

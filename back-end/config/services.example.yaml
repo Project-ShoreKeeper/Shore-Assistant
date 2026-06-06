@@ -1,0 +1,92 @@
+# Service control registry — copy to `services.yaml` and edit paths.
+#
+# Each entry defines how the Dashboard Start/Stop buttons control one service:
+#   - `kind`             : process | docker | internal
+#   - `display_name`     : optional override for the registry name
+#   - `correlates_with`  : optional — matches the `name` field of a row in
+#                          /api/dashboard's `services` array, so the button
+#                          attaches to that existing card. Omit for entries
+#                          that should render under their own card.
+#
+# Missing this file is fine — no buttons will be rendered, but the rest of
+# the dashboard works unchanged.
+
+services:
+
+  # ── Local processes ──────────────────────────────────────────────────
+  # Spawned via subprocess; tracked by PID file + create_time identity check.
+
+  llama-server:
+    kind: process
+    display_name: llama-server
+    correlates_with: llama-server
+    # Edit paths to match your llama.cpp build and model layout.
+    start_cmd: 'D:\llama\llama-server.exe -m D:\models\primary.gguf --mmproj D:\models\mmproj.gguf --jinja --host 0.0.0.0 --port 8080 --ctx-size 8192'
+    cwd: 'D:\llama'
+    grace_seconds: 10            # SIGTERM grace before SIGKILL
+
+  shore-pty-service:
+    kind: process
+    display_name: shore-pty-service
+    correlates_with: shore-pty-service
+    start_cmd: 'npm start'
+    cwd: 'D:\Jupiter\Luna\ProjectShoreKeeper\Shore-Assistant\shore-pty-service'
+
+  # ── Docker containers ────────────────────────────────────────────────
+  # Controlled via `docker compose -f <file> {up -d|start|stop|ps} <service>`.
+
+  n8n:
+    kind: docker
+    display_name: n8n
+    correlates_with: n8n
+    compose_file: 'docker-compose.n8n.yml'
+    compose_service: n8n
+    use_up_on_start: true        # creates the container if it doesn't exist
+
+  postgres:
+    kind: docker
+    display_name: Postgres
+    correlates_with: Postgres
+    compose_file: 'deploy/memory/docker-compose.yml'
+    compose_service: postgres
+
+  qdrant:
+    kind: docker
+    display_name: Qdrant
+    correlates_with: Qdrant
+    compose_file: 'deploy/memory/docker-compose.yml'
+    compose_service: qdrant
+
+  redis:
+    kind: docker
+    display_name: Redis
+    correlates_with: Redis
+    compose_file: 'deploy/memory/docker-compose.yml'
+    compose_service: redis
+
+  # ── Internal singletons ──────────────────────────────────────────────
+  # In-process toggles. Stop releases VRAM for `stt`/`tts`; flag-only for the
+  # rest. The `target` field selects which singleton to control.
+
+  whisper-stt:
+    kind: internal
+    display_name: Whisper STT
+    correlates_with: Whisper STT
+    target: stt
+
+  kokoro-tts:
+    kind: internal
+    display_name: Kokoro TTS
+    correlates_with: Kokoro TTS
+    target: tts
+
+  locomo-worker:
+    kind: internal
+    display_name: LOCOMO worker
+    # No correlates_with: matched by display_name to the Workers card.
+    target: locomo_worker
+
+  canonicalizer:
+    kind: internal
+    display_name: Canonicalizer
+    target: canonicalizer

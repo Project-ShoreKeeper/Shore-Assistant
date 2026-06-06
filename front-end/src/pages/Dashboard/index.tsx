@@ -3,6 +3,7 @@ import type {
   ServiceRow, DatabaseRow, Hardware, WorkersState, RemoteHardware, GpuInfo,
 } from "@Shore/services/dashboard.service";
 import { ServiceLogo } from "./serviceLogos";
+import ServiceControlButton from "./ServiceControlButton";
 import "./dashboard-mobile.css";
 
 // ── Helpers ───────────────────────────────────────────────────────────
@@ -159,7 +160,7 @@ const GRID6: React.CSSProperties = { display: "grid", gridTemplateColumns: "repe
 
 // ── Service cards ─────────────────────────────────────────────────────
 
-function ServiceCard({ s }: { s: ServiceRow }) {
+function ServiceCard({ s, expedite }: { s: ServiceRow; expedite: () => void }) {
   const lines = [
     s.latency_ms != null && `${s.latency_ms} ms`,
     s.model,
@@ -169,6 +170,11 @@ function ServiceCard({ s }: { s: ServiceRow }) {
 
   return (
     <Card className="service-card" style={{ aspectRatio: "1", position: "relative", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", gap: 8, padding: 16, paddingTop: 36 }}>
+      {s.control && (
+        <div style={{ position: "absolute", top: 10, left: 10 }}>
+          <ServiceControlButton control={s.control} expedite={expedite} displayName={s.name} />
+        </div>
+      )}
       <div style={{ position: "absolute", top: 10, right: 10 }}>
         <StatusBadge status={s.status} />
       </div>
@@ -189,7 +195,7 @@ function ServiceCard({ s }: { s: ServiceRow }) {
 
 // ── Database cards ────────────────────────────────────────────────────
 
-function DbCard({ d }: { d: DatabaseRow }) {
+function DbCard({ d, expedite }: { d: DatabaseRow; expedite: () => void }) {
   const metric =
     d.short_term_turns != null ? `${d.short_term_turns} turns`
     : d.profile_size_bytes != null ? `${fmtBytes(d.profile_size_bytes)} profile`
@@ -201,8 +207,11 @@ function DbCard({ d }: { d: DatabaseRow }) {
     <Card accent minHeight={120}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
         <div>
-          <div style={{ fontFamily: "Inter, sans-serif", fontSize: 14, fontWeight: 600, color: "var(--md-on-surface)", marginBottom: 2 }}>
+          <div style={{ fontFamily: "Inter, sans-serif", fontSize: 14, fontWeight: 600, color: "var(--md-on-surface)", marginBottom: 2, display: "flex", alignItems: "center", gap: 8 }}>
             {d.name}
+            {d.control && (
+              <ServiceControlButton control={d.control} expedite={expedite} displayName={d.name} />
+            )}
           </div>
           <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: "var(--md-on-surface-variant)" }}>
             {d.latency_ms != null ? `Latency: ${d.latency_ms} ms` : "—"}
@@ -405,7 +414,7 @@ function HardwareSection({ local, remote, localCpuHistory, gpuUtilHistory }: { l
 
 // ── Workers section ───────────────────────────────────────────────────
 
-function WorkersSection({ w }: { w: WorkersState }) {
+function WorkersSection({ w, expedite }: { w: WorkersState; expedite: () => void }) {
   const locomoStatus = !w.locomo.enabled ? "disabled" : w.locomo.locked ? "degraded" : "up";
   return (
     <div style={{ marginBottom: 24 }}>
@@ -413,7 +422,12 @@ function WorkersSection({ w }: { w: WorkersState }) {
       <div className="dash-grid3" style={GRID3}>
         <Card>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-            <span style={{ fontFamily: "Inter, sans-serif", fontSize: 14, fontWeight: 600, color: "var(--md-on-surface)" }}>LOCOMO worker</span>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontFamily: "Inter, sans-serif", fontSize: 14, fontWeight: 600, color: "var(--md-on-surface)" }}>LOCOMO worker</span>
+              {w.locomo.control && (
+                <ServiceControlButton control={w.locomo.control} expedite={expedite} displayName="LOCOMO worker" />
+              )}
+            </div>
             <StatusBadge status={locomoStatus} />
           </div>
           <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: "var(--md-on-surface-variant)" }}>
@@ -448,7 +462,12 @@ function WorkersSection({ w }: { w: WorkersState }) {
 
         <Card>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-            <span style={{ fontFamily: "Inter, sans-serif", fontSize: 14, fontWeight: 600, color: "var(--md-on-surface)" }}>Canonicalizer</span>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontFamily: "Inter, sans-serif", fontSize: 14, fontWeight: 600, color: "var(--md-on-surface)" }}>Canonicalizer</span>
+              {w.canonicalizer.control && (
+                <ServiceControlButton control={w.canonicalizer.control} expedite={expedite} displayName="Canonicalizer" />
+              )}
+            </div>
             <StatusBadge status={w.canonicalizer.enabled ? "up" : "disabled"} />
           </div>
           <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: "var(--md-on-surface-variant)" }}>
@@ -603,7 +622,7 @@ function RefreshIcon() {
 }
 
 export default function PageDashboard() {
-  const { data, error, loading, paused, refresh, localCpuHistory, gpuUtilHistory } = useDashboardContext();
+  const { data, error, loading, paused, refresh, expedite, localCpuHistory, gpuUtilHistory } = useDashboardContext();
 
   const activeServices = data?.services.filter(s => statusIsUp(s.status)).length ?? 0;
   const downDbs = data?.databases.filter(d => !statusIsUp(d.status)).length ?? 0;
@@ -677,7 +696,7 @@ export default function PageDashboard() {
             <div style={{ marginBottom: 24 }}>
               <SectionLabel title="Services" badge={`${activeServices} active`} badgeVariant="primary" />
               <div className="dash-grid6" style={GRID6}>
-                {data.services.map(s => <ServiceCard key={s.name} s={s} />)}
+                {data.services.map(s => <ServiceCard key={s.name} s={s} expedite={expedite} />)}
               </div>
             </div>
 
@@ -685,12 +704,12 @@ export default function PageDashboard() {
             <div style={{ marginBottom: 24 }}>
               <SectionLabel title="Databases" badge={dbBadge} badgeVariant={dbBadgeVariant} />
               <div className="dash-grid3" style={GRID3}>
-                {data.databases.map(d => <DbCard key={d.name} d={d} />)}
+                {data.databases.map(d => <DbCard key={d.name} d={d} expedite={expedite} />)}
               </div>
             </div>
 
             {/* Workers */}
-            <WorkersSection w={data.workers} />
+            <WorkersSection w={data.workers} expedite={expedite} />
           </>
         ) : null}
       </div>

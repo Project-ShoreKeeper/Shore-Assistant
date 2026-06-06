@@ -16,7 +16,9 @@ from app.api.endpoints.memory import router as memory_router
 from app.api.endpoints.dashboard import router as dashboard_router
 from app.api.endpoints.chronicles import router as chronicles_router
 from app.api.endpoints.auth import router as auth_router
+from app.api.endpoints.services import router as services_router
 from app.api.websockets.chat_ws import router as chat_ws_router
+from app.services.service_manager import service_manager
 from app.api import deps as auth_deps
 from app.core.auth import SessionStore
 
@@ -90,6 +92,9 @@ async def lifespan(app: FastAPI):
             job_id="memory_canonicalizer",
         )
 
+    # Load service control registry (no-op if config/services.yaml missing)
+    service_manager.load()
+
     yield
 
     idle_reaper_task.cancel()
@@ -141,6 +146,7 @@ app.include_router(health_router)
 app.include_router(auth_router)
 app.include_router(memory_router)
 app.include_router(dashboard_router)
+app.include_router(services_router)
 app.include_router(chronicles_router)
 app.include_router(chat_ws_router)
 

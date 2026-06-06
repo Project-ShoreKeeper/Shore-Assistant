@@ -53,3 +53,9 @@ htmlcov/
 
 # MyPy
 .mypy_cache/
+
+# Local service control registry (user-edited, paths may leak machine layout)
+config/services.yaml
+
+# PID files for processes spawned by ServiceManager
+data/pids/

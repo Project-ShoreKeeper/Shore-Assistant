@@ -1,5 +1,13 @@
 import { apiFetch } from "./http.service";
 
+export interface ServiceControl {
+  name: string;
+  kind: "process" | "docker" | "internal";
+  running: boolean;
+  transitioning: boolean;
+  last_error: string | null;
+}
+
 export interface ServiceRow {
   name: string;
   status: string;
@@ -7,6 +15,7 @@ export interface ServiceRow {
   model?: string | null;
   workflows_count?: number;
   sessions_count?: number;
+  control?: ServiceControl | null;
 }
 
 export interface DatabaseRow {
@@ -16,6 +25,7 @@ export interface DatabaseRow {
   short_term_turns?: number | null;
   profile_size_bytes?: number | null;
   episodic_count?: number | null;
+  control?: ServiceControl | null;
 }
 
 export interface GpuInfo {
@@ -43,6 +53,7 @@ export interface WorkersState {
     last_extracted_ts: number | null;
     locked: boolean;
     unprocessed_count: number | null;
+    control?: ServiceControl | null;
   };
   scheduler: {
     active_tasks: number;
@@ -53,6 +64,7 @@ export interface WorkersState {
     enabled: boolean;
     cron: string;
     similarity_threshold: number;
+    control?: ServiceControl | null;
   };
 }
 

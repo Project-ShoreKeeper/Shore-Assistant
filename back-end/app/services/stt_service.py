@@ -5,6 +5,7 @@ No ctranslate2 dependency -- uses PyTorch directly.
 Model is loaded once at server startup and reused for all requests (singleton).
 """
 
+import gc
 import threading
 from typing import Optional
 import asyncio
@@ -12,6 +13,12 @@ import time
 import numpy as np
 import torch
 from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, pipeline
+
+from app.core import runtime_flags
+
+
+class STTDisabled(RuntimeError):
+    """Raised when an audio frame arrives but STT is turned off via runtime flag."""
 
 # ─── Default config ───
 
@@ -109,6 +116,20 @@ class STTService:
     def is_loaded(self) -> bool:
         return self._is_loaded
 
+    def unload(self) -> None:
+        """Release the loaded model from VRAM/RAM.
+
+        Idempotent. After this the singleton holds no GPU references and
+        ``torch.cuda.empty_cache()`` has been called.
+        """
+        with self._lock:
+            self.pipe = None
+            self._is_loaded = False
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            print("[STT] Model unloaded")
+
     def transcribe(
         self,
         audio: np.ndarray,
@@ -118,6 +139,8 @@ class STTService:
         """
         Run STT on an audio segment (synchronous).
         """
+        if not runtime_flags.get("STT_ENABLED"):
+            raise STTDisabled("STT is disabled via runtime flag")
         if not self._is_loaded or self.pipe is None:
             self.load_model()
             if self.pipe is None:

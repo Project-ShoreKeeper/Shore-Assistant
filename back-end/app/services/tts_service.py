@@ -5,8 +5,11 @@ Outputs 24kHz mono Float32 audio, converted to Int16 PCM for WebSocket streaming
 """
 
 import asyncio
+import gc
 import numpy as np
 from typing import AsyncGenerator, Optional
+
+from app.core import runtime_flags
 
 
 # Kokoro voice IDs per language
@@ -55,6 +58,23 @@ class TTSService:
         if self.is_available:
             self._get_pipeline(DEFAULT_LANG)
 
+    def load(self):
+        """Idempotent reload of the default pipeline. Used by service control."""
+        self._available = None  # force re-probe in case kokoro was just installed
+        self.warmup()
+
+    def unload(self) -> None:
+        """Release the Kokoro pipeline. Idempotent."""
+        self._pipeline = None
+        gc.collect()
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except ImportError:
+            pass
+        print("[TTS] Pipeline unloaded")
+
     def _get_pipeline(self, lang_code: str):
         """Lazy-init or re-init the Kokoro pipeline for the given language."""
         if self._pipeline is None or self._current_lang != lang_code:
@@ -81,6 +101,8 @@ class TTSService:
         Runs synthesis in a thread to avoid blocking the event loop.
         """
         if not self.is_available:
+            return
+        if not runtime_flags.get("TTS_ENABLED"):
             return
 
         target_voice = voice or self.voice

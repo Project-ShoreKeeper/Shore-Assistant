@@ -6,6 +6,7 @@ from typing import Optional
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
+from app.core import runtime_flags
 from app.core.config import settings
 from app.services.connection_manager import connection_manager
 from app.services.memory.extractor import LocomoExtractor, ExtractorDisabled
@@ -153,7 +154,12 @@ class WorkerService:
         user. The worker treats `user_id` as the conversation it should
         extract from.
         """
-        if not settings.WORKER_ENABLED:
+        # Runtime flag — dashboard can toggle this off without restart.
+        # The env-time `settings.WORKER_ENABLED` only controls startup wiring.
+        try:
+            if not runtime_flags.get("WORKER_ENABLED"):
+                return
+        except KeyError:
             return
 
         self._pending_user_id = user_id

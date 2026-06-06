@@ -18,6 +18,7 @@ from app.api.deps import current_user
 from app.core.config import settings
 from app.services.memory import memory_facade, worker_service
 from app.services.scheduler_service import scheduler_service
+from app.services.service_manager import service_manager
 from app.services.stt_service import stt_service
 from app.services.tts_service import tts_service
 from app.services.terminal_service import terminal_service
@@ -410,17 +411,56 @@ async def _workers_snapshot() -> dict:
     return {"locomo": locomo, "scheduler": scheduler, "canonicalizer": canonicalizer}
 
 
+# ── Service-control overlay ────────────────────────────────────────────
+
+async def _control_lookup() -> tuple[dict, dict]:
+    """Build two lookups: by correlates_with (for services/databases) and by
+    display_name (for workers). Returns (by_correlate, by_display)."""
+    by_correlate: dict[str, dict] = {}
+    by_display: dict[str, dict] = {}
+    try:
+        for st in await service_manager.list_state():
+            control = {
+                "name": st.name,
+                "kind": st.kind,
+                "running": st.running,
+                "transitioning": st.transitioning,
+                "last_error": st.last_error,
+            }
+            if st.correlates_with:
+                by_correlate[st.correlates_with] = control
+            if st.display_name:
+                by_display[st.display_name] = control
+    except Exception:
+        pass
+    return by_correlate, by_display
+
+
 # ── Endpoint ───────────────────────────────────────────────────────────
 
 @router.get("/dashboard")
 async def dashboard() -> dict:
-    services, databases, workers, remote = await asyncio.gather(
-        _services_snapshot(),
-        _databases_snapshot(),
-        _workers_snapshot(),
-        _remote_hardware_snapshot(),
-    )
+    services, databases, workers, remote, (ctrl_by_corr, ctrl_by_display) = \
+        await asyncio.gather(
+            _services_snapshot(),
+            _databases_snapshot(),
+            _workers_snapshot(),
+            _remote_hardware_snapshot(),
+            _control_lookup(),
+        )
     hardware = _hardware_snapshot()
+
+    # Attach `control` field to each row whose name matches the registry.
+    for s in services:
+        s["control"] = ctrl_by_corr.get(s["name"])
+    for d in databases:
+        d["control"] = ctrl_by_corr.get(d["name"])
+
+    # Workers section uses display_name as the join key (LOCOMO worker,
+    # Canonicalizer). Scheduler is not controllable.
+    workers["locomo"]["control"] = ctrl_by_display.get("LOCOMO worker")
+    workers["canonicalizer"]["control"] = ctrl_by_display.get("Canonicalizer")
+
     return {
         "generated_at": time.time(),
         "services": services,

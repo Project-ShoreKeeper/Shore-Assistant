@@ -52,48 +52,15 @@ async def test_read_returns_data_dict():
     assert await pm.read() == {"name": "Luna"}
 
 
-async def test_apply_change_uses_jsonb_set_for_value():
-    conn = AsyncMock()
-    conn.fetchval.return_value = None
-    _make_tx(conn)
-    pool = _make_pool_with_conn(conn)
-
-    pm = ProfileMemory()
-    pm._pool = pool
-
-    await pm.apply_change(ProfileChange(
-        key_path="name", new_value="Luna",
-        source_turn_ts=1.0, confidence=0.9, reason="test",
-    ))
-
-    # First execute = UPDATE jsonb_set, second = INSERT history.
-    update_sql = conn.execute.await_args_list[0].args[0]
-    insert_sql = conn.execute.await_args_list[1].args[0]
-    assert "jsonb_set" in update_sql
-    assert "INSERT INTO profile_history" in insert_sql
-
-
-async def test_apply_change_uses_minus_operator_for_delete():
-    conn = AsyncMock()
-    conn.fetchval.return_value = "Luna"
-    _make_tx(conn)
-    pool = _make_pool_with_conn(conn)
-
-    pm = ProfileMemory()
-    pm._pool = pool
-
-    await pm.apply_change(ProfileChange(
-        key_path="name", new_value=None,
-        source_turn_ts=1.0, confidence=1.0, reason="forget",
-    ))
-
-    update_sql = conn.execute.await_args_list[0].args[0]
-    assert "data #- $1" in update_sql
-
-
 async def test_apply_change_carries_old_value_into_history():
+    """Audit row gets the old value read from the snapshot row.
+
+    Integration coverage of the full read-modify-write flow lives in
+    tests/integration/test_profile_pg.py; this test only checks that
+    the audit INSERT receives the expected positional args.
+    """
     conn = AsyncMock()
-    conn.fetchval.return_value = "espresso"
+    conn.fetchrow.return_value = {"data": {"favorite_coffee": "espresso"}}
     _make_tx(conn)
     pool = _make_pool_with_conn(conn)
 
@@ -105,8 +72,9 @@ async def test_apply_change_carries_old_value_into_history():
         source_turn_ts=2.0, confidence=0.7, reason="changed mind",
     ))
 
+    # execute call 0 = UPDATE profile; call 1 = INSERT profile_history.
     insert_call = conn.execute.await_args_list[1]
-    # Args are: sql, key_path, old, new, source_turn_ts, confidence, reason
+    # Args: sql, key_path, old, new, source_turn_ts, confidence, reason
     assert insert_call.args[1] == "favorite_coffee"
     assert insert_call.args[2] == "espresso"
     assert insert_call.args[3] == "latte"

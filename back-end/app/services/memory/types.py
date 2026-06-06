@@ -67,10 +67,18 @@ class WorkerOutput(BaseModel):
 
 
 class ScoredFact(BaseModel):
-    """Returned by episodic.search() — fact plus similarity score."""
+    """Returned by episodic.search() and list_recent() — fact plus score.
+
+    `point_id` and `created_at` are populated when the row came from a live
+    Qdrant query (search / list_recent). They are optional so the type stays
+    backward-compatible with worker round-trip tests that construct
+    ScoredFact directly without a Qdrant write.
+    """
 
     fact: EpisodicFact
     score: float
+    point_id: Optional[str] = None
+    created_at: Optional[float] = None
 
 
 class ContextBundle(BaseModel):

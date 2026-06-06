@@ -131,8 +131,58 @@ class EpisodicMemory:
                 source_role=p["source_role"],
                 confidence=p["confidence"],
             )
-            results.append(ScoredFact(fact=fact, score=h.score))
+            results.append(ScoredFact(
+                fact=fact,
+                score=h.score,
+                point_id=str(h.id),
+                created_at=p.get("created_at"),
+            ))
         return results
+
+    async def list_recent(self, limit: int = 50) -> list[ScoredFact]:
+        """Browse recent facts ordered by created_at desc.
+
+        Uses Qdrant scroll with order_by on the indexed `created_at` field.
+        Returns ScoredFact with score=1.0 (no similarity ranking).
+        """
+        response, _ = await self._client.scroll(
+            collection_name=settings.QDRANT_COLLECTION,
+            limit=limit,
+            with_payload=True,
+            with_vectors=False,
+            order_by=qm.OrderBy(key="created_at", direction=qm.Direction.DESC),
+        )
+        results: list[ScoredFact] = []
+        for h in response:
+            p = h.payload
+            fact = EpisodicFact(
+                fact=p["fact"],
+                entity_tags=p["entity_tags"],
+                emotion=EmotionVector(**p["emotion"]),
+                source_turn_ts=p["source_turn_ts"],
+                source_role=p["source_role"],
+                confidence=p["confidence"],
+            )
+            results.append(ScoredFact(
+                fact=fact,
+                score=1.0,
+                point_id=str(h.id),
+                created_at=p.get("created_at"),
+            ))
+        return results
+
+    async def delete(self, point_id: str) -> bool:
+        """Delete one Qdrant point. Returns True on success, False if not found."""
+        try:
+            await self._client.delete(
+                collection_name=settings.QDRANT_COLLECTION,
+                points_selector=qm.PointIdsList(points=[point_id]),
+            )
+            return True
+        except UnexpectedResponse as e:
+            if "not found" in str(e).lower():
+                return False
+            raise
 
     async def count(self) -> int:
         if self._client is None:

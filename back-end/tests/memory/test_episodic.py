@@ -133,7 +133,7 @@ async def test_search_maps_hits_to_scored_facts():
         "embedding_model_version": "all-MiniLM-L6-v2",
     }
     client.query_points.return_value = SimpleNamespace(points=[
-        SimpleNamespace(score=0.92, payload=hit_payload),
+        SimpleNamespace(id="pt-1", score=0.92, payload=hit_payload),
     ])
     em._client = client
     with patch(
@@ -150,3 +150,56 @@ async def test_search_maps_hits_to_scored_facts():
 async def test_health_false_when_client_none():
     em = EpisodicMemory()
     assert await em.health() is False
+
+
+async def test_list_recent_maps_scroll_to_scored_facts():
+    em = EpisodicMemory()
+    client = AsyncMock()
+    hit_payload = {
+        "fact": "Luna drinks espresso",
+        "entity_tags": ["coffee"],
+        "emotion": EmotionVector(joy=0.6).model_dump(),
+        "valence": 0.15,
+        "source_turn_ts": 1.0,
+        "source_role": "user",
+        "created_at": 200.0,
+        "confidence": 0.9,
+        "embedding_model_version": "all-MiniLM-L6-v2",
+    }
+    client.scroll.return_value = (
+        [SimpleNamespace(id="pt-recent", payload=hit_payload)],
+        None,
+    )
+    em._client = client
+    results = await em.list_recent(limit=10)
+    assert len(results) == 1
+    assert results[0].score == 1.0
+    assert results[0].point_id == "pt-recent"
+    assert results[0].created_at == 200.0
+    kwargs = client.scroll.await_args.kwargs
+    assert kwargs["limit"] == 10
+    assert kwargs["with_payload"] is True
+
+
+async def test_delete_returns_true_on_success():
+    em = EpisodicMemory()
+    client = AsyncMock()
+    em._client = client
+    ok = await em.delete("pt-1")
+    assert ok is True
+    client.delete.assert_awaited_once()
+
+
+async def test_delete_returns_false_on_not_found():
+    from qdrant_client.http.exceptions import UnexpectedResponse
+    em = EpisodicMemory()
+    client = AsyncMock()
+    client.delete.side_effect = UnexpectedResponse(
+        status_code=404,
+        reason_phrase="Not Found",
+        content=b"point not found",
+        headers={},
+    )
+    em._client = client
+    ok = await em.delete("missing")
+    assert ok is False

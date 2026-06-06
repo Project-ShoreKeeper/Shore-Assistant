@@ -15,8 +15,9 @@ Browser (React + TypeScript + Vite)
   └── TTS PCM audio player (AudioContext)
 
 FastAPI Backend (Python)
-  ├── /ws/audio   — STT-only endpoint (legacy, used by VAD Test page)
-  ├── /ws/chat    — Full pipeline: Audio/Text → STT → Agent → LLM → TTS
+  ├── /ws/chat    — Full pipeline: Audio/Text → STT → Agent → LLM → TTS (cookie-auth at upgrade)
+  ├── /api/auth/{login,callback,logout,me} — Google OAuth + Redis-backed sessions, gated by AUTH_ENABLED
+  ├── /api/dashboard — Aggregated status: services, databases, hardware (psutil + nvidia-smi), workers
   ├── Whisper STT (HuggingFace Transformers, GPU/CPU auto-detect)
   ├── LLM Agent   (llama.cpp llama-server, OpenAI-compatible /v1/chat/completions, LangGraph StateGraph)
   ├── Tool Retriever (sentence-transformers embedding-based selection, all-MiniLM-L6-v2)
@@ -40,14 +41,20 @@ Shore-Assistant/
 ├── back-end/
 │   └── app/
 │       ├── main.py                     # FastAPI app factory + router includes
-│       ├── core/config.py              # Pydantic settings (llama-server, TTS, Vision)
+│       ├── core/
+│       │   ├── config.py               # Pydantic settings (llama-server, TTS, Vision, Auth)
+│       │   ├── auth.py                 # User / Session types + Redis-backed SessionStore + current_user_id ContextVar
+│       │   └── allowlist.py            # Parse AUTH_ALLOWED_EMAILS + resolve_role (first email = admin)
 │       ├── api/
+│       │   ├── deps.py                 # FastAPI Depends: current_user, csrf_check, require_admin
 │       │   ├── endpoints/
 │       │   │   ├── health.py           # GET / and /health (tri-state: healthy/degraded/unhealthy)
-│       │   │   ├── memory_debug.py     # /api/memory/* — gated by DEBUG_MEMORY (Phase 2 seeding)
+│       │   │   ├── auth.py             # /api/auth/{login,callback,logout,me} — Google OAuth + session lifecycle
+│       │   │   ├── memory.py           # /api/memory/* — Profile, Episodic, Audit admin API (admin-only when auth enabled)
+│       │   │   ├── dashboard.py        # GET /api/dashboard — services + databases + hardware + workers snapshot
+│       │   │   ├── chronicles.py       # GET /api/chronicles + /{slug} — serves docs/chronicles/*.md with YAML frontmatter
 │       │   │   └── n8n_webhook.py      # POST /api/n8n/webhook, /refresh, GET /status
 │       │   └── websockets/
-│       │       ├── stt_ws.py           # /ws/audio (STT only)
 │       │       └── chat_ws.py          # /ws/chat (full pipeline + TTS)
 │       ├── schemas/messages.py         # Pydantic WS message models
 │       ├── prompts/
@@ -93,21 +100,23 @@ Shore-Assistant/
         ├── layouts/
         │   └── AppLayout/
         │       ├── index.tsx               # Shell layout wrapper
-        │       ├── Header.tsx              # Top navigation bar
         │       ├── Footer.tsx              # Bottom bar
         │       └── Sidebar.tsx             # Left sidebar
         ├── services/
         │   ├── vad.service.ts              # Silero VAD (ONNX)
-        │   ├── websocket.service.ts        # STT WebSocket (/ws/audio)
-        │   └── chat-websocket.service.ts   # Chat WebSocket (/ws/chat)
+        │   ├── chat-websocket.service.ts   # Chat WebSocket (/ws/chat)
+        │   ├── memory-api.service.ts       # Memory admin REST client
+        │   ├── dashboard.service.ts        # Dashboard snapshot fetcher
+        │   └── chronicles.service.ts       # Chronicles list + single-entry fetcher
         ├── hooks/
-        │   ├── useSTT.ts                   # STT-only hook (VAD Test page)
-        │   ├── useVADAudio.ts              # VAD-only hook
-        │   └── useAssistant.ts             # Full assistant hook (VAD + LLM + TTS)
+        │   ├── useAssistant.ts             # Full assistant hook (VAD + LLM + TTS)
+        │   └── useDashboardPoll.ts         # 5s poll for /api/dashboard, pauses on tab hidden
         ├── components/
         │   └── AgentActionLog.tsx           # Real-time agent action display
         ├── pages/
-        │   ├── Main/index.tsx              # VAD Test page
+        │   ├── Dashboard/index.tsx         # Service / DB / hardware / worker status page (default route)
+        │   ├── Memory/                     # Profile + Episodic + Audit panel (Phase 4)
+        │   ├── Chronicles/index.tsx        # Versioned changelog, rendered from docs/chronicles/*.md
         │   └── Chat/
         │       ├── index.tsx               # Assistant chat page
         │       └── SettingsPanel.tsx        # Right sidebar settings
@@ -135,6 +144,15 @@ python -m uvicorn app.main:app --reload --port 9000
 # Start memory stack (on the LAN DB server, once)
 ssh <server>
 cd Shore-Assistant/deploy/memory && docker compose up -d
+
+# (Optional) Expose Glances JSON API on the LAN DB server so the Dashboard
+# can probe its CPU/RAM/disk/GPU. One-time install on the server:
+ssh <server>
+pip install glances[web]
+# Run (background — wrap in tmux/systemd for persistence):
+glances -w --disable-webui --port 61208 --bind 0.0.0.0
+# Then in back-end/.env: REMOTE_SERVER_ENABLED=True,
+# REMOTE_SERVER_GLANCES_URL=http://<server>:61208, REMOTE_SERVER_NAME="DB Server"
 ```
 
 ### Terminal Microservice (shore-pty-service)
@@ -195,7 +213,8 @@ docker compose -f docker-compose.n8n.yml up -d
 - **n8n integration**: Two-way — Shore discovers active n8n webhook workflows via REST API at startup and registers them as dynamic tools; n8n can push notifications to Shore via `POST /api/n8n/webhook`. Opt-in via `N8N_ENABLED=True`.
 - **Conversation memory**: Three layers behind `MemoryFacade.assemble_context()`. Short-term (Redis LIST `shore:short_term:messages`, 15 turns, AOF). Profile (Postgres JSONB single-row + append-only audit log). Episodic (Qdrant `shore_episodic` collection with payload-indexed `entity_tags`/`created_at`/`valence`). Per-layer 500 ms circuit breaker; chat degrades to short-term only if Postgres / Qdrant are down. Phase 3 will add a LOCOMO worker that writes to Profile + Episodic from chat history.
 - **Memory injection into system prompt**: `chat_ws` calls `memory_facade.assemble_context(user_text)` per turn and threads the `ContextBundle` into `agent_service.run`, which passes it to `build_system_prompt`. The system prompt then appends `[Profile]` (compact JSON, capped at `MEMORY_PROFILE_MAX_BYTES`, pruned by per-key `updated_at`) and `[Relevant memories]` (top-K bullet list by cosine similarity — fact + tags only, no emotion in P2). Notifications (`no_tools=True`) drop the bundle to keep proactive nudges free of identity content.
-- **Memory debug API**: `DEBUG_MEMORY=True` enables `/api/memory/profile/change`, `GET /api/memory/profile`, `/profile/history?key=...`, `/episodic/upsert`, `/episodic/search?q=...` for manual seeding. Default off; enable temporarily during Phase 2 verification.
+- **Memory admin API**: `/api/memory/*` endpoints (always mounted). Profile: `GET /profile`, `POST /profile/change`, `GET /profile/history?key=...`, `GET /profile/audit?limit=`, `POST /profile/restore {audit_id, reason?}`. Episodic: `GET /episodic/recent?limit=`, `GET /episodic/search?q=&top_k=`, `POST /episodic/upsert`, `DELETE /episodic/{point_id}`. Backs the frontend Memory page at `/memory`. Admin-only (CSRF on writes) when `AUTH_ENABLED=True`; open when disabled.
+- **Auth (Google OAuth + Redis sessions)**: Master switch `AUTH_ENABLED` (default False — legacy synthetic-admin mode preserves pre-auth behavior). When enabled: `/api/auth/login` → Google consent → `/api/auth/callback` checks email against `AUTH_ALLOWED_EMAILS` (comma-separated, first email = admin role), creates a session in Redis under `shore:session:<sid>` with sliding TTL, sets an HttpOnly cookie. `/api/auth/me` returns `{email, role, csrf}`; the frontend stores the CSRF token in memory and sends it as `X-CSRF-Token` on writes. `/api/auth/logout` deletes the Redis key + clears the cookie. WS upgrades validate the cookie and close with code 4401 if unauthenticated. **Short-term memory becomes per-user** (`shore:short_term:<user_id>:messages`); Profile and Episodic stay global. **LOCOMO worker only extracts from admin turns** — non-admin allowlisted users can chat without their words reaching Luna's shared identity profile. Public-no-login routes when auth is on: `/health`, `/api/chronicles`.
 - **LOCOMO worker (Phase 3)**: Gemini 2.5 Flash with `response_schema=WorkerOutput` runs after 30 s of chat idle. Debounced via `WorkerService.on_turn_completed()` (cancel-on-new-turn). Safety valve fires immediately at `WORKER_MAX_UNPROCESSED_MESSAGES`. Dual-locked via `asyncio.Lock` + Redis `SETNX shore:worker:lock` (TTL 60 s). Disabled by `WORKER_ENABLED=False`. Notifications skip the trigger.
 - **Canonicalizer**: Internal APScheduler job (registered via `scheduler_service.add_system_job`, invisible to `list_tasks`). Cron `0 4 * * *` by default. Greedy single-pass clustering on entity tags at cosine ≥0.85; rewrites Qdrant point payloads in place.
 
@@ -211,7 +230,23 @@ All backend config via environment variables or `.env` file in `back-end/`:
 | PERSONA | kuudere | Persona template to load (`base` or `kuudere`) |
 | MEMORY_MAX_TURNS | 15 | Max conversation turns retained per session |
 | REDIS_URL | redis://localhost:6379/0 | Redis URL for short-term memory |
-| REDIS_SHORT_TERM_KEY | shore:short_term:messages | Redis LIST key for the sliding window |
+| REDIS_SHORT_TERM_KEY | shore:short_term | Base prefix; per-user window stored at `{prefix}:{user_id}:messages` |
+| AUTH_ENABLED | False | Master switch. When False, app runs as a synthetic admin (pre-auth behavior). |
+| AUTH_ALLOWED_EMAILS | (empty) | Comma-separated Google emails. First entry gets `admin` role; others `user`. |
+| AUTH_GOOGLE_CLIENT_ID | (empty) | Google OAuth client id (from Google Cloud Console) |
+| AUTH_GOOGLE_CLIENT_SECRET | (empty) | Google OAuth client secret |
+| AUTH_SESSION_SECRET | (empty) | Reserved for future cookie signing (32+ bytes recommended) |
+| AUTH_SESSION_TTL_SECONDS | 604800 | Session sliding TTL (7 days) |
+| AUTH_SESSION_KEY_PREFIX | shore:session: | Redis key prefix for sessions |
+| AUTH_OAUTH_STATE_KEY_PREFIX | shore:oauth_state: | Redis key prefix for one-shot OAuth state tokens |
+| AUTH_OAUTH_STATE_TTL_SECONDS | 300 | TTL on OAuth state token (5 min) |
+| AUTH_COOKIE_NAME | shore_session | Session cookie name |
+| AUTH_COOKIE_SECURE | True | Set False for local http dev |
+| AUTH_COOKIE_SAMESITE | lax | SameSite attribute on the session cookie |
+| AUTH_COOKIE_DOMAIN | (empty) | Set to `.shore-keeper.com` for cross-subdomain (bearer↔api) cookie sharing |
+| AUTH_FRONTEND_ORIGINS | http://localhost:5173 | Comma-separated origins allowed by CORS when AUTH_ENABLED |
+| AUTH_OAUTH_REDIRECT_URL | http://localhost:9000/api/auth/callback | Backend callback URL (must match Google client config) |
+| AUTH_POST_LOGIN_REDIRECT_URL | / | Where the OAuth callback redirects after setting the cookie. Absolute URL for cross-origin deploys. |
 | POSTGRES_URL | postgresql://shore:changeme@localhost:5432/shore_memory | Postgres DSN for Profile (Phase 2) |
 | POSTGRES_POOL_MIN | 1 | asyncpg pool min size |
 | POSTGRES_POOL_MAX | 5 | asyncpg pool max size |
@@ -220,7 +255,6 @@ All backend config via environment variables or `.env` file in `back-end/`:
 | MEMORY_EPISODIC_TOP_K | 5 | Max episodic facts injected into system prompt per turn |
 | MEMORY_EPISODIC_MIN_SCORE | 0.3 | Minimum cosine score for episodic retrieval |
 | MEMORY_PROFILE_MAX_BYTES | 2048 | Hard cap for Profile JSON injected into system prompt (compact bytes) |
-| DEBUG_MEMORY | False | Enable `/api/memory/...` debug REST endpoints (Phase 2 seeding) |
 | SCHEDULER_TASKS_FILE | data/scheduled_tasks.json | Persisted scheduler task list |
 | SCHEDULER_PENDING_FILE | data/pending_notifications.json | Queued notifications for offline client |
 | TOOL_RETRIEVER_MODEL | all-MiniLM-L6-v2 | Sentence-transformers model for tool embedding |
@@ -248,6 +282,9 @@ All backend config via environment variables or `.env` file in `back-end/`:
 | CANONICALIZER_ENABLED | True | Enable nightly entity-tag dedup job |
 | CANONICALIZER_CRON | 0 4 * * * | When to run the canonicalizer (local time) |
 | CANONICALIZER_SIMILARITY_THRESHOLD | 0.85 | Cosine threshold for merging entity tags |
+| REMOTE_SERVER_ENABLED | False | Enable remote server hardware probe in Dashboard |
+| REMOTE_SERVER_NAME | DB Server | Display name for the remote server card |
+| REMOTE_SERVER_GLANCES_URL | (empty) | Glances JSON API base URL, e.g. `http://192.168.1.50:61208` |
 
 ## Conventions
 
@@ -268,6 +305,7 @@ All backend config via environment variables or `.env` file in `back-end/`:
 - [x] Memory backend Phase 1 — Redis short-term + Docker stack
 - [x] Memory backend Phase 2 — Profile (Postgres) + Episodic (Qdrant) + read-path integration + debug API + /health probes + frontend banner
 - [x] Memory backend Phase 3 — LOCOMO worker (Gemini 2.5 Flash) + canonicalizer (auto-extract facts from chat history)
+- [x] Memory frontend panel (Phase 4) — `/memory` route with Profile tree view, Episodic browser, Audit log + restore
 - [ ] Wake word detection — trigger VAD only on a keyword (e.g. "Hey Shore")
 - [ ] Tool result streaming — show tool output progressively in the agent log
 - [ ] Voice selection UI — let user pick Kokoro voice from settings panel

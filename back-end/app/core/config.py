@@ -28,7 +28,9 @@ class Settings(BaseSettings):
 
     # ── Short-term memory (Phase 1) ──
     REDIS_URL: str = "redis://localhost:6379/0"
-    REDIS_SHORT_TERM_KEY: str = "shore:short_term:messages"
+    # Base key prefix; per-user window stored at
+    # `{prefix}:{user_id}:messages`.
+    REDIS_SHORT_TERM_KEY: str = "shore:short_term"
 
     # ── Phase 2: Profile (Postgres) + Episodic (Qdrant) ──
     POSTGRES_URL: str = "postgresql://shore:changeme@localhost:5432/shore_memory"
@@ -39,7 +41,6 @@ class Settings(BaseSettings):
     MEMORY_EPISODIC_TOP_K: int = 5
     MEMORY_EPISODIC_MIN_SCORE: float = 0.3
     MEMORY_PROFILE_MAX_BYTES: int = 2048
-    DEBUG_MEMORY: bool = False
 
     # ── Phase 3: LOCOMO worker + canonicalizer ──
     WORKER_ENABLED: bool = True
@@ -54,6 +55,14 @@ class Settings(BaseSettings):
     CANONICALIZER_ENABLED: bool = True
     CANONICALIZER_CRON: str = "0 4 * * *"  # daily at 04:00 local
     CANONICALIZER_SIMILARITY_THRESHOLD: float = 0.85
+
+    # FileBrowser
+    FILEBROWSER_URL: str = "http://image.shore-keeper.com"
+
+    # Remote server hardware probe (Glances JSON API)
+    REMOTE_SERVER_ENABLED: bool = False
+    REMOTE_SERVER_NAME: str = "DB Server"
+    REMOTE_SERVER_GLANCES_URL: str = ""  # e.g. http://192.168.1.50:61208
 
     # Persona
     PERSONA: str = "kuudere"  # "base" or "kuudere"
@@ -101,6 +110,44 @@ class Settings(BaseSettings):
     TERMINAL_RUNS_DIR: str = "data/terminal_runs"
     TERMINAL_AUDIT_LOG: str = "data/terminal_audit.log"
     BACKGROUND_SERVICES_LOG_DIR: str = "data/background_services"
+
+    # ── Auth (Google OAuth + Redis-backed sessions) ──
+    # Master switch. When False, no login is required and all requests
+    # run as a synthetic admin user — preserves pre-auth behavior.
+    AUTH_ENABLED: bool = False
+    # Comma-separated list of Google emails allowed to sign in.
+    # The first email in the list is granted the "admin" role; all
+    # others get "user". Whitespace is trimmed, case-insensitive match.
+    AUTH_ALLOWED_EMAILS: str = ""
+    AUTH_GOOGLE_CLIENT_ID: str = ""
+    AUTH_GOOGLE_CLIENT_SECRET: str = ""
+    # Secret used to sign the session-id cookie (defense in depth on
+    # top of the Redis lookup). Generate a random 32+ byte value.
+    AUTH_SESSION_SECRET: str = ""
+    AUTH_SESSION_TTL_SECONDS: int = 7 * 24 * 3600  # 7 days, sliding
+    AUTH_SESSION_KEY_PREFIX: str = "shore:session:"
+    AUTH_OAUTH_STATE_KEY_PREFIX: str = "shore:oauth_state:"
+    AUTH_OAUTH_STATE_TTL_SECONDS: int = 300
+    AUTH_COOKIE_NAME: str = "shore_session"
+    AUTH_COOKIE_SECURE: bool = True  # set False for local http dev
+    AUTH_COOKIE_SAMESITE: str = "lax"
+    # When frontend and backend live on different subdomains of the same
+    # registrable domain (e.g. bearer.shore-keeper.com ↔ api.shore-keeper.com),
+    # set this to the shared parent (e.g. ".shore-keeper.com") so the
+    # session cookie is sent on both. Leave empty for same-origin dev.
+    AUTH_COOKIE_DOMAIN: str = ""
+    # Comma-separated allowed origins for CORS when AUTH_ENABLED.
+    # Required because cookies + wildcard CORS is rejected by browsers.
+    AUTH_FRONTEND_ORIGINS: str = "http://localhost:5173"
+    # Where Google redirects after consent. Must exactly match a URI
+    # registered in the Google Cloud OAuth client.
+    AUTH_OAUTH_REDIRECT_URL: str = "http://localhost:9000/api/auth/callback"
+    # Where the OAuth callback sends the browser AFTER it sets the cookie.
+    # For cross-subdomain deploys (frontend on bearer.shore-keeper.com,
+    # backend on api.shore-keeper.com) this MUST be an absolute URL
+    # pointing at the frontend; otherwise the browser lands on the
+    # backend domain. Defaults to "/" for same-origin dev.
+    AUTH_POST_LOGIN_REDIRECT_URL: str = "/"
 
     # Node PTY microservice
     NODE_PTY_WS_URL: str = "wss://terminal.shore-keeper.com"

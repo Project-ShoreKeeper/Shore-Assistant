@@ -12,8 +12,13 @@ from app.services.memory import memory_facade, worker_service
 from app.tools import ALL_TOOLS
 from app.core.config import settings
 from app.api.endpoints.health import router as health_router
-from app.api.websockets.stt_ws import router as stt_ws_router
+from app.api.endpoints.memory import router as memory_router
+from app.api.endpoints.dashboard import router as dashboard_router
+from app.api.endpoints.chronicles import router as chronicles_router
+from app.api.endpoints.auth import router as auth_router
 from app.api.websockets.chat_ws import router as chat_ws_router
+from app.api import deps as auth_deps
+from app.core.auth import SessionStore
 
 
 @asynccontextmanager
@@ -55,6 +60,21 @@ async def lifespan(app: FastAPI):
     # Initialize memory facade
     await memory_facade.startup()
 
+    # Wire the auth session store onto the same Redis the memory facade uses.
+    # Session lookups share the connection pool — no extra infra cost.
+    auth_deps.set_session_store(SessionStore(
+        redis=memory_facade._redis,
+        ttl_seconds=settings.AUTH_SESSION_TTL_SECONDS,
+        key_prefix=settings.AUTH_SESSION_KEY_PREFIX,
+    ))
+    if settings.AUTH_ENABLED:
+        print(
+            f"[Auth] enabled — allowlist={settings.AUTH_ALLOWED_EMAILS!r} "
+            f"redirect={settings.AUTH_OAUTH_REDIRECT_URL}"
+        )
+    else:
+        print("[Auth] disabled (AUTH_ENABLED=False) — running as legacy admin")
+
     # Phase 3: LOCOMO worker
     if settings.WORKER_ENABLED:
         await worker_service.startup(
@@ -94,23 +114,36 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# CORS: when auth is on, we MUST pin origins to a specific list because
+# cookies + wildcard CORS is rejected by browsers. When auth is off, keep
+# the open-everything default for dev convenience.
+if settings.AUTH_ENABLED:
+    _allowed_origins = [
+        o.strip() for o in settings.AUTH_FRONTEND_ORIGINS.split(",") if o.strip()
+    ]
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_allowed_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*", "X-CSRF-Token"],
+    )
+else:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 app.include_router(health_router)
-app.include_router(stt_ws_router)
+app.include_router(auth_router)
+app.include_router(memory_router)
+app.include_router(dashboard_router)
+app.include_router(chronicles_router)
 app.include_router(chat_ws_router)
 
 if settings.N8N_ENABLED:
     from app.api.endpoints.n8n_webhook import router as n8n_router
     app.include_router(n8n_router)
-
-if settings.DEBUG_MEMORY:
-    from app.api.endpoints.memory_debug import router as memory_debug_router
-    app.include_router(memory_debug_router)
-    print("[App] DEBUG_MEMORY=True — memory debug endpoints enabled")

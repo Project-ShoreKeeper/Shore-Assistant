@@ -319,6 +319,34 @@ async def test_send_to_session_converts_lf_to_cr_for_conpty(tmp_path: Path):
     assert sent == ["ls\r", "git status\r", "echo a\rline2\r"]
 
 
+async def test_send_to_session_salvages_double_escaped_newline_from_llm(tmp_path: Path):
+    """Smaller local LLMs sometimes double-escape the newline in their JSON
+    tool args — emitting `\\n` (backslash + n, 2 chars) instead of a real LF.
+    Without defensive translation, the shell would type the literal string `\\n`
+    and never press Enter, piling subsequent commands onto the same input line.
+    """
+    sent: list[str] = []
+
+    async def fake_call(method, params, timeout=None):
+        if method == "session.open":
+            return {"session_id": params["session_id"], "pid": 1}
+        if method == "session.send":
+            sent.append(params["data"])
+            return {"ok": True}
+        raise AssertionError(f"unexpected: {method}")
+
+    svc, _backend, _client = _mk_svc(tmp_path, AsyncMock(side_effect=fake_call))
+    await svc.open_session("dev", shell="powershell")
+
+    # These are what arrives if the LLM emitted `{"input": "claude\\n"}` (JSON
+    # double-escape) — Python sees 2 literal chars: backslash + n.
+    await svc.send_to_session("dev", "claude\\n", wait_seconds=0)
+    await svc.send_to_session("dev", "git status\\r\\n", wait_seconds=0)
+    await svc.send_to_session("dev", "echo a\\nline2\\n", wait_seconds=0)
+
+    assert sent == ["claude\r", "git status\r", "echo a\rline2\r"]
+
+
 async def test_send_to_session_does_not_treat_continuation_prompt_as_ready(tmp_path: Path):
     """`>>` is PSReadLine's continuation prompt (input incomplete), not the
     ready prompt — prompt_seen must stay False when the buffer ends with `>>`."""

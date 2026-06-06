@@ -23,8 +23,8 @@ Long-running commands alone are NOT a valid case — `run_command` streams outpu
 2. **NEVER use line-continuation characters** (`` ` `` in powershell, `\` in bash). They make the session show `>>` and hang waiting for more input. Each call must be a complete statement.
 3. **Long-running processes hijack the session.** Servers, watchers, REPLs, `npm run dev`, `.\app.exe` take over stdin/stdout — further `send_to_terminal` calls become stdin TO that process. Use `start_background_service` (preferred), or open a SECOND session with `open_terminal`, or use `run_command` if it's a one-shot.
 
-End every `input` string with `\n` so the shell submits the line (`\n` and `\r\n` are normalized to the keystroke ConPTY needs).
+End every `input` string with a real newline character (the Enter key, U+000A) so the shell submits the line. In your JSON tool arguments that is the SINGLE escape `\n` — do NOT double-escape it as `\\n` (the model sometimes does this when it shouldn't; the result is the literal two characters backslash + n typed into the prompt and Enter is never pressed). Real LF and CRLF are both normalized to the keystroke ConPTY needs.
 
-If output ends with `>> ` (PowerShell continuation prompt — open quote/bracket/backtick), DO NOT keep sending lines on top. Send `\x03` (Ctrl+C) to abort, then re-send the corrected complete statement.
+If output ends with `>> ` (PowerShell continuation prompt — open quote/bracket/backtick), DO NOT keep sending lines on top. Send Ctrl+C (the JSON escape ``) to abort, then re-send the corrected complete statement.
 
 When using sessions, call `list_terminals` and read `shell` before sending input — shell quirks (chaining syntax, env vars) differ per shell.

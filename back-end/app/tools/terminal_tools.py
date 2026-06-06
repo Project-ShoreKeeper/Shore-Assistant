@@ -61,7 +61,9 @@ async def send_to_terminal(name: str, input: str, wait_seconds: float = 10.0) ->
 
     Args:
         name: Session name from open_terminal.
-        input: Text to send (include "\\n" to submit a line).
+        input: Text to send. End with a real newline character (the Enter key,
+            U+000A) so the shell submits the line. In JSON tool arguments this
+            is the single escape `\n` — do NOT double-escape it as `\\n`.
         wait_seconds: Max seconds to wait for the next prompt before returning.
     """
     result = await terminal_service.send_to_session(name=name, data=input, wait_seconds=wait_seconds)

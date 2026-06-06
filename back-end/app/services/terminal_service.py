@@ -82,10 +82,18 @@ def _normalize_send_data(data: str) -> str:
     for Enter. PSReadLine on ConPTY treats LF as Shift+Enter (newline-in-input,
     shows the `>>` continuation prompt) — only CR triggers VK_RETURN. PTYs on
     Linux/macOS/Git-Bash strip CR via ICRNL, so a single CR is also fine there.
+
+    Also salvages the common LLM bug where the model double-escapes the newline
+    in its JSON tool args (emits `\\n` — backslash + n, 2 chars — instead of a
+    real LF). Without this, send_to_terminal types the literal string `\\n` into
+    the shell and never presses Enter.
     """
     if not data:
         return data
-    # Collapse CRLF first so we don't end up with double Enter.
+    # Defense first: translate literal 2-char escape sequences (\r\n, \n, \r)
+    # to a real CR. Order matters — handle \r\n before standalone \n / \r.
+    data = data.replace("\\r\\n", "\r").replace("\\n", "\r").replace("\\r", "\r")
+    # Then collapse real CRLF and LF so we don't end up with double Enter.
     return data.replace("\r\n", "\r").replace("\n", "\r")
 
 # Capacity for the sliding output buffer kept per interactive session.
@@ -330,6 +338,13 @@ class TerminalService:
         before_bytes = entry.get("_total_bytes", 0)
         prompt_re: Optional[re.Pattern] = entry.get("_prompt_pattern")
         normalized = _normalize_send_data(data)
+        # repr() makes escape sequences (\r, \n, literal backslash-n) visible —
+        # this is the only place we see the exact bytes leaving the agent.
+        self._audit({
+            "kind": "session_send", "name": name,
+            "session_id": entry["session_id"],
+            "data_raw": repr(data), "data_sent": repr(normalized),
+        })
         try:
             await self.backend.send_to_session_exec(entry["session_id"], normalized)
         except Exception as e:

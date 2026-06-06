@@ -1,0 +1,60 @@
+@media (max-width: 768px) {
+  /* Stack sidebar on top of content */
+  .chr-root {
+    flex-direction: column !important;
+  }
+
+  /* Sidebar becomes a horizontal scrollable tab strip */
+  .chr-sidebar {
+    width: 100% !important;
+    height: auto !important;
+    flex-direction: row !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    border-right: none !important;
+    border-bottom: 1px solid var(--gray-5);
+    flex-shrink: 0 !important;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Hide "CHRONICLES" label — wastes space in horizontal strip */
+  .chr-sidebar-header {
+    display: none !important;
+  }
+
+  /* Entries in a row */
+  .chr-sidebar-list {
+    flex-direction: row !important;
+    flex-wrap: nowrap !important;
+    padding: 0 !important;
+    align-items: stretch !important;
+  }
+
+  /* Each version tab */
+  .chr-nav-link {
+    border-left: none !important;
+    border-bottom: 3px solid transparent;
+    padding: 10px 14px !important;
+    white-space: nowrap;
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: center !important;
+    min-width: max-content;
+  }
+
+  .chr-nav-link--active {
+    border-bottom-color: var(--indigo-9) !important;
+  }
+
+  /* Tighten content padding */
+  .chr-content {
+    padding: 16px !important;
+  }
+
+  /* Tables: allow horizontal scroll */
+  .chr-content table {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+}

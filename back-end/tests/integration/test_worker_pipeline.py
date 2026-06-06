@@ -31,7 +31,7 @@ async def started_facade():
     await facade.startup()
     # Clear state for a clean test
     if facade.short_term:
-        await facade.short_term.clear()
+        await facade.short_term.clear(user_id="u1")
     yield facade
     await facade.shutdown()
 
@@ -42,8 +42,8 @@ async def test_worker_extracts_and_persists(started_facade):
 
     # Seed two short-term turns
     now = time.time()
-    await started_facade.append_user("I love espresso.")
-    await started_facade.append_assistant("Noted.")
+    await started_facade.append_user("I love espresso.", user_id="u1")
+    await started_facade.append_assistant("Noted.", user_id="u1")
 
     # Wire a worker with a mocked extractor
     w = WorkerService()
@@ -62,7 +62,7 @@ async def test_worker_extracts_and_persists(started_facade):
         )],
     ))
 
-    await w.extract()
+    await w.extract(user_id="u1")
 
     profile = await started_facade.profile.read()
     assert profile.get("preferences", {}).get("coffee") == "espresso"
@@ -74,8 +74,8 @@ async def test_worker_extracts_and_persists(started_facade):
 async def test_worker_idempotent_across_reruns(started_facade):
     redis = started_facade._redis
     now = time.time()
-    await started_facade.append_user("I drink oat milk.")
-    await started_facade.append_assistant("Got it.")
+    await started_facade.append_user("I drink oat milk.", user_id="u1")
+    await started_facade.append_assistant("Got it.", user_id="u1")
 
     w = WorkerService()
     await w.startup(redis=redis, facade=started_facade)
@@ -91,11 +91,11 @@ async def test_worker_idempotent_across_reruns(started_facade):
     ))
 
     before = await started_facade.episodic.count()
-    await w.extract()
+    await w.extract(user_id="u1")
     after_first = await started_facade.episodic.count()
     # Reset last_extracted_ts so the worker re-processes the same turns
-    await w.set_last_extracted_ts(0.0)
-    await w.extract()
+    await w.set_last_extracted_ts(0.0, user_id="u1")
+    await w.extract(user_id="u1")
     after_second = await started_facade.episodic.count()
 
     assert after_first - before == 1

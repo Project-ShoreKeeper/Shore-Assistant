@@ -36,7 +36,8 @@ def read_file(file_path: str) -> str:
 @tool
 async def clear_memory() -> str:
     """Clear the conversation memory. Use when the user asks to forget previous conversations or start fresh."""
-    cleared = await memory_facade.clear()
+    from app.core.auth import current_user_id
+    cleared = await memory_facade.clear(user_id=current_user_id.get())
     if cleared:
         return "Conversation memory cleared. Starting fresh."
     return "No conversation memory to clear."

@@ -69,9 +69,11 @@ class MemoryFacade:
         await self.profile.shutdown()
         await self.episodic.shutdown()
 
-    async def assemble_context(self, user_text: str) -> ContextBundle:
+    async def assemble_context(
+        self, user_text: str, user_id: str,
+    ) -> ContextBundle:
         short_term, profile_raw, episodic = await asyncio.gather(
-            self._safe_load_short_term(),
+            self._safe_load_short_term(user_id),
             self._safe_read_profile(),
             self._safe_search_episodic(user_text),
         )
@@ -83,37 +85,43 @@ class MemoryFacade:
         )
 
     async def append_user(
-        self, content: str, extras: Optional[dict] = None,
+        self, content: str, user_id: str, extras: Optional[dict] = None,
     ) -> None:
-        await self._safe_append(Message(
-            role="user", content=content, timestamp=time.time(), extras=extras,
-        ))
+        await self._safe_append(
+            Message(
+                role="user", content=content, timestamp=time.time(), extras=extras,
+            ),
+            user_id=user_id,
+        )
 
     async def append_assistant(
-        self, content: str, extras: Optional[dict] = None,
+        self, content: str, user_id: str, extras: Optional[dict] = None,
     ) -> None:
-        await self._safe_append(Message(
-            role="assistant", content=content, timestamp=time.time(),
-            extras=extras,
-        ))
+        await self._safe_append(
+            Message(
+                role="assistant", content=content, timestamp=time.time(),
+                extras=extras,
+            ),
+            user_id=user_id,
+        )
 
-    async def clear(self) -> bool:
+    async def clear(self, user_id: str) -> bool:
         if self.short_term is None:
             return False
         try:
-            return await self.short_term.clear()
+            return await self.short_term.clear(user_id=user_id)
         except RedisError as e:
             print(f"[Memory] clear failed: {e}")
             return False
 
     # ── private helpers ─────────────────────────────────────────────
 
-    async def _safe_load_short_term(self):
+    async def _safe_load_short_term(self, user_id: str):
         if self.short_term is None:
             return []
         try:
             return await asyncio.wait_for(
-                self.short_term.load(), timeout=_TIMEOUT,
+                self.short_term.load(user_id=user_id), timeout=_TIMEOUT,
             )
         except (RedisError, asyncio.TimeoutError) as e:
             print(f"[Memory] short_term.load degraded: {e}")
@@ -157,12 +165,12 @@ class MemoryFacade:
             print(f"[Memory] prune_profile failed: {e!r}")
             return raw
 
-    async def _safe_append(self, message: Message) -> None:
+    async def _safe_append(self, message: Message, user_id: str) -> None:
         if self.short_term is None:
             print("[Memory] append skipped — facade not started")
             return
         try:
-            await self.short_term.append(message)
+            await self.short_term.append(message, user_id=user_id)
         except RedisError as e:
             print(f"[Memory] short_term.append failed: {e}")
 

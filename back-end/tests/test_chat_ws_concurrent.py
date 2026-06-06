@@ -29,11 +29,11 @@ from app.services.terminal_service import terminal_service
 def client(monkeypatch):
     # Stub memory_facade.short_term since tests don't run the full lifespan
     class _Stub:
-        async def load(self):
+        async def load(self, **_):
             return []
-        async def append(self, m):
+        async def append(self, m, **_):
             pass
-        async def clear(self):
+        async def clear(self, **_):
             return True
         async def health(self):
             return True

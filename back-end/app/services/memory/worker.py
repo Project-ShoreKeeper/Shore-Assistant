@@ -19,25 +19,31 @@ class WorkerService:
         self._facade = None  # injected during startup to avoid circular import
         self._lock = asyncio.Lock()
         self._pending_task: Optional[asyncio.Task] = None
+        # The user whose turns we extract from. Set by on_turn_completed
+        # so that the LOCOMO worker only fires for admin (Luna) chats.
+        self._pending_user_id: Optional[str] = None
 
-    async def get_last_extracted_ts(self) -> float:
+    def _last_ts_key(self, user_id: str) -> str:
+        return f"{settings.WORKER_LAST_TS_KEY}:{user_id}"
+
+    async def get_last_extracted_ts(self, user_id: str) -> float:
         if self._redis is None:
             return 0.0
         try:
-            raw = await self._redis.get(settings.WORKER_LAST_TS_KEY)
+            raw = await self._redis.get(self._last_ts_key(user_id))
         except RedisError:
             return 0.0
         return float(raw) if raw else 0.0
 
-    async def set_last_extracted_ts(self, ts: float) -> None:
+    async def set_last_extracted_ts(self, ts: float, user_id: str) -> None:
         if self._redis is None:
             return
         try:
-            await self._redis.set(settings.WORKER_LAST_TS_KEY, str(ts))
+            await self._redis.set(self._last_ts_key(user_id), str(ts))
         except RedisError as e:
             print(f"[Worker] set_last_extracted_ts failed: {e}")
 
-    async def extract(self) -> None:
+    async def extract(self, user_id: str) -> None:
         """Read new short-term turns, extract via local LLM, apply to Profile + Episodic."""
         if self._facade is None or self._extractor is None:
             print("[Worker] extract skipped — not started")
@@ -51,7 +57,7 @@ class WorkerService:
                 print("[Worker] extract skipped — redis lock held by another process")
                 return
             try:
-                await self._extract_inner()
+                await self._extract_inner(user_id=user_id)
             finally:
                 await self._release_redis_lock()
 
@@ -76,9 +82,9 @@ class WorkerService:
         except RedisError as e:
             print(f"[Worker] redis lock release failed: {e}")
 
-    async def _extract_inner(self) -> None:
-        last_ts = await self.get_last_extracted_ts()
-        all_turns = await self._facade.short_term.load()
+    async def _extract_inner(self, user_id: str) -> None:
+        last_ts = await self.get_last_extracted_ts(user_id)
+        all_turns = await self._facade.short_term.load(user_id=user_id)
         unprocessed: list[Message] = [
             m for m in all_turns if m.timestamp > last_ts
         ]
@@ -118,7 +124,7 @@ class WorkerService:
                 print(f"[Worker] episodic.upsert failed: {e!r}")
 
         newest_ts = max(m.timestamp for m in unprocessed)
-        await self.set_last_extracted_ts(newest_ts)
+        await self.set_last_extracted_ts(newest_ts, user_id=user_id)
         print(
             f"[Worker] extracted "
             f"{len(output.profile_changes)} profile change(s) + "
@@ -140,18 +146,25 @@ class WorkerService:
             print(f"[Worker] emit status failed: {e!r}")
 
 
-    async def on_turn_completed(self) -> None:
-        """Hook called by chat_ws after each assistant turn is persisted."""
+    async def on_turn_completed(self, user_id: str) -> None:
+        """Hook called by chat_ws after each assistant turn is persisted.
+
+        Callers gate by role — chat_ws only invokes this for the admin
+        user. The worker treats `user_id` as the conversation it should
+        extract from.
+        """
         if not settings.WORKER_ENABLED:
             return
 
-        if await self._safety_valve_should_fire():
+        self._pending_user_id = user_id
+
+        if await self._safety_valve_should_fire(user_id):
             await self._cancel_pending()
-            self._pending_task = asyncio.create_task(self.extract())
+            self._pending_task = asyncio.create_task(self.extract(user_id))
             return
 
         await self._cancel_pending()
-        self._pending_task = asyncio.create_task(self._delayed_extract())
+        self._pending_task = asyncio.create_task(self._delayed_extract(user_id))
 
     async def startup(self, redis: Redis, facade) -> None:
         """Wire dependencies. Idempotent."""
@@ -172,24 +185,24 @@ class WorkerService:
         if self._extractor:
             await self._extractor.close()
 
-    async def _safety_valve_should_fire(self) -> bool:
+    async def _safety_valve_should_fire(self, user_id: str) -> bool:
         if self._facade is None:
             return False
         try:
-            last_ts = await self.get_last_extracted_ts()
-            turns = await self._facade.short_term.load()
+            last_ts = await self.get_last_extracted_ts(user_id)
+            turns = await self._facade.short_term.load(user_id=user_id)
             unprocessed = sum(1 for m in turns if m.timestamp > last_ts)
             return unprocessed >= settings.WORKER_MAX_UNPROCESSED_MESSAGES
         except Exception as e:
             print(f"[Worker] safety_valve check failed: {e!r}")
             return False
 
-    async def _delayed_extract(self) -> None:
+    async def _delayed_extract(self, user_id: str) -> None:
         try:
             await asyncio.sleep(settings.WORKER_IDLE_DELAY_SECONDS)
         except asyncio.CancelledError:
             return
-        await self.extract()
+        await self.extract(user_id)
 
     async def _cancel_pending(self) -> None:
         task = self._pending_task

@@ -1,4 +1,6 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+from app.api.deps import csrf_check, require_admin
+from app.core.auth import User
 from app.core.config import settings
 from app.services.memory import memory_facade
 
@@ -44,7 +46,10 @@ def get_config():
     }
 
 
-@router.post("/clear-memory")
-async def clear_memory():
-    cleared = await memory_facade.clear()
+@router.post(
+    "/clear-memory",
+    dependencies=[Depends(csrf_check)],
+)
+async def clear_memory(user: User = Depends(require_admin)):
+    cleared = await memory_facade.clear(user_id=user.id)
     return {"cleared": cleared}

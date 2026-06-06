@@ -74,7 +74,7 @@ def test_history_message_sent_on_connect_with_persisted_data(client, monkeypatch
         },
     ]
 
-    async def _fake_load():
+    async def _fake_load(**_):
         return [Message(**m) for m in fake_history]
 
     monkeypatch.setattr(memory_facade.short_term, "load", _fake_load)
@@ -101,7 +101,7 @@ def test_history_message_sent_on_connect_with_persisted_data(client, monkeypatch
 
 
 def test_history_message_sent_on_connect_when_empty(client, monkeypatch):
-    async def _fake_load_empty():
+    async def _fake_load_empty(**_):
         return []
 
     monkeypatch.setattr(memory_facade.short_term, "load", _fake_load_empty)

@@ -36,20 +36,21 @@ async def main():
     await memory_facade.startup()
 
     msg = Message(role="user", content="bench", timestamp=time.time())
+    uid = "bench"
     await measure(
         "short_term.append()",
-        lambda: memory_facade.short_term.append(msg),
+        lambda: memory_facade.short_term.append(msg, user_id=uid),
     )
     await measure(
         "short_term.load()",
-        lambda: memory_facade.short_term.load(),
+        lambda: memory_facade.short_term.load(user_id=uid),
     )
     await measure(
         "facade.assemble_context()",
-        lambda: memory_facade.assemble_context("hello"),
+        lambda: memory_facade.assemble_context("hello", user_id=uid),
     )
 
-    await memory_facade.clear()
+    await memory_facade.clear(user_id=uid)
     await memory_facade.shutdown()
 
 

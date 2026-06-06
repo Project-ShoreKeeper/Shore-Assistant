@@ -9,6 +9,8 @@ import uuid
 import base64 as _b64
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from app.api.deps import get_session_store
+from app.core.auth import current_user_id
 from app.services.stt_service import stt_service
 from app.services.agent_service import agent_service
 from app.services.tts_service import tts_service
@@ -90,6 +92,26 @@ async def websocket_chat(websocket: WebSocket):
       - {"type": "llm_complete", ...}     -- Final response
       - {"type": "status"|"error", ...}   -- Status/error messages
     """
+    # Authenticate at upgrade. When AUTH_ENABLED=False, deps treat the
+    # connection as the legacy admin user.
+    if settings.AUTH_ENABLED:
+        sid = websocket.cookies.get(settings.AUTH_COOKIE_NAME)
+        session = await get_session_store().read(sid) if sid else None
+        if session is None:
+            # 4401 = our custom "unauthenticated" close code — frontend
+            # stops its reconnect loop on this.
+            await websocket.close(code=4401, reason="unauthenticated")
+            return
+        ws_user_id = session.user.id
+        ws_user_role = session.user.role
+    else:
+        ws_user_id = "legacy"
+        ws_user_role = "admin"
+
+    # Make the active user visible to tool calls (clear_memory etc) that
+    # run in this WS's asyncio task.
+    current_user_id.set(ws_user_id)
+
     await websocket.accept()
 
     # Per-connection state
@@ -120,7 +142,7 @@ async def websocket_chat(websocket: WebSocket):
     # level of each message dict, not nested under `extras` the way the
     # Redis `Message` schema stores them. Flatten on the way out so the
     # wire protocol stays stable; storage remains nested.
-    persisted_msgs = await memory_facade.short_term.load() if memory_facade.short_term else []
+    persisted_msgs = await memory_facade.short_term.load(user_id=ws_user_id) if memory_facade.short_term else []
     persisted: list[dict] = []
     for m in persisted_msgs:
         out = {"role": m.role, "content": m.content, "timestamp": m.timestamp}
@@ -232,6 +254,7 @@ async def websocket_chat(websocket: WebSocket):
             conversation_history.append(memory_message)
             await memory_facade.append_user(
                 content=memory_message["content"],
+                user_id=ws_user_id,
             )
         live_user_message = (
             _build_live_message(user_text, images) if images else None
@@ -256,7 +279,7 @@ async def websocket_chat(websocket: WebSocket):
         # Notifications skip this entirely to avoid the Postgres+Qdrant
         # round-trip; agent_service.run would drop the bundle anyway.
         bundle = (
-            await memory_facade.assemble_context(user_text)
+            await memory_facade.assemble_context(user_text, user_id=ws_user_id)
             if not is_notification else None
         )
 
@@ -328,12 +351,18 @@ async def websocket_chat(websocket: WebSocket):
                         }
                         await memory_facade.append_assistant(
                             content=assistant_text,
+                            user_id=ws_user_id,
                             extras=extras,
                         )
-                        # Phase 3: trigger LOCOMO worker debounce (no-op for notifications)
-                        if not is_notification:
+                        # Phase 3: trigger LOCOMO worker debounce only for the
+                        # admin user (Luna). Other allowlisted users can chat
+                        # but their words must not be extracted into Luna's
+                        # shared Profile / Episodic memory.
+                        if not is_notification and ws_user_role == "admin":
                             try:
-                                await worker_service.on_turn_completed()
+                                await worker_service.on_turn_completed(
+                                    user_id=ws_user_id,
+                                )
                             except Exception as e:
                                 print(f"[chat_ws] worker.on_turn_completed failed: {e!r}")
 
@@ -425,7 +454,7 @@ async def websocket_chat(websocket: WebSocket):
 
                     elif msg_type == "clear_memory":
                         conversation_history.clear()
-                        await memory_facade.clear()
+                        await memory_facade.clear(user_id=ws_user_id)
 
                         await send_json_safe({
                             "type": "status",

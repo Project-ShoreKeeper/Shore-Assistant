@@ -26,24 +26,24 @@ async def started_facade(fake_redis, monkeypatch):
 
 
 async def test_assemble_context_returns_empty_when_redis_down(started_facade):
-    async def boom():
+    async def boom(**_):
         raise RedisError("connection refused")
 
     started_facade.short_term.load = boom
-    bundle = await started_facade.assemble_context("hello")
+    bundle = await started_facade.assemble_context("hello", user_id="u1")
     assert bundle.short_term == []
     assert bundle.profile == {}
     assert bundle.episodic_hits == []
 
 
 async def test_assemble_context_short_term_timeout_degrades(started_facade):
-    async def slow():
+    async def slow(**_):
         await asyncio.sleep(2.0)
         return []
 
     started_facade.short_term.load = slow
     t0 = time.monotonic()
-    bundle = await started_facade.assemble_context("hello")
+    bundle = await started_facade.assemble_context("hello", user_id="u1")
     elapsed = time.monotonic() - t0
     assert elapsed < 0.7      # 0.5s circuit-breaker timeout + small slack
     assert bundle.short_term == []
@@ -52,7 +52,7 @@ async def test_assemble_context_short_term_timeout_degrades(started_facade):
 async def test_assemble_context_runs_three_layers_in_parallel(started_facade):
     """All three layer calls happen concurrently."""
 
-    async def slow_load():
+    async def slow_load(**_):
         await asyncio.sleep(0.1)
         return []
 
@@ -69,15 +69,17 @@ async def test_assemble_context_runs_three_layers_in_parallel(started_facade):
     started_facade.episodic.search = slow_search
 
     t0 = time.monotonic()
-    await started_facade.assemble_context("x")
+    await started_facade.assemble_context("x", user_id="u1")
     elapsed = time.monotonic() - t0
     # Parallel: ~0.1 s; sequential would be ~0.3 s.
     assert elapsed < 0.2
 
 
 async def test_append_user_writes_through_short_term(started_facade):
-    await started_facade.append_user("hi", extras={"thinking_text": "..."})
-    loaded = await started_facade.short_term.load()
+    await started_facade.append_user(
+        "hi", user_id="u1", extras={"thinking_text": "..."},
+    )
+    loaded = await started_facade.short_term.load(user_id="u1")
     assert len(loaded) == 1
     assert loaded[0].role == "user"
     assert loaded[0].content == "hi"
@@ -85,28 +87,30 @@ async def test_append_user_writes_through_short_term(started_facade):
 
 
 async def test_append_assistant_writes_through_short_term(started_facade):
-    await started_facade.append_assistant("ok", extras={"agent_actions": []})
-    loaded = await started_facade.short_term.load()
+    await started_facade.append_assistant(
+        "ok", user_id="u1", extras={"agent_actions": []},
+    )
+    loaded = await started_facade.short_term.load(user_id="u1")
     assert len(loaded) == 1
     assert loaded[0].role == "assistant"
     assert loaded[0].content == "ok"
 
 
 async def test_clear_returns_false_after_double_clear(started_facade):
-    await started_facade.append_user("hi")
-    assert await started_facade.clear() is True
-    assert await started_facade.clear() is False
+    await started_facade.append_user("hi", user_id="u1")
+    assert await started_facade.clear(user_id="u1") is True
+    assert await started_facade.clear(user_id="u1") is False
 
 
 async def test_append_user_no_op_when_facade_not_started():
     facade = MemoryFacade()
     # Do NOT call startup() — short_term is None.
-    await facade.append_user("hi")    # must not raise
+    await facade.append_user("hi", user_id="u1")    # must not raise
 
 
 async def test_clear_returns_false_when_facade_not_started():
     facade = MemoryFacade()
-    assert await facade.clear() is False
+    assert await facade.clear(user_id="u1") is False
 
 
 from unittest.mock import AsyncMock
@@ -123,7 +127,7 @@ async def test_assemble_context_prunes_profile(started_facade, monkeypatch):
     )
     started_facade.episodic.search = AsyncMock(return_value=[])
 
-    bundle = await started_facade.assemble_context("hello")
+    bundle = await started_facade.assemble_context("hello", user_id="u1")
     assert "b" in bundle.profile        # newer key survives
     assert "a" not in bundle.profile    # older key pruned
 
@@ -134,7 +138,7 @@ async def test_assemble_context_empty_profile_skips_history_query(started_facade
         return_value={"never": "called"},
     )
     started_facade.episodic.search = AsyncMock(return_value=[])
-    await started_facade.assemble_context("hello")
+    await started_facade.assemble_context("hello", user_id="u1")
     started_facade.profile.key_updated_at_map.assert_not_awaited()
 
 
@@ -149,5 +153,5 @@ async def test_assemble_context_history_query_failure_falls_back(started_facade,
     started_facade.profile.key_updated_at_map = boom
     started_facade.episodic.search = AsyncMock(return_value=[])
     # Should not raise; prune still runs with empty ts_map (alphabetic eviction).
-    bundle = await started_facade.assemble_context("hello")
+    bundle = await started_facade.assemble_context("hello", user_id="u1")
     assert isinstance(bundle.profile, dict)

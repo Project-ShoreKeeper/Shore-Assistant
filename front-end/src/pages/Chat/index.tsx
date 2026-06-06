@@ -13,7 +13,8 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
-import { useAssistant, type ChatMessage } from "../../hooks/useAssistant";
+import { useAssistantContext as useAssistant, } from "@Shore/contexts/AssistantContext";
+import type { ChatMessage } from "../../hooks/useAssistant";
 import type { ImageAttachment } from "../../services/chat-websocket.service";
 import ToolActionCard from "../../components/ToolActionCard";
 import TerminalDrawer from "../../components/Terminal/TerminalDrawer";
@@ -21,6 +22,7 @@ import ConfirmToast from "../../components/Terminal/ConfirmToast";
 import { useTerminal } from "../../hooks/useTerminal";
 import SettingsPanel from "./SettingsPanel";
 import ChatComposer from "./ChatComposer";
+import "./chat-mobile.css";
 import { useCollapsedSidebar } from "../../hooks/useCollapsedSidebar";
 
 /** Wrap bare URLs in markdown link syntax with truncated display text. */
@@ -283,6 +285,7 @@ function PageChat() {
         <Flex
           direction="column"
           align={isUser ? "end" : "start"}
+          className="chat-msg-content"
           style={{ maxWidth: "75%" }}
         >
           <Box
@@ -669,6 +672,7 @@ function PageChat() {
 
         {/* Composer (textarea + attachments + mic + send, ChatGPT-style) */}
         <Box
+          className="chat-composer-wrap"
           style={{
             borderTop: "1px solid var(--gray-5)",
             backgroundColor: "var(--color-panel-solid)",
@@ -723,7 +727,8 @@ function PageChat() {
         )}
       </Flex>
 
-      {/* Right column: Settings */}
+      {/* Right column: Settings (hidden on mobile via CSS) */}
+      <div className="chat-settings-panel" style={{ display: "contents" }}>
       <SettingsPanel
         isLoaded={isVADLoaded}
         isRecording={isRecording}
@@ -757,6 +762,7 @@ function PageChat() {
         memoryWorkerStatus={memoryWorkerStatus}
         memoryWorkerLog={memoryWorkerLog}
       />
+      </div>
 
       {/* Lightbox dialog */}
       <Dialog.Root open={!!lightboxUrl} onOpenChange={(o) => !o && setLightboxUrl(null)}>

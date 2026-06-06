@@ -1,0 +1,23 @@
+@media (max-width: 768px) {
+  /* Hide right settings panel — no room on phone */
+  .chat-settings-panel {
+    display: none !important;
+  }
+
+  /* Wider message bubbles */
+  .chat-msg-content {
+    max-width: 88% !important;
+  }
+
+/* Prevent iOS Safari zoom on textarea focus (triggers when font-size < 16px) */
+  .chat-composer-wrap textarea {
+    font-size: 16px !important;
+  }
+
+  /* Re-enable native touch scroll inside Radix ScrollArea */
+  .rt-ScrollAreaViewport {
+    overflow-y: auto !important;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y !important;
+  }
+}

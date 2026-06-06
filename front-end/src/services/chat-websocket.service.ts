@@ -332,6 +332,14 @@ export class ChatWebSocketService {
     this.updateStatus("CLOSED");
     this.emit("close", { code: event.code, reason: event.reason });
 
+    // 4401 = backend says "unauthenticated at upgrade". Don't retry —
+    // AuthContext / AuthGuard will route the user to /login on the next
+    // 401 from any REST call (e.g. AuthContext's next /me poll).
+    if (event.code === 4401) {
+      console.log("[Chat WS] Closed with 4401 — auth required, not reconnecting");
+      return;
+    }
+
     if (!this.intentionToClose && this.retryCount < this.maxRetries) {
       this.retryCount++;
       const timeout = 1000 * Math.pow(2, this.retryCount);

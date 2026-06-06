@@ -1,10 +1,51 @@
+@import url('https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap');
 @import "tailwindcss";
 @import "@radix-ui/themes/styles.css";
+
+:root {
+  --md-primary: #005ac1;
+  --md-secondary: #006d4b;
+  --md-error: #ba1a1a;
+  --md-surface: #ffffff;
+  --md-background: #f2f3f9;
+  --md-outline-variant: #c4c6d0;
+  --md-on-surface: #191c20;
+  --md-on-surface-variant: #44474e;
+  --md-primary-container: rgba(0, 90, 193, 0.1);
+  --md-secondary-container: rgba(0, 109, 75, 0.1);
+  --md-error-container: rgba(186, 26, 26, 0.1);
+}
 
 html, body, #root {
   margin: 0;
   padding: 0;
   width: 100vw;
   height: 100vh;
+  height: 100dvh; /* shrinks when keyboard opens on mobile */
   overflow: hidden;
+}
+
+@media (max-width: 768px) {
+  .sidebar-wrapper {
+    display: none !important;
+  }
+  .bottom-nav {
+    display: flex !important;
+  }
+}
+
+@keyframes shimmer {
+  0%   { background-position: -400px 0; }
+  100% { background-position:  400px 0; }
+}
+.skeleton-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--md-outline-variant) 25%,
+    rgba(196, 198, 208, 0.35) 50%,
+    var(--md-outline-variant) 75%
+  );
+  background-size: 800px 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+  border-radius: 6px;
 }

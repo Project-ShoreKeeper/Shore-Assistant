@@ -1,0 +1,64 @@
+@media (max-width: 768px) {
+  .dash-body {
+    padding: 12px !important;
+  }
+
+  /* Services: single column list */
+  .dash-grid6 {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 8px !important;
+  }
+
+  /* Service card: horizontal list row */
+  .service-card {
+    aspect-ratio: unset !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    justify-content: flex-start !important;
+    text-align: left !important;
+    gap: 12px !important;
+    padding: 10px 90px 10px 14px !important;
+  }
+
+  /* Name + meta info fills remaining space */
+  .service-card-info {
+    flex: 1 !important;
+    min-width: 0 !important;
+  }
+
+  /* Databases + Workers: single column */
+  .dash-grid3 {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Switch HW section to flex column — avoids implicit grid column 2
+     being created by children that still have gridColumn:2 inline styles */
+  .hw-section-grid {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 0 !important;
+  }
+
+  /* GPU Performance header label is redundant on mobile (card is self-contained) */
+  .hw-gpu-label {
+    display: none !important;
+  }
+
+  .hw-gpu-col {
+    margin-top: 12px;
+  }
+
+
+  /* Hardware tiles row: wrap into 2×2 */
+  .hw-tiles-row {
+    flex-wrap: wrap !important;
+    gap: 12px !important;
+  }
+
+  /* Each hardware tile: half width */
+  .hw-tile {
+    flex: 1 1 calc(50% - 6px) !important;
+    min-width: 0 !important;
+  }
+}

@@ -2,7 +2,7 @@ import { apiFetch } from "./http.service";
 
 export interface ServiceControl {
   name: string;
-  kind: "process" | "docker" | "internal";
+  kind: "process" | "docker" | "internal" | "remote";
   running: boolean;
   transitioning: boolean;
   last_error: string | null;
@@ -20,7 +20,7 @@ export interface ServiceRow {
 
 export interface DatabaseRow {
   name: string;
-  status: "up" | "down";
+  status: "up" | "down" | "degraded";
   latency_ms?: number | null;
   short_term_turns?: number | null;
   profile_size_bytes?: number | null;
@@ -74,6 +74,12 @@ export interface RemoteHardware {
   hardware: Hardware | null;
 }
 
+export interface AiComponentStatus {
+  name: string;
+  loaded: boolean;
+  detail: string;
+}
+
 export interface DashboardSnapshot {
   generated_at: number;
   services: ServiceRow[];
@@ -81,6 +87,7 @@ export interface DashboardSnapshot {
   hardware: Hardware;
   remote_hardware: RemoteHardware | null;
   workers: WorkersState;
+  ai_components: AiComponentStatus[];
 }
 
 export async function fetchDashboard(): Promise<DashboardSnapshot> {

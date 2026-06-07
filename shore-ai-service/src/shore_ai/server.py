@@ -47,6 +47,13 @@ async def serve() -> None:
     server.add_insecure_port(bind)
     await server.start()
     log.info("shore-ai-service listening on %s", bind)
+
+    # Kick off heavy model load in the background so the gRPC port is
+    # immediately reachable. Health.Get reflects loaded() state per
+    # component, so the Dashboard can show "loading" without the client
+    # hitting raw connection errors.
+    stt.start_load()
+
     await server.wait_for_termination()
 
 

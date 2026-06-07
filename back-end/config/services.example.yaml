@@ -20,9 +20,14 @@ services:
     kind: process
     display_name: llama-server
     correlates_with: llama-server
-    # Edit paths to match your llama.cpp build and model layout.
-    start_cmd: 'D:\llama\llama-server.exe -m D:\models\primary.gguf --mmproj D:\models\mmproj.gguf --jinja --host 0.0.0.0 --port 8080 --ctx-size 8192'
-    cwd: 'D:\llama'
+    # llama.cpp is built inside WSL — wrap the command with `wsl -e bash -lc`
+    # so the Windows-side Shore Assistant can spawn it. `cwd` must be a Windows
+    # path (or omitted); the Linux `cd` lives inside the bash invocation.
+    start_cmd: 'wsl -e bash -lc "cd ~/llama.cpp && ./build/bin/llama-server -m ./Gemma4-26B-A4B-Uncensored-HauhauCS-Balanced-Q5_K_M.gguf -ngl 99 --n-cpu-moe 10 --jinja --no-mmap --mlock --cache-reuse 256 -t 6 --threads-batch 6 --cache-type-k q4_0 --cache-type-v q4_0 -c 128000 --host 0.0.0.0 --port 9090"'
+    # CTRL_BREAK_EVENT to the cmd.exe wrapper doesn't propagate into WSL, so
+    # we deliver SIGTERM directly to llama-server via `wsl pkill` first. Best-
+    # effort: failure (e.g. process already gone) doesn't abort the stop.
+    pre_stop_cmd: 'wsl pkill -TERM llama-server'
     grace_seconds: 10            # SIGTERM grace before SIGKILL
 
   shore-pty-service:

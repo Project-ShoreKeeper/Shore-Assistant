@@ -102,6 +102,7 @@ class ServiceManager:
                 cwd=entry.get("cwd"),
                 env=entry.get("env"),
                 grace_seconds=float(entry.get("grace_seconds", 10.0)),
+                pre_stop_cmd=entry.get("pre_stop_cmd"),
             )
         if kind == "docker":
             return DockerController(

@@ -44,6 +44,7 @@ class ProcessController(Controller):
         grace_seconds: float = 10.0,
         correlates_with: Optional[str] = None,
         pid_dir: Optional[Path] = None,
+        pre_stop_cmd: Optional[str] = None,
     ) -> None:
         super().__init__(
             name, display_name=display_name, correlates_with=correlates_with,
@@ -53,6 +54,7 @@ class ProcessController(Controller):
         self._env = dict(env or {})
         self._grace_seconds = max(0.5, float(grace_seconds))
         self._pid_dir = pid_dir or _PID_DIR
+        self._pre_stop_cmd = pre_stop_cmd
 
     @property
     def kind(self) -> ServiceKind:
@@ -175,6 +177,25 @@ class ProcessController(Controller):
 
         loop = asyncio.get_event_loop()
 
+        # Snapshot the descendant tree *now*. With shell=True on Windows, the
+        # tracked PID is a cmd.exe wrapper; the real workload (npm.cmd, node,
+        # wsl.exe, ...) lives below it. If the wrapper dies in Step 1, its
+        # children get reparented and we lose the ability to query them by
+        # walking from the wrapper. Capturing the snapshot up front lets
+        # Step 3 force-kill orphans by PID regardless.
+        try:
+            tree_descendants = live.children(recursive=True)
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            tree_descendants = []
+        full_tree: list[psutil.Process] = [live] + tree_descendants
+
+        # Step 0: optional pre-stop. Used when CTRL_BREAK_EVENT to the shell
+        # wrapper can't reach the real target — e.g. a llama-server running
+        # inside WSL, where we need `wsl pkill` to deliver SIGTERM directly.
+        # Best-effort: failures are logged but don't abort the stop flow.
+        if self._pre_stop_cmd:
+            await self._run_pre_stop()
+
         # Step 1: graceful — SIGTERM / CTRL_BREAK_EVENT.
         try:
             await loop.run_in_executor(None, lambda: self._send_term(live))
@@ -182,24 +203,57 @@ class ProcessController(Controller):
             self._record_action("stop", error=f"term failed: {type(e).__name__}: {e}")
             # Continue to kill — best effort.
 
-        # Step 2: wait up to grace_seconds for exit.
-        deadline = time.time() + self._grace_seconds
-        while time.time() < deadline:
-            if not psutil.pid_exists(live.pid):
-                break
-            await asyncio.sleep(0.25)
+        # Step 2: wait up to grace_seconds for the whole tree to exit.
+        def _wait_tree() -> list[psutil.Process]:
+            _, still_alive = psutil.wait_procs(full_tree, timeout=self._grace_seconds)
+            return still_alive
 
-        # Step 3: SIGKILL if still alive.
-        if psutil.pid_exists(live.pid):
+        try:
+            survivors = await loop.run_in_executor(None, _wait_tree)
+        except Exception as e:
+            self._record_action("stop", error=f"wait failed: {type(e).__name__}: {e}")
+            survivors = [p for p in full_tree if p.is_running()]
+
+        # Step 3: SIGKILL the survivors (descendants + wrapper).
+        for p in survivors:
             try:
-                await loop.run_in_executor(None, live.kill)
+                p.kill()
             except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
-                self._record_action("stop", error=f"kill failed: {e!r}")
-                return
+                self._record_action("stop", error=f"kill failed pid={p.pid}: {e!r}")
 
         self._delete_pid_file()
         self._record_action("stop")
         print(f"[ProcessController] {self.name} stopped")
+
+    async def _run_pre_stop(self) -> None:
+        merged_env = {**os.environ, **self._env}
+        loop = asyncio.get_event_loop()
+
+        def _run() -> subprocess.CompletedProcess:
+            return subprocess.run(
+                self._pre_stop_cmd,
+                shell=True,
+                cwd=self._cwd,
+                env=merged_env,
+                capture_output=True,
+                text=True,
+                timeout=self._grace_seconds,
+            )
+
+        try:
+            result = await loop.run_in_executor(None, _run)
+            if result.returncode != 0:
+                print(
+                    f"[ProcessController] {self.name} pre_stop returned "
+                    f"{result.returncode}: {result.stderr.strip()}"
+                )
+        except subprocess.TimeoutExpired:
+            print(
+                f"[ProcessController] {self.name} pre_stop timed out after "
+                f"{self._grace_seconds}s"
+            )
+        except Exception as e:
+            print(f"[ProcessController] {self.name} pre_stop failed: {e!r}")
 
     def _send_term(self, proc: psutil.Process) -> None:
         if _is_windows():
@@ -207,7 +261,9 @@ class ProcessController(Controller):
                 os.kill(proc.pid, signal.CTRL_BREAK_EVENT)
                 return
             except (OSError, AttributeError):
-                # Fallback for processes that didn't get a console group.
-                proc.terminate()
+                # CTRL_BREAK can't be delivered to a DETACHED_PROCESS without a
+                # console. Don't `terminate()` here — that kills only the
+                # cmd.exe wrapper and orphans its descendants (npm.cmd → node,
+                # wsl.exe, etc.). Step 3's snapshot-based tree kill handles it.
                 return
         proc.terminate()

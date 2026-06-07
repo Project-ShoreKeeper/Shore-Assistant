@@ -8,7 +8,7 @@ from typing import Literal, Optional
 from pydantic import BaseModel
 
 
-ServiceKind = Literal["process", "docker", "internal"]
+ServiceKind = Literal["process", "docker", "internal", "remote"]
 
 
 class ServiceState(BaseModel):

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Optional
+import threading
 
 import numpy as np
 
@@ -24,18 +24,23 @@ class TtsHandler(tts_pb2_grpc.TTSServicer):
     SAMPLE_RATE = 24000
 
     def __init__(self):
-        self._pipeline = None
-        self._current_lang: Optional[str] = None
+        # Per-language pipeline cache. Synthesize runs in run_in_executor
+        # (worker thread), so concurrent calls with different languages can
+        # race here — keep one pipeline per language and guard the dict.
+        self._pipelines: dict[str, object] = {}
+        self._pipelines_lock = threading.Lock()
 
     def loaded(self) -> bool:
-        return self._pipeline is not None
+        return bool(self._pipelines)
 
     def _get_pipeline(self, lang_code: str):
         from kokoro import KPipeline
-        if self._pipeline is None or self._current_lang != lang_code:
-            self._pipeline = KPipeline(lang_code=lang_code, device="cpu")
-            self._current_lang = lang_code
-        return self._pipeline
+        with self._pipelines_lock:
+            pipe = self._pipelines.get(lang_code)
+            if pipe is None:
+                pipe = KPipeline(lang_code=lang_code, device="cpu")
+                self._pipelines[lang_code] = pipe
+            return pipe
 
     async def Synthesize(self, request, context):
         """Server-streaming synthesize. If text is empty, yields no chunks (silent end-of-stream)."""

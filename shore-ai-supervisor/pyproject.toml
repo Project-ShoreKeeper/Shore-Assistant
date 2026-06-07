@@ -1,0 +1,23 @@
+[project]
+name = "shore-ai-supervisor"
+version = "0.1.0"
+description = "Supervisor for controlling the Shore AI container over gRPC"
+requires-python = ">=3.10"
+dependencies = [
+  "grpcio>=1.66.0",
+  "protobuf>=5.27.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "grpcio-tools>=1.66.0",
+  "pytest>=8.0.0",
+  "pytest-asyncio>=0.24.0",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]

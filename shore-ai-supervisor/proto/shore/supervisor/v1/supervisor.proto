@@ -1,0 +1,16 @@
+syntax = "proto3";
+package shore.supervisor.v1;
+
+service Supervisor {
+  rpc Start (TargetRequest) returns (ActionResponse);
+  rpc Stop  (TargetRequest) returns (ActionResponse);
+  rpc Status(TargetRequest) returns (StatusResponse);
+}
+
+message TargetRequest  { string target = 1; }
+message ActionResponse { bool ok = 1; string detail = 2; }
+message StatusResponse {
+  bool   running      = 1;
+  string container_id = 2;
+  string state        = 3;
+}

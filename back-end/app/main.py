@@ -19,6 +19,7 @@ from app.api.endpoints.auth import router as auth_router
 from app.api.endpoints.services import router as services_router
 from app.api.websockets.chat_ws import router as chat_ws_router
 from app.services.service_manager import service_manager
+from app.services.ai_client import channel as ai_channel_mod
 from app.api import deps as auth_deps
 from app.core.auth import SessionStore
 
@@ -26,6 +27,7 @@ from app.core.auth import SessionStore
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Load models once at startup, clean up on shutdown."""
+    ai_channel_mod.init()
     if settings.STT_ENABLED:
         stt_service.load_model()
     else:
@@ -110,6 +112,8 @@ async def lifespan(app: FastAPI):
         from app.services.n8n_workflow_service import n8n_workflow_service
         await n8n_service.shutdown()
         await n8n_workflow_service.shutdown()
+
+    await ai_channel_mod.close()
 
 
 app = FastAPI(

@@ -10,7 +10,6 @@ import uuid
 import pytest
 import pytest_asyncio
 
-from app.services.embedding_service import embedding_service
 from app.services.memory.episodic import EpisodicMemory
 from app.services.memory.types import EmotionVector, EpisodicFact
 
@@ -34,7 +33,6 @@ def _fact(text: str, tags: list[str], ts: float = 1.0) -> EpisodicFact:
 
 @pytest_asyncio.fixture
 async def episodic(monkeypatch):
-    embedding_service.startup()
     coll = f"shore_episodic_test_{uuid.uuid4().hex[:8]}"
     monkeypatch.setattr("app.core.config.settings.QDRANT_COLLECTION", coll)
     em = EpisodicMemory()

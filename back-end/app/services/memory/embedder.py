@@ -1,26 +1,25 @@
-"""Thin async wrapper over the shared EmbeddingService for memory layers."""
-import asyncio
+"""Async embedding wrapper used by the memory layer."""
+from __future__ import annotations
 
-import numpy as np
+from app.services.ai_client.embed import EmbedUnavailable, embed_client
 
-from app.services.embedding_service import embedding_service
+
+class MemoryEmbedderUnavailable(RuntimeError):
+    """Raised when shore-ai-service embedding is unavailable."""
 
 
 class Embedder:
     DIM = 384  # all-MiniLM-L6-v2
 
     async def encode(self, text: str) -> list[float]:
-        vec: np.ndarray = await embedding_service.aencode(text)
-        return vec.tolist()
+        vectors = await self.encode_many([text])
+        return vectors[0] if vectors else []
 
     async def encode_many(self, texts: list[str]) -> list[list[float]]:
-        """Encode a batch of texts concurrently.
-
-        Note: launches one in-flight task per text without a concurrency cap.
-        Intended for offline / nightly callers (e.g. canonicalizer). Do not use
-        on a hot request path with large batches — saturates the thread pool.
-        """
-        return list(await asyncio.gather(*(self.encode(t) for t in texts)))
+        try:
+            return await embed_client.encode(texts)
+        except EmbedUnavailable as exc:
+            raise MemoryEmbedderUnavailable(str(exc)) from exc
 
 
 embedder = Embedder()

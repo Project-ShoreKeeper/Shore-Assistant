@@ -53,7 +53,7 @@ class SttHandler(stt_pb2_grpc.STTServicer):
         return self.pipe is not None
 
     async def Transcribe(self, request, context):
-        audio = np.frombuffer(request.audio_f32, dtype=np.float32)
+        audio = np.frombuffer(request.audio_f32, dtype=np.float32).copy()
         language = request.language or "en"
 
         def _run():

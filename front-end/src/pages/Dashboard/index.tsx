@@ -1,6 +1,7 @@
 import { useDashboardContext } from "@Shore/contexts/DashboardContext";
 import type {
   ServiceRow, DatabaseRow, Hardware, WorkersState, RemoteHardware, GpuInfo,
+  AiComponentStatus,
 } from "@Shore/services/dashboard.service";
 import { ServiceLogo } from "./serviceLogos";
 import ServiceControlButton from "./ServiceControlButton";
@@ -240,6 +241,43 @@ const MONO_LG: React.CSSProperties = {
   fontSize: 20, fontWeight: 500,
   color: "var(--md-on-surface)",
 };
+
+function AiComponentsSection({ components }: { components: AiComponentStatus[] }) {
+  if (!components.length) return null;
+  return (
+    <div style={{ marginBottom: 24 }}>
+      <SectionLabel title="AI Components" />
+      <div className="dash-grid3" style={GRID3}>
+        {components.map(c => (
+          <Card key={c.name}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+              <span style={{
+                fontFamily: "Inter, sans-serif",
+                fontSize: 14,
+                fontWeight: 700,
+                color: "var(--md-on-surface)",
+                textTransform: "uppercase",
+              }}>
+                {c.name}
+              </span>
+              <StatusBadge status={c.loaded ? "loaded" : "down"} />
+            </div>
+            <div style={{
+              fontFamily: "Inter, sans-serif",
+              fontSize: 12,
+              color: "var(--md-on-surface-variant)",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}>
+              {c.detail || "—"}
+            </div>
+          </Card>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function HardwareTiles({ h, cpuHistory }: { h: Hardware; cpuHistory?: number[] }) {
   return (
@@ -699,6 +737,8 @@ export default function PageDashboard() {
                 {data.services.map(s => <ServiceCard key={s.name} s={s} expedite={expedite} />)}
               </div>
             </div>
+
+            <AiComponentsSection components={data.ai_components} />
 
             {/* Databases */}
             <div style={{ marginBottom: 24 }}>

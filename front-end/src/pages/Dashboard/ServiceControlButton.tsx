@@ -125,7 +125,9 @@ export default function ServiceControlButton({ control, expedite, displayName }:
             ? "This will terminate the process and release any VRAM it holds. Active chats may fail until you start it again."
             : control.kind === "docker"
               ? "This will stop the Docker container. Any dependent feature (chat, memory) will degrade until you start it again."
-              : "This will disable the feature. For STT/TTS this also unloads the model from VRAM."}
+              : control.kind === "remote"
+                ? "This will ask the remote supervisor to stop the service. STT, TTS, and embedding features will degrade until you start it again."
+                : "This will disable the feature."}
         </Dialog.Description>
         <Flex gap="3" justify="end">
           <Dialog.Close>

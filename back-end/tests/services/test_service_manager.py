@@ -196,3 +196,33 @@ async def test_has_and_get_state():
     assert st.running is True
     with pytest.raises(ServiceNotFound):
         await mgr.get_state("absent")
+
+
+@pytest.mark.asyncio
+async def test_build_remote_kind_from_yaml(tmp_path, monkeypatch):
+    from app.services.ai_client import supervisor as supervisor_mod
+    from app.services.ai_client.supervisor import SupervisorStatus
+
+    class _Sup:
+        async def status(self, target):
+            return SupervisorStatus(
+                running=False,
+                container_id="",
+                state="stopped",
+            )
+
+    monkeypatch.setattr(supervisor_mod, "supervisor_client", _Sup())
+    yaml_text = """
+services:
+  shore-ai:
+    kind: remote
+    target: shore-ai
+    display_name: "Shore AI"
+"""
+    yaml_path = tmp_path / "services.yaml"
+    yaml_path.write_text(yaml_text)
+    mgr = ServiceManager(registry_path=yaml_path)
+    mgr.load()
+    assert "shore-ai" in mgr.names()
+    state = await mgr.get_state("shore-ai")
+    assert state.kind == "remote"

@@ -22,6 +22,7 @@ from app.services.controllers import (
     DockerController,
     InternalController,
     ProcessController,
+    RemoteServiceController,
     ServiceState,
 )
 
@@ -113,6 +114,13 @@ class ServiceManager:
             )
         if kind == "internal":
             return InternalController(
+                name,
+                display_name=display_name,
+                correlates_with=correlates_with,
+                target=entry["target"],
+            )
+        if kind == "remote":
+            return RemoteServiceController(
                 name,
                 display_name=display_name,
                 correlates_with=correlates_with,

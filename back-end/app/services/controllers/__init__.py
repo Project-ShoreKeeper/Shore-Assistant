@@ -6,6 +6,7 @@ from app.services.controllers.base import Controller, ServiceState, ServiceKind
 from app.services.controllers.process import ProcessController
 from app.services.controllers.docker import DockerController
 from app.services.controllers.internal import InternalController
+from app.services.controllers.remote import RemoteServiceController
 
 __all__ = [
     "Controller",
@@ -14,4 +15,5 @@ __all__ = [
     "ProcessController",
     "DockerController",
     "InternalController",
+    "RemoteServiceController",
 ]

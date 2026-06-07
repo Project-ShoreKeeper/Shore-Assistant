@@ -1,13 +1,4 @@
-"""Mutable runtime overrides for select feature flags.
-
-The dashboard service-control feature needs to flip a handful of "is feature
-enabled" booleans at runtime without writing back to .env. Reading code paths
-that previously consulted `settings.X` for one of these keys must go through
-``runtime_flags.get(...)`` instead.
-
-Flags are initialized from `settings` at startup and reset to those defaults
-on the next process start (no persistence in v1).
-"""
+"""Mutable runtime overrides for backend feature flags."""
 from __future__ import annotations
 
 import threading
@@ -17,8 +8,6 @@ from app.core.config import settings
 
 
 _MANAGED_KEYS: tuple[str, ...] = (
-    "STT_ENABLED",
-    "TTS_ENABLED",
     "WORKER_ENABLED",
     "CANONICALIZER_ENABLED",
 )
@@ -34,9 +23,7 @@ def _ensure_initialized() -> None:
         if _values:
             return
         for key in _MANAGED_KEYS:
-            # TTS has no env flag today — default to True (TTS is on unless
-            # someone toggles it off via the dashboard).
-            _values[key] = getattr(settings, key, True)
+            _values[key] = getattr(settings, key)
 
 
 def get(key: str) -> Any:
@@ -62,6 +49,6 @@ def snapshot() -> dict[str, Any]:
 
 
 def reset_for_tests() -> None:
-    """Test helper — clear cached values so the next access re-reads settings."""
+    """Test helper: clear cached values so the next access re-reads settings."""
     with _lock:
         _values.clear()

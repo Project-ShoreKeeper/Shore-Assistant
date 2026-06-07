@@ -10,9 +10,6 @@ class Settings(BaseSettings):
     SAMPLE_RATE: int = 16000
     AUDIO_CHANNELS: int = 1
 
-    # STT
-    STT_ENABLED: bool = False
-
     # Llama-server LLM (llama.cpp OpenAI-compatible API)
     LLAMA_BASE_URL: str = "http://localhost:8080"
     LLAMA_MODEL: str = "gemma-4-26B-A4B-it-UD-Q5_K_M"  # llama-server typically ignores this; used only as a display label

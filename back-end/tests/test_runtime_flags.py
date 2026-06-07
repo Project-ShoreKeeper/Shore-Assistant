@@ -15,9 +15,6 @@ def _reset():
 def test_initial_values_match_settings():
     assert runtime_flags.get("WORKER_ENABLED") == settings.WORKER_ENABLED
     assert runtime_flags.get("CANONICALIZER_ENABLED") == settings.CANONICALIZER_ENABLED
-    assert runtime_flags.get("STT_ENABLED") == settings.STT_ENABLED
-    # TTS has no settings flag — defaults to True.
-    assert runtime_flags.get("TTS_ENABLED") is True
 
 
 def test_set_then_get_round_trips():
@@ -46,5 +43,4 @@ def test_snapshot_returns_copy():
 def test_reset_for_tests_clears_overrides():
     runtime_flags.set("WORKER_ENABLED", False)
     runtime_flags.reset_for_tests()
-    # After reset, re-reads from settings on next access.
     assert runtime_flags.get("WORKER_ENABLED") == settings.WORKER_ENABLED

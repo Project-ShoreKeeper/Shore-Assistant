@@ -3,8 +3,6 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.services.stt_service import stt_service
-from app.services.tts_service import tts_service
 from app.services.tool_retriever import tool_retriever
 from app.services.scheduler_service import scheduler_service
 from app.services.notification_service import notification_service
@@ -28,12 +26,6 @@ from app.core.auth import SessionStore
 async def lifespan(app: FastAPI):
     """Load models once at startup, clean up on shutdown."""
     ai_channel_mod.init()
-    if settings.STT_ENABLED:
-        stt_service.load_model()
-    else:
-        print("[Startup] STT disabled — skipping Whisper model load")
-    tts_service.warmup()
-
     await tool_retriever.initialize(ALL_TOOLS)
 
     # n8n workflow discovery + n8nac init

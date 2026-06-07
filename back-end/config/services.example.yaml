@@ -64,6 +64,15 @@ services:
     compose_file: 'deploy/memory/docker-compose.yml'
     compose_service: redis
 
+  # Remote services (gRPC)
+  # Controlled via shore-ai-supervisor on the GPU machine.
+
+  shore-ai:
+    kind: remote
+    display_name: "Shore AI (STT + TTS + Embed)"
+    correlates_with: shore-ai
+    target: shore-ai
+
   # ── Internal singletons ──────────────────────────────────────────────
   # In-process toggles for backend-only jobs. The `target` field selects which
   # singleton to control.

@@ -19,8 +19,7 @@ from app.core.config import settings
 from app.services.memory import memory_facade, worker_service
 from app.services.scheduler_service import scheduler_service
 from app.services.service_manager import service_manager
-from app.services.stt_service import stt_service
-from app.services.tts_service import tts_service
+from app.services.ai_client.health import health_client
 from app.services.terminal_service import terminal_service
 
 # Any logged-in user can read the dashboard.
@@ -223,7 +222,7 @@ def _hardware_snapshot() -> dict:
     }
 
 
-async def _services_snapshot() -> list[dict]:
+async def _services_snapshot(ai_health: dict) -> list[dict]:
     out: list[dict] = []
 
     # FastAPI itself — we answered, so we're up.
@@ -240,21 +239,32 @@ async def _services_snapshot() -> list[dict]:
         "model": settings.LLAMA_MODEL or None,
     })
 
-    # Whisper STT
+    def _ai_component_status(name: str) -> str:
+        component = next(
+            (c for c in ai_health.get("components", []) if c.get("name") == name),
+            None,
+        )
+        return "loaded" if component and component.get("loaded") else "down"
+
+    # shore-ai container row. `correlates_with: shore-ai` in services.yaml
+    # attaches the Start/Stop button here. Status reflects the supervisor's
+    # view of the container, derived from whether Health.Get responded.
+    shore_ai_status = "up" if ai_health.get("components") else "down"
     out.append({
-        "name": "Whisper STT",
-        "status": "loaded" if settings.STT_ENABLED and getattr(stt_service, "model", None) else
-                  "disabled" if not settings.STT_ENABLED else "down",
+        "name": "shore-ai",
+        "status": shore_ai_status,
     })
 
-    # Kokoro TTS
-    try:
-        tts_ready = tts_service.is_available
-    except Exception:
-        tts_ready = False
+    # Whisper STT (remote shore-ai-service component)
+    out.append({
+        "name": "Whisper STT",
+        "status": _ai_component_status("stt"),
+    })
+
+    # Kokoro TTS (remote shore-ai-service component)
     out.append({
         "name": "Kokoro TTS",
-        "status": "loaded" if tts_ready else "down",
+        "status": _ai_component_status("tts"),
     })
 
     # n8n (only if enabled)
@@ -438,16 +448,26 @@ async def _control_lookup() -> tuple[dict, dict]:
 
 # ── Endpoint ───────────────────────────────────────────────────────────
 
+async def _ai_health_snapshot() -> dict:
+    try:
+        return await health_client.get()
+    except Exception:
+        return {"ready": False, "version": "", "components": []}
+
+
 @router.get("/dashboard")
 async def dashboard() -> dict:
-    services, databases, workers, remote, (ctrl_by_corr, ctrl_by_display) = \
+    # One Health.Get round-trip per request; reused by services + ai_components.
+    ai_health = await _ai_health_snapshot()
+
+    databases, workers, remote, (ctrl_by_corr, ctrl_by_display) = \
         await asyncio.gather(
-            _services_snapshot(),
             _databases_snapshot(),
             _workers_snapshot(),
             _remote_hardware_snapshot(),
             _control_lookup(),
         )
+    services = await _services_snapshot(ai_health)
     hardware = _hardware_snapshot()
 
     # Attach `control` field to each row whose name matches the registry.
@@ -461,6 +481,12 @@ async def dashboard() -> dict:
     workers["locomo"]["control"] = ctrl_by_display.get("LOCOMO worker")
     workers["canonicalizer"]["control"] = ctrl_by_display.get("Canonicalizer")
 
+    ai_components = ai_health.get("components", []) or [
+        {"name": "stt", "loaded": False, "detail": ""},
+        {"name": "tts", "loaded": False, "detail": ""},
+        {"name": "embed", "loaded": False, "detail": ""},
+    ]
+
     return {
         "generated_at": time.time(),
         "services": services,
@@ -468,4 +494,5 @@ async def dashboard() -> dict:
         "hardware": hardware,
         "remote_hardware": remote,
         "workers": workers,
+        "ai_components": ai_components,
     }

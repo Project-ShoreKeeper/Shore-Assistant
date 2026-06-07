@@ -1,8 +1,5 @@
 """Image-attachment validation and memory/live-message split for /ws/chat."""
 import base64
-import os
-
-os.environ.setdefault("STT_ENABLED", "False")
 
 import pytest
 pytest.importorskip("anthropic", reason="cloud_llm_service requires anthropic")

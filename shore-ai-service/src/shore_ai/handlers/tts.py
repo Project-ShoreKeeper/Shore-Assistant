@@ -9,7 +9,6 @@ import numpy as np
 from shore_ai._pb import tts_pb2, tts_pb2_grpc
 
 
-VOICE_MAP = {"en": "af_heart", "ja": "jf_alpha", "zh": "zf_xiaobei"}
 DEFAULT_VOICE = "af_heart"
 
 
@@ -39,6 +38,7 @@ class TtsHandler(tts_pb2_grpc.TTSServicer):
         return self._pipeline
 
     async def Synthesize(self, request, context):
+        """Server-streaming synthesize. If text is empty, yields no chunks (silent end-of-stream)."""
         voice = request.voice or DEFAULT_VOICE
         chunk_size = request.chunk_size or 8192
         lang = _lang_for_voice(voice)

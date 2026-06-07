@@ -8,28 +8,11 @@ from app.services.controllers.internal import InternalController
 @pytest.fixture(autouse=True)
 def _reset():
     runtime_flags.reset_for_tests()
-    # Populate defaults
-    runtime_flags.set("STT_ENABLED", False)
     runtime_flags.set("TTS_ENABLED", True)
     runtime_flags.set("WORKER_ENABLED", True)
     runtime_flags.set("CANONICALIZER_ENABLED", True)
     yield
     runtime_flags.reset_for_tests()
-
-
-class _FakeSTT:
-    def __init__(self):
-        self.is_loaded = False
-        self.loaded_calls = 0
-        self.unloaded_calls = 0
-
-    def load_model(self):
-        self.loaded_calls += 1
-        self.is_loaded = True
-
-    def unload(self):
-        self.unloaded_calls += 1
-        self.is_loaded = False
 
 
 class _FakeTTS:
@@ -55,40 +38,6 @@ class _FakeScheduler:
 
     def remove_system_job(self, job_id):
         return self.jobs.pop(job_id, None) is not None
-
-
-# ── STT ──
-
-@pytest.mark.asyncio
-async def test_stt_start_loads_model_and_sets_flag():
-    stt = _FakeSTT()
-    ctrl = InternalController("whisper-stt", display_name="Whisper STT", target="stt", stt=stt)
-    await ctrl.start()
-    assert runtime_flags.get("STT_ENABLED") is True
-    assert stt.loaded_calls == 1
-    assert ctrl.last_action == "start"
-
-
-@pytest.mark.asyncio
-async def test_stt_stop_unloads_and_clears_flag():
-    stt = _FakeSTT()
-    stt.is_loaded = True
-    ctrl = InternalController("whisper-stt", display_name="Whisper STT", target="stt", stt=stt)
-    await ctrl.stop()
-    assert runtime_flags.get("STT_ENABLED") is False
-    assert stt.unloaded_calls == 1
-
-
-@pytest.mark.asyncio
-async def test_stt_is_running_reflects_flag_and_loaded():
-    stt = _FakeSTT()
-    stt.is_loaded = True
-    runtime_flags.set("STT_ENABLED", True)
-    ctrl = InternalController("stt", display_name="STT", target="stt", stt=stt)
-    assert await ctrl.is_running() is True
-
-    runtime_flags.set("STT_ENABLED", False)
-    assert await ctrl.is_running() is False
 
 
 # ── TTS ──

@@ -65,14 +65,8 @@ services:
     compose_service: redis
 
   # ── Internal singletons ──────────────────────────────────────────────
-  # In-process toggles. Stop releases VRAM for `stt`/`tts`; flag-only for the
-  # rest. The `target` field selects which singleton to control.
-
-  whisper-stt:
-    kind: internal
-    display_name: Whisper STT
-    correlates_with: Whisper STT
-    target: stt
+  # In-process toggles. Stop releases VRAM for `tts`; flag-only for the rest.
+  # The `target` field selects which singleton to control.
 
   kokoro-tts:
     kind: internal

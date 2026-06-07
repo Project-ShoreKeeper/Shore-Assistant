@@ -1,12 +1,14 @@
 """gRPC bearer-token interceptor."""
 from __future__ import annotations
 
+import hmac
+
 import grpc
 
 
 class BearerInterceptor(grpc.aio.ServerInterceptor):
     def __init__(self, expected_token: str):
-        self._expected = expected_token
+        self._expected_header = f"Bearer {expected_token}"
 
         async def _abort(request, context):
             await context.abort(grpc.StatusCode.UNAUTHENTICATED, "invalid bearer")
@@ -15,6 +17,8 @@ class BearerInterceptor(grpc.aio.ServerInterceptor):
 
     async def intercept_service(self, continuation, handler_call_details):
         for key, val in handler_call_details.invocation_metadata or ():
-            if key.lower() == "authorization" and val == f"Bearer {self._expected}":
+            if key.lower() == "authorization" and hmac.compare_digest(
+                val, self._expected_header,
+            ):
                 return await continuation(handler_call_details)
         return self._reject

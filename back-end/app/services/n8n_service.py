@@ -236,7 +236,7 @@ class N8nService:
                 new_tools = await self.refresh()
                 if new_tools:
                     register_dynamic_tools(new_tools)
-                tool_retriever.reindex(ALL_TOOLS)
+                await tool_retriever.reindex(ALL_TOOLS)
 
         self._refresh_task = asyncio.create_task(_loop())
         print(f"[n8n] Periodic refresh every {interval} minutes")

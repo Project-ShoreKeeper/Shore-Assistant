@@ -1,13 +1,9 @@
-"""
-Embedding-based tool retriever.
-Embeds tool descriptions at startup, retrieves the most relevant tools per query
-instead of injecting all tools into every LLM prompt.
-"""
+"""Embedding-based tool retriever via shore-ai-service."""
 
 import numpy as np
 
 from app.core.config import settings
-from app.services.embedding_service import embedding_service
+from app.services.ai_client.embed import EmbedUnavailable, embed_client
 
 
 # Tools that are always injected regardless of retrieval score
@@ -33,25 +29,35 @@ class ToolRetriever:
         self._tool_names: list[str] = []
         self._tool_embeddings: np.ndarray | None = None
 
-    def initialize(self, tools: list) -> None:
-        """Embed all tool descriptions at startup using the shared service."""
+    async def initialize(self, tools: list) -> None:
+        """Embed all tool descriptions at startup using shore-ai-service."""
         self._tool_names = [t.name for t in tools]
         self._tool_texts = [f"{t.name}: {t.description}" for t in tools]
-        self._tool_embeddings = embedding_service.encode(self._tool_texts)
+        try:
+            vectors = await embed_client.encode(self._tool_texts)
+        except EmbedUnavailable:
+            self._tool_embeddings = None
+            print("[ToolRetriever] embed service unavailable; degraded mode")
+            return
+        self._tool_embeddings = np.asarray(vectors, dtype=np.float32)
         print(f"[ToolRetriever] Indexed {len(tools)} tools")
 
-    def retrieve(self, query: str, top_k: int | None = None) -> list[str]:
+    async def retrieve(self, query: str, top_k: int | None = None) -> list[str]:
         """
         Return the names of the top-K most relevant tools for the query.
         Falls back to all tools if scores are below threshold.
         """
         if self._tool_embeddings is None:
-            return list(self._tool_names)
+            return [n for n in self._tool_names if n in ALWAYS_AVAILABLE]
 
         k = top_k or settings.TOOL_RETRIEVER_TOP_K
         threshold = settings.TOOL_RETRIEVER_THRESHOLD
 
-        query_embedding = embedding_service.encode([query])
+        try:
+            query_vectors = await embed_client.encode([query])
+        except EmbedUnavailable:
+            return [n for n in self._tool_names if n in ALWAYS_AVAILABLE]
+        query_embedding = np.asarray(query_vectors, dtype=np.float32)
         # Cosine similarity (embeddings are already normalized)
         scores = (self._tool_embeddings @ query_embedding.T).flatten()
 
@@ -92,14 +98,11 @@ class ToolRetriever:
 
         return retrieved
 
-    def reindex(self, tools: list) -> None:
+    async def reindex(self, tools: list) -> None:
         """Re-embed all tools after dynamic tools are added/removed."""
-        if self._tool_embeddings is None:
+        if self._tool_embeddings is None and not tools:
             return
-        self._tool_names = [t.name for t in tools]
-        self._tool_texts = [f"{t.name}: {t.description}" for t in tools]
-        self._tool_embeddings = embedding_service.encode(self._tool_texts)
-        print(f"[ToolRetriever] Re-indexed {len(tools)} tools")
+        await self.initialize(tools)
 
     def get_tool_descriptions(self, tool_names: list[str], all_tools: list) -> str:
         """Format tool descriptions for the selected tools, ready for the system prompt."""

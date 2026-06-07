@@ -63,7 +63,7 @@ async def refresh_n8n_workflows():
     new_tools = await n8n_service.refresh()
     if new_tools:
         register_dynamic_tools(new_tools)
-    tool_retriever.reindex(ALL_TOOLS)
+    await tool_retriever.reindex(ALL_TOOLS)
 
     return {
         "status": "refreshed",

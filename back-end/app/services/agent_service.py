@@ -80,7 +80,7 @@ class AgentService:
             tool_schemas = None
             relevant_tool_names = None
         else:
-            relevant_tool_names = tool_retriever.retrieve(user_text)
+            relevant_tool_names = await tool_retriever.retrieve(user_text)
             tool_schemas = tool_retriever.get_tool_schemas(relevant_tool_names, ALL_TOOLS)
 
         t1 = time.perf_counter()

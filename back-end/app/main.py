@@ -37,7 +37,7 @@ async def lifespan(app: FastAPI):
     from app.services.embedding_service import embedding_service
     embedding_service.startup()
 
-    tool_retriever.initialize(ALL_TOOLS)
+    await tool_retriever.initialize(ALL_TOOLS)
 
     # n8n workflow discovery + n8nac init
     if settings.N8N_ENABLED:
@@ -48,7 +48,7 @@ async def lifespan(app: FastAPI):
         n8n_tools = await n8n_service.initialize()
         if n8n_tools:
             register_dynamic_tools(n8n_tools)
-            tool_retriever.reindex(ALL_TOOLS)
+            await tool_retriever.reindex(ALL_TOOLS)
         await n8n_service.start_periodic_refresh()
         await n8n_workflow_service.init_n8nac()
 

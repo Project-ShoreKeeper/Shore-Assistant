@@ -65,14 +65,8 @@ services:
     compose_service: redis
 
   # ── Internal singletons ──────────────────────────────────────────────
-  # In-process toggles. Stop releases VRAM for `tts`; flag-only for the rest.
-  # The `target` field selects which singleton to control.
-
-  kokoro-tts:
-    kind: internal
-    display_name: Kokoro TTS
-    correlates_with: Kokoro TTS
-    target: tts
+  # In-process toggles for backend-only jobs. The `target` field selects which
+  # singleton to control.
 
   locomo-worker:
     kind: internal

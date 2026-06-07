@@ -8,22 +8,10 @@ from app.services.controllers.internal import InternalController
 @pytest.fixture(autouse=True)
 def _reset():
     runtime_flags.reset_for_tests()
-    runtime_flags.set("TTS_ENABLED", True)
     runtime_flags.set("WORKER_ENABLED", True)
     runtime_flags.set("CANONICALIZER_ENABLED", True)
     yield
     runtime_flags.reset_for_tests()
-
-
-class _FakeTTS:
-    def __init__(self):
-        self._pipeline = None
-
-    def load(self):
-        self._pipeline = object()
-
-    def unload(self):
-        self._pipeline = None
 
 
 class _FakeScheduler:
@@ -38,27 +26,6 @@ class _FakeScheduler:
 
     def remove_system_job(self, job_id):
         return self.jobs.pop(job_id, None) is not None
-
-
-# ── TTS ──
-
-@pytest.mark.asyncio
-async def test_tts_start_loads_pipeline():
-    tts = _FakeTTS()
-    ctrl = InternalController("tts", display_name="TTS", target="tts", tts=tts)
-    await ctrl.start()
-    assert tts._pipeline is not None
-    assert runtime_flags.get("TTS_ENABLED") is True
-
-
-@pytest.mark.asyncio
-async def test_tts_stop_unloads_pipeline():
-    tts = _FakeTTS()
-    tts._pipeline = object()
-    ctrl = InternalController("tts", display_name="TTS", target="tts", tts=tts)
-    await ctrl.stop()
-    assert tts._pipeline is None
-    assert runtime_flags.get("TTS_ENABLED") is False
 
 
 # ── locomo_worker ──

@@ -1,7 +1,6 @@
 """InternalController — toggles for in-process singletons.
 
 Targets:
-  - tts:            tts_service.load() / unload() + TTS_ENABLED flag
   - locomo_worker:  WORKER_ENABLED flag only (worker reads from runtime_flags)
   - canonicalizer:  CANONICALIZER_ENABLED flag + APScheduler job add/remove
 
@@ -17,7 +16,7 @@ from app.core import runtime_flags
 from app.services.controllers.base import Controller, ServiceKind
 
 
-InternalTarget = Literal["tts", "locomo_worker", "canonicalizer"]
+InternalTarget = Literal["locomo_worker", "canonicalizer"]
 
 
 class InternalController(Controller):
@@ -30,17 +29,16 @@ class InternalController(Controller):
         target: InternalTarget,
         correlates_with: Optional[str] = None,
         # Optional dependency injection (used by tests).
-        tts=None, scheduler=None,
+        scheduler=None,
         canonicalizer_func: Optional[Callable] = None,
         canonicalizer_cron: Optional[str] = None,
     ) -> None:
         super().__init__(
             name, display_name=display_name, correlates_with=correlates_with,
         )
-        if target not in ("tts", "locomo_worker", "canonicalizer"):
+        if target not in ("locomo_worker", "canonicalizer"):
             raise ValueError(f"Unknown internal target: {target!r}")
         self._target: InternalTarget = target
-        self._tts = tts
         self._scheduler = scheduler
         self._canonicalizer_func = canonicalizer_func
         self._canonicalizer_cron = canonicalizer_cron
@@ -52,8 +50,6 @@ class InternalController(Controller):
     # ── State ──
 
     async def is_running(self) -> bool:
-        if self._target == "tts":
-            return runtime_flags.get("TTS_ENABLED") and self._tts_service()._pipeline is not None
         if self._target == "locomo_worker":
             return bool(runtime_flags.get("WORKER_ENABLED"))
         if self._target == "canonicalizer":
@@ -63,12 +59,8 @@ class InternalController(Controller):
     # ── Lifecycle ──
 
     async def start(self) -> None:
-        loop = asyncio.get_event_loop()
         try:
-            if self._target == "tts":
-                runtime_flags.set("TTS_ENABLED", True)
-                await loop.run_in_executor(None, self._tts_service().load)
-            elif self._target == "locomo_worker":
+            if self._target == "locomo_worker":
                 runtime_flags.set("WORKER_ENABLED", True)
             elif self._target == "canonicalizer":
                 runtime_flags.set("CANONICALIZER_ENABLED", True)
@@ -79,12 +71,8 @@ class InternalController(Controller):
         self._record_action("start")
 
     async def stop(self) -> None:
-        loop = asyncio.get_event_loop()
         try:
-            if self._target == "tts":
-                runtime_flags.set("TTS_ENABLED", False)
-                await loop.run_in_executor(None, self._tts_service().unload)
-            elif self._target == "locomo_worker":
+            if self._target == "locomo_worker":
                 runtime_flags.set("WORKER_ENABLED", False)
             elif self._target == "canonicalizer":
                 runtime_flags.set("CANONICALIZER_ENABLED", False)
@@ -95,12 +83,6 @@ class InternalController(Controller):
         self._record_action("stop")
 
     # ── Lazy singleton getters ──
-
-    def _tts_service(self):
-        if self._tts is not None:
-            return self._tts
-        from app.services.tts_service import tts_service
-        return tts_service
 
     def _scheduler_service(self):
         if self._scheduler is not None:

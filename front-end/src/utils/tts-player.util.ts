@@ -44,12 +44,15 @@ export class TTSPlayer {
       this.analyser.connect(this.audioContext.destination);
     }
 
+    const audioContext = this.audioContext;
+    if (!audioContext) return;
+
     // Resume if suspended (browser autoplay policy)
-    if (this.audioContext.state === "suspended") {
-      this.audioContext.resume();
+    if (audioContext.state === "suspended") {
+      audioContext.resume();
     }
 
-    this.nextStartTime = this.audioContext.currentTime;
+    this.nextStartTime = audioContext.currentTime;
     this.isPlaying = true;
     this.pendingChunks = 0;
   }

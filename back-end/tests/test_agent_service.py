@@ -1,7 +1,7 @@
 """Unit tests for agent_service.AgentService changes around multimodal input."""
 import sys
 import types
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 
@@ -32,7 +32,7 @@ def agent_service_module():
 
     tr_mod = types.ModuleType("app.services.tool_retriever")
     tr_mod.tool_retriever = MagicMock()
-    tr_mod.tool_retriever.retrieve = MagicMock(return_value=[])
+    tr_mod.tool_retriever.retrieve = AsyncMock(return_value=[])
     tr_mod.tool_retriever.get_tool_schemas = MagicMock(return_value=None)
     sys.modules["app.services.tool_retriever"] = tr_mod
 

@@ -1,0 +1,94 @@
+# Service control registry — copy to `services.yaml` and edit paths.
+#
+# Each entry defines how the Dashboard Start/Stop buttons control one service:
+#   - `kind`             : process | docker | internal
+#   - `display_name`     : optional override for the registry name
+#   - `correlates_with`  : optional — matches the `name` field of a row in
+#                          /api/dashboard's `services` array, so the button
+#                          attaches to that existing card. Omit for entries
+#                          that should render under their own card.
+#
+# Missing this file is fine — no buttons will be rendered, but the rest of
+# the dashboard works unchanged.
+
+services:
+
+  # ── Local processes ──────────────────────────────────────────────────
+  # Spawned via subprocess; tracked by PID file + create_time identity check.
+
+  llama-server:
+    kind: process
+    display_name: llama-server
+    correlates_with: llama-server
+    # llama.cpp is built inside WSL — wrap the command with `wsl -e bash -lc`
+    # so the Windows-side Shore Assistant can spawn it. `cwd` must be a Windows
+    # path (or omitted); the Linux `cd` lives inside the bash invocation.
+    start_cmd: 'wsl -e bash -lc "cd ~/llama.cpp && ./build/bin/llama-server -m ./Gemma4-26B-A4B-Uncensored-HauhauCS-Balanced-Q5_K_M.gguf -ngl 99 --n-cpu-moe 10 --jinja --no-mmap --mlock --cache-reuse 256 -t 6 --threads-batch 6 --cache-type-k q4_0 --cache-type-v q4_0 -c 128000 --host 0.0.0.0 --port 9090"'
+    # CTRL_BREAK_EVENT to the cmd.exe wrapper doesn't propagate into WSL, so
+    # we deliver SIGTERM directly to llama-server via `wsl pkill` first. Best-
+    # effort: failure (e.g. process already gone) doesn't abort the stop.
+    pre_stop_cmd: 'wsl pkill -TERM llama-server'
+    grace_seconds: 10            # SIGTERM grace before SIGKILL
+
+  shore-pty-service:
+    kind: process
+    display_name: shore-pty-service
+    correlates_with: shore-pty-service
+    start_cmd: 'npm start'
+    cwd: 'D:\Jupiter\Luna\ProjectShoreKeeper\Shore-Assistant\shore-pty-service'
+
+  # ── Docker containers ────────────────────────────────────────────────
+  # Controlled via `docker compose -f <file> {up -d|start|stop|ps} <service>`.
+
+  n8n:
+    kind: docker
+    display_name: n8n
+    correlates_with: n8n
+    compose_file: 'docker-compose.n8n.yml'
+    compose_service: n8n
+    use_up_on_start: true        # creates the container if it doesn't exist
+
+  postgres:
+    kind: docker
+    display_name: Postgres
+    correlates_with: Postgres
+    compose_file: 'deploy/memory/docker-compose.yml'
+    compose_service: postgres
+
+  qdrant:
+    kind: docker
+    display_name: Qdrant
+    correlates_with: Qdrant
+    compose_file: 'deploy/memory/docker-compose.yml'
+    compose_service: qdrant
+
+  redis:
+    kind: docker
+    display_name: Redis
+    correlates_with: Redis
+    compose_file: 'deploy/memory/docker-compose.yml'
+    compose_service: redis
+
+  # Remote services (gRPC)
+  # Controlled via shore-ai-supervisor on the GPU machine.
+
+  shore-ai:
+    kind: remote
+    display_name: "Shore AI (STT + TTS + Embed)"
+    correlates_with: shore-ai
+    target: shore-ai
+
+  # ── Internal singletons ──────────────────────────────────────────────
+  # In-process toggles for backend-only jobs. The `target` field selects which
+  # singleton to control.
+
+  locomo-worker:
+    kind: internal
+    display_name: LOCOMO worker
+    # No correlates_with: matched by display_name to the Workers card.
+    target: locomo_worker
+
+  canonicalizer:
+    kind: internal
+    display_name: Canonicalizer
+    target: canonicalizer

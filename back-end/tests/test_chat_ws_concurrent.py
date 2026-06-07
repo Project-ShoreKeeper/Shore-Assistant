@@ -7,10 +7,7 @@ a confirm that can never be delivered.
 """
 
 import asyncio
-import os
 import time
-
-os.environ.setdefault("STT_ENABLED", "False")
 
 import pytest
 

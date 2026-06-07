@@ -161,6 +161,22 @@ class SchedulerService:
         )
         print(f"[Scheduler] system job '{job_id}' registered ({cron})")
 
+    def remove_system_job(self, job_id: str) -> bool:
+        """Remove a system job by id. Returns True if it existed."""
+        if self._scheduler is None:
+            return False
+        try:
+            self._scheduler.remove_job(job_id)
+            print(f"[Scheduler] system job '{job_id}' removed")
+            return True
+        except Exception:
+            return False
+
+    def has_system_job(self, job_id: str) -> bool:
+        if self._scheduler is None:
+            return False
+        return self._scheduler.get_job(job_id) is not None
+
     # ── Internal ──
 
     async def _fire_task(self, task_id: str):

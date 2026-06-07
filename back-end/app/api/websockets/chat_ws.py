@@ -11,9 +11,9 @@ import base64 as _b64
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from app.api.deps import get_session_store
 from app.core.auth import current_user_id
-from app.services.stt_service import stt_service
+from app.services.ai_client.stt import SttUnavailable, stt_client
 from app.services.agent_service import agent_service
-from app.services.tts_service import tts_service
+from app.services.ai_client.tts import tts_client
 from app.services.memory import memory_facade, worker_service
 from app.services.connection_manager import connection_manager
 from app.services.notification_service import notification_service
@@ -196,14 +196,9 @@ async def websocket_chat(websocket: WebSocket):
 
     async def tts_worker(sentence_queue: asyncio.Queue):
         """Consume sentences from the queue and stream TTS audio to the client."""
-        if not tts_service.is_available:
-            while True:
-                item = await sentence_queue.get()
-                if item is None:
-                    break
-            return
-
         started = False
+        voice_map = {"en": "af_heart", "ja": "jf_alpha", "zh": "zf_xiaobei"}
+        tts_sample_rate = 24000
 
         while True:
             sentence = await sentence_queue.get()
@@ -212,20 +207,23 @@ async def websocket_chat(websocket: WebSocket):
 
             try:
                 async with notification_service.tts_lock:
-                    tts_service.set_voice_for_language(
-                        session_config.get("language", "en")
-                    )
+                    language = session_config.get("language", "en")
+                    voice = voice_map.get(language, "af_heart")
 
                     # Send tts_start only once for the entire response
                     if not started:
                         await send_json_safe({
                             "type": "tts_start",
-                            "sample_rate": tts_service.sample_rate,
+                            "sample_rate": tts_sample_rate,
                             "format": "pcm_s16le",
                         })
                         started = True
 
-                    async for chunk in tts_service.synthesize_stream_pcm(sentence):
+                    async for chunk in tts_client.stream_pcm(
+                        text=sentence,
+                        voice=voice,
+                        language=language,
+                    ):
                         await send_binary_safe(chunk)
 
             except Exception:
@@ -526,13 +524,6 @@ async def websocket_chat(websocket: WebSocket):
 
             # ─── Binary messages (Audio from VAD) ───
             elif "bytes" in message:
-                if not settings.STT_ENABLED:
-                    await send_json_safe({
-                        "type": "error",
-                        "message": "STT is disabled",
-                    })
-                    continue
-
                 audio_bytes = message["bytes"]
                 start_time = time.time()
 
@@ -559,10 +550,18 @@ async def websocket_chat(websocket: WebSocket):
 
                 # Run STT
                 try:
-                    stt_result = await stt_service.transcribe_async(
+                    stt_result = await stt_client.transcribe(
                         audio=audio_float32,
                         language=session_config.get("language", "en"),
                     )
+                except SttUnavailable:
+                    await send_json_safe({
+                        "type": "transcript",
+                        "text": "",
+                        "isFinal": True,
+                        "data": {"skipped": True, "reason": "stt_unavailable"},
+                    })
+                    continue
                 except Exception as e:
                     await send_json_safe({
                         "type": "error",

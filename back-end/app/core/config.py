@@ -10,9 +10,6 @@ class Settings(BaseSettings):
     SAMPLE_RATE: int = 16000
     AUDIO_CHANNELS: int = 1
 
-    # STT
-    STT_ENABLED: bool = False
-
     # Llama-server LLM (llama.cpp OpenAI-compatible API)
     LLAMA_BASE_URL: str = "http://localhost:8080"
     LLAMA_MODEL: str = "gemma-4-26B-A4B-it-UD-Q5_K_M"  # llama-server typically ignores this; used only as a display label
@@ -95,6 +92,15 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = ""
     CLOUD_MAX_TOKENS: int = 4096
     CLOUD_HISTORY_MAX_TURNS: int = 10
+
+    # Shore AI microservice
+    SHORE_AI_GRPC_URL: str = "ai.shore-keeper.com:443"
+    SHORE_AI_SUPERVISOR_GRPC_URL: str = "ai.shore-keeper.com:8443"
+    SHORE_AI_TOKEN: str = ""
+    SHORE_AI_USE_TLS: bool = True
+    SHORE_AI_TIMEOUT_SECONDS: float = 30.0
+    SHORE_AI_EMBED_TIMEOUT_SECONDS: float = 10.0
+    SHORE_AI_TTS_FIRST_CHUNK_TIMEOUT_SECONDS: float = 15.0
 
     # Terminal
     TERMINAL_DEFAULT_CWD: str = r"D:\Jupiter"

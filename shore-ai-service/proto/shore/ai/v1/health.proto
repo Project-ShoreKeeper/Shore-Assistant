@@ -1,0 +1,20 @@
+syntax = "proto3";
+package shore.ai.v1;
+
+service Health {
+  rpc Get(GetRequest) returns (StatusResponse);
+}
+
+message GetRequest {}
+
+message ComponentStatus {
+  string name   = 1;
+  bool   loaded = 2;
+  string detail = 3;
+}
+
+message StatusResponse {
+  bool                     ready      = 1;
+  repeated ComponentStatus components = 2;
+  string                   version    = 3;
+}

@@ -17,7 +17,8 @@ Browser (React + TypeScript + Vite)
 FastAPI Backend (Python)
   ├── /ws/chat    — Full pipeline: Audio/Text → STT → Agent → LLM → TTS (cookie-auth at upgrade)
   ├── /api/auth/{login,callback,logout,me} — Google OAuth + Redis-backed sessions, gated by AUTH_ENABLED
-  ├── /api/dashboard — Aggregated status: services, databases, hardware (psutil + nvidia-smi), workers
+  ├── /api/dashboard — Aggregated status: services, databases, hardware (psutil + nvidia-smi), workers; rows include `control` when a service appears in services.yaml
+  ├── /api/services — GET list + POST {name}/{start,stop} for registered services (admin + CSRF on writes)
   ├── Whisper STT (HuggingFace Transformers, GPU/CPU auto-detect)
   ├── LLM Agent   (llama.cpp llama-server, OpenAI-compatible /v1/chat/completions, LangGraph StateGraph)
   ├── Tool Retriever (sentence-transformers embedding-based selection, all-MiniLM-L6-v2)
@@ -43,6 +44,7 @@ Shore-Assistant/
 │       ├── main.py                     # FastAPI app factory + router includes
 │       ├── core/
 │       │   ├── config.py               # Pydantic settings (llama-server, TTS, Vision, Auth)
+│       │   ├── runtime_flags.py        # Mutable runtime overrides for STT/TTS/WORKER/CANONICALIZER (toggled by service control)
 │       │   ├── auth.py                 # User / Session types + Redis-backed SessionStore + current_user_id ContextVar
 │       │   └── allowlist.py            # Parse AUTH_ALLOWED_EMAILS + resolve_role (first email = admin)
 │       ├── api/
@@ -51,7 +53,8 @@ Shore-Assistant/
 │       │   │   ├── health.py           # GET / and /health (tri-state: healthy/degraded/unhealthy)
 │       │   │   ├── auth.py             # /api/auth/{login,callback,logout,me} — Google OAuth + session lifecycle
 │       │   │   ├── memory.py           # /api/memory/* — Profile, Episodic, Audit admin API (admin-only when auth enabled)
-│       │   │   ├── dashboard.py        # GET /api/dashboard — services + databases + hardware + workers snapshot
+│       │   │   ├── dashboard.py        # GET /api/dashboard — services + databases + hardware + workers snapshot; merges service-control state per row
+│       │   │   ├── services.py         # /api/services/* — list + admin-only start/stop endpoints, 202 fire-and-forget
 │       │   │   ├── chronicles.py       # GET /api/chronicles + /{slug} — serves docs/chronicles/*.md with YAML frontmatter
 │       │   │   └── n8n_webhook.py      # POST /api/n8n/webhook, /refresh, GET /status
 │       │   └── websockets/
@@ -66,10 +69,16 @@ Shore-Assistant/
 │       │   ├── tools_n8n.txt           # n8n workflow rules (loaded only when an n8n_ tool is retrieved)
 │       │   └── user.txt                # Optional user context appended to persona
 │       ├── services/
-│       │   ├── stt_service.py          # Whisper via Transformers
+│       │   ├── service_manager.py      # Registry loader + per-service asyncio lock; dispatches start/stop to controllers
+│       │   ├── controllers/             # Service-control backends
+│       │   │   ├── base.py              # Controller ABC + ServiceState model
+│       │   │   ├── process.py           # ProcessController (subprocess.Popen + PID file w/ create_time verification)
+│       │   │   ├── docker.py            # DockerController (`docker compose start/stop/up -d/ps`)
+│       │   │   └── internal.py          # InternalController (stt/tts/locomo/canonicalizer toggles + unload)
+│       │   ├── stt_service.py          # Whisper via Transformers; gated by runtime_flags.STT_ENABLED, supports unload()
 │       │   ├── llm_service.py          # llama-server OpenAI-compatible streaming client (httpx), persona + memory block loader
 │       │   ├── agent_service.py        # LangGraph StateGraph agent loop (accepts memory_bundle)
-│       │   ├── tts_service.py          # Kokoro TTS, CPU inference, 24kHz PCM, en/ja/zh voices
+│       │   ├── tts_service.py          # Kokoro TTS; gated by runtime_flags.TTS_ENABLED, supports load()/unload()
 │       │   ├── embedding_service.py    # Shared SentenceTransformer singleton (used by tool_retriever + memory.embedder)
 │       │   ├── memory/                  # Hybrid memory package
 │       │   │   ├── __init__.py          # exposes memory_facade singleton
@@ -217,6 +226,7 @@ docker compose -f docker-compose.n8n.yml up -d
 - **Auth (Google OAuth + Redis sessions)**: Master switch `AUTH_ENABLED` (default False — legacy synthetic-admin mode preserves pre-auth behavior). When enabled: `/api/auth/login` → Google consent → `/api/auth/callback` checks email against `AUTH_ALLOWED_EMAILS` (comma-separated, first email = admin role), creates a session in Redis under `shore:session:<sid>` with sliding TTL, sets an HttpOnly cookie. `/api/auth/me` returns `{email, role, csrf}`; the frontend stores the CSRF token in memory and sends it as `X-CSRF-Token` on writes. `/api/auth/logout` deletes the Redis key + clears the cookie. WS upgrades validate the cookie and close with code 4401 if unauthenticated. **Short-term memory becomes per-user** (`shore:short_term:<user_id>:messages`); Profile and Episodic stay global. **LOCOMO worker only extracts from admin turns** — non-admin allowlisted users can chat without their words reaching Luna's shared identity profile. Public-no-login routes when auth is on: `/health`, `/api/chronicles`.
 - **LOCOMO worker (Phase 3)**: Gemini 2.5 Flash with `response_schema=WorkerOutput` runs after 30 s of chat idle. Debounced via `WorkerService.on_turn_completed()` (cancel-on-new-turn). Safety valve fires immediately at `WORKER_MAX_UNPROCESSED_MESSAGES`. Dual-locked via `asyncio.Lock` + Redis `SETNX shore:worker:lock` (TTL 60 s). Disabled by `WORKER_ENABLED=False`. Notifications skip the trigger.
 - **Canonicalizer**: Internal APScheduler job (registered via `scheduler_service.add_system_job`, invisible to `list_tasks`). Cron `0 4 * * *` by default. Greedy single-pass clustering on entity tags at cosine ≥0.85; rewrites Qdrant point payloads in place.
+- **Service control (Dashboard buttons)**: `back-end/config/services.yaml` (gitignored; example at `services.example.yaml`) registers controllable services across three kinds. `process` → `subprocess.Popen` with PID file under `data/pids/<name>.pid` (verified by `create_time` to defend against PID reuse); SIGTERM → grace → SIGKILL. `docker` → `docker compose -f <file> {up -d|start|stop|ps} <service>`. `internal` → `runtime_flags` toggle for STT/TTS/WORKER/CANONICALIZER, plus model `unload()` for stt/tts. ServiceManager uses a `transitioning` set as a synchronization gate (atomic without `await`) so two concurrent requests on the same name can never both pass. Endpoints: `GET /api/services` (any logged-in user), `POST /api/services/{name}/{start,stop}` returns 202 with admin + CSRF guards. `/api/dashboard` rows include a `control` field merged by `correlates_with` (services/databases) or `display_name` (workers). Frontend `useDashboardPoll` accelerates to 1 s while any service is transitioning, returning to 5 s once stable; Stop shows a Radix confirm dialog, Start does not.
 
 ## Configuration
 
@@ -316,6 +326,7 @@ All backend config via environment variables or `.env` file in `back-end/`:
 - [x] Web search → scrape chaining — companion tools + prompt rule for automatic follow-up
 - [x] Vision via primary model — multimodal primary served by llama-server, no hot-swap
 - [x] Terminal interaction — PTY sessions + one-shot commands via shore-pty-service (node-pty) + xterm.js UI
+- [x] Dashboard service control — Start/Stop buttons for processes, docker containers, and internal singletons via `back-end/config/services.yaml`
 
 ### Proactive Agent (Event Loop)
 - [x] Scheduled tasks — set_reminder (one-shot) + set_scheduled_task (recurring) tools with APScheduler

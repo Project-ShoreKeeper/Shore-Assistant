@@ -1,10 +1,5 @@
 """Integration test: /ws/chat sends a `history` message immediately on connect."""
 
-import os
-
-# Disable heavy startup work before importing app
-os.environ.setdefault("STT_ENABLED", "False")
-
 import pytest
 
 # Skip the whole module if optional cloud deps aren't installed in this env.

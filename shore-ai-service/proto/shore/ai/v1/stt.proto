@@ -1,0 +1,26 @@
+syntax = "proto3";
+package shore.ai.v1;
+
+service STT {
+  rpc Transcribe(TranscribeRequest) returns (TranscribeResponse);
+}
+
+message TranscribeRequest {
+  bytes  audio_f32  = 1;
+  string language   = 2;
+  string model_size = 3;
+}
+
+message TranscribeSegment {
+  double start = 1;
+  double end   = 2;
+  string text  = 3;
+}
+
+message TranscribeResponse {
+  string text                         = 1;
+  string language                     = 2;
+  double language_prob                = 3;
+  repeated TranscribeSegment segments = 4;
+  string model                        = 5;
+}

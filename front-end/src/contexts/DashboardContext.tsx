@@ -7,6 +7,7 @@ type PollValue = ReturnType<typeof useDashboardPoll>;
 type DashboardContextValue = PollValue & {
   localCpuHistory: number[];
   gpuUtilHistory: number[];
+  // `expedite` is already part of PollValue; surfaced explicitly in docs.
 };
 
 const DashboardContext = createContext<DashboardContextValue | null>(null);

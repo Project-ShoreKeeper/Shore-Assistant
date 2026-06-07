@@ -1,0 +1,18 @@
+syntax = "proto3";
+package shore.ai.v1;
+
+service TTS {
+  rpc Synthesize(SynthesizeRequest) returns (stream SynthesizeChunk);
+}
+
+message SynthesizeRequest {
+  string text       = 1;
+  string voice      = 2;
+  string language   = 3;
+  uint32 chunk_size = 4;
+}
+
+message SynthesizeChunk {
+  bytes pcm_s16le = 1;
+  bool  is_last   = 2;
+}

@@ -1,0 +1,19 @@
+syntax = "proto3";
+package shore.ai.v1;
+
+service Embed {
+  rpc Encode(EncodeRequest) returns (EncodeResponse);
+}
+
+message EncodeRequest {
+  repeated string texts = 1;
+  string          model = 2;
+}
+
+message Vector { repeated float values = 1; }
+
+message EncodeResponse {
+  repeated Vector vectors = 1;
+  uint32          dim     = 2;
+  string          model   = 3;
+}

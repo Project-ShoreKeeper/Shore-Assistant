@@ -1,5 +1,6 @@
 PROTO_DIR := proto/shore/ai/v1
 PB_OUT    := src/shore_ai/_pb
+PYTHON    ?= python
 
 .PHONY: proto clean-proto
 
@@ -10,7 +11,7 @@ PB_OUT    := src/shore_ai/_pb
 proto:
 	mkdir -p $(PB_OUT)
 	touch $(PB_OUT)/__init__.py
-	python -m grpc_tools.protoc \
+	$(PYTHON) -m grpc_tools.protoc \
 	  -I$(PROTO_DIR) \
 	  --python_out=$(PB_OUT) \
 	  --grpc_python_out=$(PB_OUT) \

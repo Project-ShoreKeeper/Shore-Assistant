@@ -103,6 +103,8 @@ function PageChat() {
     setLanguage,
     thinkingEnabled,
     setThinkingEnabled,
+    copilotActive,
+    toggleCopilot,
     startRecording,
     stopRecording,
     sendTextMessage,
@@ -751,6 +753,8 @@ function PageChat() {
         isAssistantThinking={isAssistantThinking}
         thinkingEnabled={thinkingEnabled}
         onThinkingEnabledChange={setThinkingEnabled}
+        copilotEnabled={copilotActive}
+        onCopilotEnabledChange={toggleCopilot}
         onClearMessages={clearMessages}
         messageCount={messages.length}
         collapsed={rightCollapsed}

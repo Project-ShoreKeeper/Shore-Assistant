@@ -35,6 +35,8 @@ export interface SettingsPanelProps {
   isAssistantThinking?: boolean;
   thinkingEnabled?: boolean;
   onThinkingEnabledChange?: (enabled: boolean) => void;
+  copilotEnabled?: boolean;
+  onCopilotEnabledChange?: (enabled: boolean) => void;
   onClearMessages?: () => void;
   messageCount?: number;
   collapsed: boolean;
@@ -179,6 +181,8 @@ export default function SettingsPanel({
   isAssistantThinking,
   thinkingEnabled = false,
   onThinkingEnabledChange,
+  copilotEnabled = false,
+  onCopilotEnabledChange,
   onClearMessages,
   messageCount = 0,
   collapsed,
@@ -438,6 +442,10 @@ export default function SettingsPanel({
         <Flex justify="between" align="center" mt="2">
           <Text size="2" color="gray">Thinking</Text>
           <Switch size="1" checked={thinkingEnabled} onCheckedChange={onThinkingEnabledChange} />
+        </Flex>
+        <Flex justify="between" align="center" mt="2">
+          <Text size="2" color="gray">Co-pilot</Text>
+          <Switch size="1" checked={copilotEnabled} onCheckedChange={onCopilotEnabledChange} />
         </Flex>
       </Box>
 

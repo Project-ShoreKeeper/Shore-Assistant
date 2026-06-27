@@ -22,6 +22,7 @@ export interface ChatMessage {
   audioUrl?: string;
   isStreaming?: boolean;
   isNotification?: boolean;
+  isCopilot?: boolean;
   taskId?: string;
   timestamp: Date;
   agentActions?: AgentAction[];
@@ -74,6 +75,8 @@ export interface UseAssistantReturn {
   setLanguage: (lang: string) => void;
   thinkingEnabled: boolean;
   setThinkingEnabled: (enabled: boolean) => void;
+  copilotActive: boolean;
+  toggleCopilot: () => void;
 
   // Controls
   startRecording: (deviceId?: string) => void;
@@ -99,6 +102,7 @@ export function useAssistant(): UseAssistantReturn {
   const languageRef = useRef(STT_DEFAULT_LANGUAGE);
   const [thinkingEnabled, setThinkingEnabled] = useState(false);
   const thinkingEnabledRef = useRef(false);
+  const [copilotActive, setCopilotActive] = useState(false);
 
   // Conversation state
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -550,6 +554,39 @@ export function useAssistant(): UseAssistantReturn {
           ]);
           break;
         }
+
+        case "copilot_state": {
+          setCopilotActive(msg.active);
+          break;
+        }
+
+        case "copilot_message": {
+          const rand = () => Math.random().toString(36).slice(2, 7);
+          const actions: AgentAction[] = (msg.agent_actions || []).map((a) => ({
+            id: `cop-act-${a.timestamp}-${rand()}`,
+            action: a.action,
+            detail: "",
+            tool: a.tool,
+            args: a.args,
+            result: a.result ?? undefined,
+            status: a.status,
+            timestamp: new Date((a.timestamp || Date.now() / 1000) * 1000),
+          }));
+          const id = Date.now().toString(36) + rand();
+          setMessages((prev) => [
+            ...prev,
+            {
+              id,
+              role: "assistant",
+              text: msg.text,
+              isStreaming: false,
+              isCopilot: true,
+              timestamp: new Date(),
+              agentActions: actions.length > 0 ? actions : undefined,
+            },
+          ]);
+          break;
+        }
       }
     };
 
@@ -761,6 +798,17 @@ export function useAssistant(): UseAssistantReturn {
     }
   }, []);
 
+  const toggleCopilot = useCallback(() => {
+    if (!wsRef.current) return;
+    if (copilotActive) {
+      wsRef.current.sendCopilotStop();
+    } else {
+      wsRef.current.sendCopilotStart();
+    }
+    // Optimistic; the backend echoes copilot_state to confirm the real value.
+    setCopilotActive((v) => !v);
+  }, [copilotActive]);
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
@@ -790,6 +838,8 @@ export function useAssistant(): UseAssistantReturn {
     setLanguage,
     thinkingEnabled,
     setThinkingEnabled,
+    copilotActive,
+    toggleCopilot,
 
     startRecording,
     stopRecording,

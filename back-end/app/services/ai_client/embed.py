@@ -18,6 +18,8 @@ _GRACEFUL_CODES = {
     grpc.StatusCode.UNAVAILABLE,
     grpc.StatusCode.DEADLINE_EXCEEDED,
     grpc.StatusCode.RESOURCE_EXHAUSTED,
+    grpc.StatusCode.UNAUTHENTICATED,
+    grpc.StatusCode.PERMISSION_DENIED,
 }
 
 

@@ -17,6 +17,7 @@ from app.services.ai_client.tts import tts_client
 from app.services.memory import memory_facade, worker_service
 from app.services.connection_manager import connection_manager
 from app.services.notification_service import notification_service
+from app.services.copilot_service import copilot_service, summarize_copilot_run
 from app.core.config import settings
 import numpy as np
 import json
@@ -410,6 +411,71 @@ async def websocket_chat(websocket: WebSocket):
 
     notification_service.set_agent_callback(run_notification)
 
+    async def run_copilot_pipeline(framing: str, screenshot: dict):
+        """Run one co-pilot turn: feed the screenshot to the agent with tools,
+        buffer the output, and emit a single copilot_message (or stay silent on
+        __NOOP__). Ephemeral: the framing/screenshot never touch history/memory.
+        Confirm dialogs for risky commands are broadcast live by terminal_service.
+        """
+        # Transient history: prior turns + the framing as the current user turn.
+        # agent_service.run builds its own message list, so the real
+        # conversation_history is never mutated.
+        temp_history = list(conversation_history) + [
+            {"role": "user", "content": framing}
+        ]
+        live_msg = _build_live_message(framing, [screenshot])
+
+        events: list[dict] = []
+        try:
+            async for event in agent_service.run(
+                framing, temp_history,
+                memory_bundle=None,
+                thinking=False,
+                no_tools=False,
+                live_user_message=live_msg,
+            ):
+                events.append(event)
+        except Exception as e:
+            print(f"[Copilot] pipeline error: {e!r}")
+            return
+
+        result = summarize_copilot_run(events)
+        if result is None:
+            return  # __NOOP__ / nothing useful — stay silent
+
+        await send_json_safe({
+            "type": "copilot_message",
+            "text": result["text"],
+            "agent_actions": result["agent_actions"],
+            "timestamp": time.time(),
+        })
+
+        if result["text"].strip():
+            conversation_history.append(
+                {"role": "assistant", "content": result["text"]}
+            )
+            await memory_facade.append_assistant(
+                content=result["text"],
+                user_id=ws_user_id,
+                extras={
+                    "is_copilot": True,
+                    "agent_actions": result["agent_actions"] or None,
+                },
+            )
+
+    async def _start_copilot(framing: str, screenshot: dict):
+        nonlocal agent_task
+        if agent_task and not agent_task.done():
+            return  # busy — a user/copilot turn is already running; skip
+        agent_task = asyncio.create_task(
+            run_copilot_pipeline(framing, screenshot)
+        )
+
+    copilot_service.attach(
+        trigger_cb=_start_copilot,
+        is_busy_cb=lambda: bool(agent_task and not agent_task.done()),
+    )
+
     # Drain any notifications that fired while disconnected
     await notification_service.drain_pending()
 
@@ -449,6 +515,19 @@ async def websocket_chat(websocket: WebSocket):
                         if agent_task and not agent_task.done():
                             agent_task.cancel()
 
+                    elif msg_type == "copilot_start":
+                        started = await copilot_service.start_session()
+                        await send_json_safe({
+                            "type": "copilot_state",
+                            "active": started,
+                        })
+
+                    elif msg_type == "copilot_stop":
+                        await copilot_service.stop_session()
+                        await send_json_safe({
+                            "type": "copilot_state",
+                            "active": False,
+                        })
 
                     elif msg_type == "clear_memory":
                         conversation_history.clear()
@@ -607,6 +686,7 @@ async def websocket_chat(websocket: WebSocket):
                 await agent_task
             except (asyncio.CancelledError, Exception):
                 pass
+        copilot_service.detach()
         # Only unregister if we're still the active connection
         if connection_manager._send_json is my_send_json:
             notification_service.clear_agent_callback()

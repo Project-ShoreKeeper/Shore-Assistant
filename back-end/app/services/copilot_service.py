@@ -6,6 +6,8 @@ tested. The CopilotService singleton owns the background watch loop and is wired
 into the /ws/chat handler the same way NotificationService is.
 """
 
+from pathlib import Path
+
 import numpy as np
 
 NOOP_SENTINEL = "__NOOP__"
@@ -83,3 +85,15 @@ def summarize_copilot_run(events: list[dict]) -> dict | None:
     if not final.strip() and not actions:
         return None
     return {"text": final, "agent_actions": actions}
+
+
+_PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts" / "copilot.txt"
+_prompt_template: str | None = None
+
+
+def build_copilot_prompt(window_title: str) -> str:
+    """Load prompts/copilot.txt (cached) and inject the focused window title."""
+    global _prompt_template
+    if _prompt_template is None:
+        _prompt_template = _PROMPT_PATH.read_text(encoding="utf-8")
+    return _prompt_template.replace("{window_title}", window_title or "unknown")

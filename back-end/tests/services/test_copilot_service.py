@@ -55,3 +55,18 @@ def test_summarize_noop_text_but_actions_keeps_actions():
     assert out is not None
     assert out["text"] == ""
     assert len(out["agent_actions"]) == 1
+
+
+from app.services.copilot_service import build_copilot_prompt
+
+
+def test_build_copilot_prompt_includes_title_and_noop():
+    out = build_copilot_prompt("main.py - VS Code")
+    assert "main.py - VS Code" in out
+    assert "__NOOP__" in out
+
+
+def test_build_copilot_prompt_blank_title_falls_back():
+    out = build_copilot_prompt("")
+    assert "__NOOP__" in out
+    assert "unknown" in out

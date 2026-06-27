@@ -48,3 +48,38 @@ def should_trigger(
     if idle is not None and idle < idle_threshold:
         return False
     return True
+
+
+def summarize_copilot_run(events: list[dict]) -> dict | None:
+    """Reduce an agent_service.run event stream to a single co-pilot result.
+
+    Returns None when the agent produced nothing worth surfacing (the
+    __NOOP__ sentinel or empty text with no actions). Otherwise returns
+    {"text": str, "agent_actions": list[dict]} for one copilot_message.
+    """
+    actions: list[dict] = []
+    final_text = ""
+    for ev in events:
+        et = ev.get("type")
+        if et == "agent_action" and ev.get("action") == "tool_call":
+            actions.append({
+                "action": "tool_call",
+                "tool": ev.get("tool"),
+                "args": ev.get("args"),
+                "result": None,
+                "status": "running",
+                "timestamp": ev.get("timestamp"),
+            })
+        elif et == "agent_action" and ev.get("action") == "tool_result":
+            for a in reversed(actions):
+                if a.get("tool") == ev.get("tool") and a.get("status") == "running":
+                    a["result"] = ev.get("result")
+                    a["status"] = ev.get("status", "completed")
+                    break
+        elif et == "llm_complete":
+            final_text = ev.get("text", "") or ""
+
+    final = "" if final_text.strip() == NOOP_SENTINEL else final_text
+    if not final.strip() and not actions:
+        return None
+    return {"text": final, "agent_actions": actions}

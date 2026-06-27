@@ -163,6 +163,15 @@ class Settings(BaseSettings):
     NODE_PTY_PING_INTERVAL_SECONDS: int = 30
     NODE_PTY_PING_TIMEOUT_SECONDS: int = 5
 
+    # ── Screen Co-pilot ──
+    COPILOT_ENABLED: bool = False  # master switch; feature unavailable unless True
+    COPILOT_CAPTURE_INTERVAL_SECONDS: float = 4.0  # watch-loop tick interval
+    COPILOT_IDLE_THRESHOLD_SECONDS: float = 3.0  # min hands-off idle before analyzing
+    COPILOT_CHANGE_THRESHOLD: float = 0.06  # normalized thumbnail diff treated as "changed"
+    COPILOT_COOLDOWN_SECONDS: float = 45.0  # min gap between triggers
+    COPILOT_MONITOR_INDEX: int = 1  # mss monitor index to capture
+    COPILOT_MAX_IMAGE_SIZE: int = 1280  # longest edge of the JPEG sent to the vision model
+
     class Config:
         env_file = ".env"
         extra = "ignore"

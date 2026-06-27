@@ -70,3 +70,104 @@ def test_build_copilot_prompt_blank_title_falls_back():
     out = build_copilot_prompt("")
     assert "__NOOP__" in out
     assert "unknown" in out
+
+
+import time
+import numpy as np
+import pytest
+
+from app.core.config import settings
+from app.services.copilot_service import CopilotService
+
+
+async def _noop(*args, **kwargs):
+    return None
+
+
+def _make_service(idle=10.0, thumb=None):
+    """A CopilotService with all platform shims replaced by fakes."""
+    thumb = np.zeros((8, 8), dtype=np.uint8) if thumb is None else thumb
+    return CopilotService(
+        grab_thumbnail=lambda idx: thumb,
+        capture_full_b64=lambda: "QUJD",  # base64 for "ABC"
+        os_idle=lambda: idle,
+        active_window=lambda: "Editor",
+    )
+
+
+@pytest.mark.asyncio
+async def test_tick_triggers_when_all_gates_pass():
+    svc = _make_service(idle=10.0)
+    fired = []
+
+    async def rec(prompt, shot):
+        fired.append((prompt, shot))
+
+    svc.attach(trigger_cb=rec, is_busy_cb=lambda: False)
+    assert await svc._tick() is True
+    assert len(fired) == 1
+    prompt, shot = fired[0]
+    assert "Editor" in prompt
+    assert shot["data_url"].startswith("data:image/jpeg;base64,")
+    assert svc._last_thumb is not None
+
+
+@pytest.mark.asyncio
+async def test_tick_skips_when_busy():
+    svc = _make_service(idle=10.0)
+    fired = []
+
+    async def rec(prompt, shot):
+        fired.append(1)
+
+    svc.attach(trigger_cb=rec, is_busy_cb=lambda: True)
+    assert await svc._tick() is False
+    assert fired == []
+
+
+@pytest.mark.asyncio
+async def test_tick_skips_when_user_typing():
+    svc = _make_service(idle=0.5)  # below COPILOT_IDLE_THRESHOLD_SECONDS
+    fired = []
+
+    async def rec(prompt, shot):
+        fired.append(1)
+
+    svc.attach(trigger_cb=rec, is_busy_cb=lambda: False)
+    assert await svc._tick() is False
+    assert fired == []
+
+
+@pytest.mark.asyncio
+async def test_tick_skips_when_within_cooldown():
+    svc = _make_service(idle=10.0)
+    fired = []
+
+    async def rec(prompt, shot):
+        fired.append(1)
+
+    svc.attach(trigger_cb=rec, is_busy_cb=lambda: False)
+    svc._last_action_ts = time.monotonic()  # just acted -> inside cooldown
+    assert await svc._tick() is False
+    assert fired == []
+
+
+@pytest.mark.asyncio
+async def test_start_session_disabled_returns_false(monkeypatch):
+    monkeypatch.setattr(settings, "COPILOT_ENABLED", False)
+    svc = _make_service()
+    svc.attach(trigger_cb=_noop, is_busy_cb=lambda: False)
+    assert await svc.start_session() is False
+    assert svc.active is False
+
+
+@pytest.mark.asyncio
+async def test_start_then_stop_session(monkeypatch):
+    monkeypatch.setattr(settings, "COPILOT_ENABLED", True)
+    # idle below threshold -> the loop never actually triggers while it spins
+    svc = _make_service(idle=0.0)
+    svc.attach(trigger_cb=_noop, is_busy_cb=lambda: False)
+    assert await svc.start_session() is True
+    assert svc.active is True
+    await svc.stop_session()
+    assert svc.active is False

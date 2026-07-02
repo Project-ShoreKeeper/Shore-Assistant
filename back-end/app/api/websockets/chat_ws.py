@@ -18,6 +18,7 @@ from app.services.memory import memory_facade, worker_service
 from app.services.connection_manager import connection_manager
 from app.services.notification_service import notification_service
 from app.services.copilot_service import copilot_service, summarize_copilot_run
+from app.services.remote_capture import remote_capture_service
 from app.core.config import settings
 import numpy as np
 import json
@@ -137,6 +138,7 @@ async def websocket_chat(websocket: WebSocket):
 
     from app.services.terminal_service import terminal_service
     terminal_service.broadcast = send_json_safe
+    remote_capture_service.send_json = send_json_safe
 
     # Load persisted history. The frontend rehydration code expects
     # assistant metadata (thinking_text, agent_actions, ...) at the top
@@ -544,6 +546,13 @@ async def websocket_chat(websocket: WebSocket):
                         sys.stderr.flush()
                         terminal_service.resolve_confirm(
                             data["request_id"], data["decision"]
+                        )
+
+                    elif msg_type == "screen_capture_response":
+                        remote_capture_service.resolve(
+                            data["request_id"],
+                            data.get("data_url"),
+                            data.get("label", ""),
                         )
 
                     elif msg_type == "terminal_user_input":

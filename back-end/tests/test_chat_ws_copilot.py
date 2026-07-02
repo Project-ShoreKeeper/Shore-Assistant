@@ -47,3 +47,15 @@ def test_has_copilot_pipeline():
     src = _src()
     assert "run_copilot_pipeline" in src
     assert "is_copilot" in src  # compact persisted record is tagged
+
+
+def test_wires_remote_capture_service():
+    src = _src()
+    assert "from app.services.remote_capture import remote_capture_service" in src
+    assert "remote_capture_service.send_json = send_json_safe" in src
+
+
+def test_handles_screen_capture_response():
+    src = _src()
+    assert '"screen_capture_response"' in src
+    assert "remote_capture_service.resolve(" in src

@@ -19,6 +19,7 @@ import type { ImageAttachment } from "../../services/chat-websocket.service";
 import ToolActionCard from "../../components/ToolActionCard";
 import TerminalDrawer from "../../components/Terminal/TerminalDrawer";
 import ConfirmToast from "../../components/Terminal/ConfirmToast";
+import ScreenShareConsent from "../../components/ScreenShareConsent";
 import { useTerminal } from "../../hooks/useTerminal";
 import SettingsPanel from "./SettingsPanel";
 import ChatComposer from "./ChatComposer";
@@ -105,6 +106,9 @@ function PageChat() {
     setThinkingEnabled,
     copilotActive,
     toggleCopilot,
+    screenShareConsent,
+    approveScreenShare,
+    denyScreenShare,
     startRecording,
     stopRecording,
     sendTextMessage,
@@ -727,6 +731,13 @@ function PageChat() {
             onOpenTerminal={() => setTerminalOpen(true)}
           />
         )}
+
+        {/* Floating screen-share consent — cold-start capture_screen/analyze_screen */}
+        <ScreenShareConsent
+          pending={screenShareConsent}
+          onApprove={approveScreenShare}
+          onDeny={denyScreenShare}
+        />
       </Flex>
 
       {/* Right column: Settings (hidden on mobile via CSS) */}

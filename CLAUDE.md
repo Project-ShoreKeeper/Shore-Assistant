@@ -395,7 +395,7 @@ All backend config via environment variables or `.env` file in `back-end/`:
 
 ## Backlog
 
-- [ ] Client-side screen capture — use `getDisplayMedia` in browser, send image over WebSocket for vision analysis
+- [x] Client-side screen capture — `getDisplayMedia` in browser, image sent over `/ws/chat` for vision analysis (both manual tools and Screen Co-pilot)
 - [x] Memory backend Phase 1 — Redis short-term + Docker stack
 - [x] Memory backend Phase 2 — Profile (Postgres) + Episodic (Qdrant) + read-path integration + debug API + /health probes + frontend banner
 - [x] Memory backend Phase 3 — LOCOMO worker + canonicalizer (auto-extract facts from chat history)

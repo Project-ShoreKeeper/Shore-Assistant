@@ -367,11 +367,12 @@ All backend config via environment variables or `.env` file in `back-end/`:
 | AUTH_OAUTH_STATE_TTL_SECONDS | 300 | TTL on OAuth state token (5 min) |
 | AUTH_COOKIE_NAME | shore_session | Session cookie name |
 | AUTH_COOKIE_SECURE | True | Set False for local http dev |
-| AUTH_COOKIE_SAMESITE | lax | SameSite attribute on the session cookie |
+| AUTH_COOKIE_SAMESITE | none | SameSite attribute on the session cookie |
 | AUTH_COOKIE_DOMAIN | (empty) | Set to `.shore-keeper.com` for cross-subdomain cookie sharing |
-| AUTH_FRONTEND_ORIGINS | http://localhost:5173 | Comma-separated origins allowed by CORS when AUTH_ENABLED |
+| AUTH_FRONTEND_ORIGINS | http://localhost:5173 | Comma-separated origins allowed by CORS when AUTH_ENABLED. Deployed config should include `tauri://localhost` for the desktop client. |
 | AUTH_OAUTH_REDIRECT_URL | http://localhost:9000/api/auth/callback | Backend callback URL (must match Google client config) |
 | AUTH_POST_LOGIN_REDIRECT_URL | / | Where the OAuth callback redirects after setting the cookie. Absolute URL for cross-origin deploys. |
+| AUTH_DESKTOP_REDIRECT_SCHEME | shore-assistant | Custom URL scheme the desktop (Tauri) app registers; `/callback` deep-links here with a one-time exchange token when the login was initiated with `?client=desktop`. |
 | **Remote hardware probe** | | |
 | REMOTE_SERVER_ENABLED | False | Enable remote server hardware probe in Dashboard |
 | REMOTE_SERVER_NAME | DB Server | Display name for the remote server card |

@@ -5,7 +5,9 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "@Shore/contexts/AuthContext";
 
 export default function PageLogin() {
-  const { user, loading, login } = useAuth();
+  const {
+    user, loading, login, desktopAuthError, clearDesktopAuthError,
+  } = useAuth();
   const navigate = useNavigate();
 
   // Already signed in → bounce home.
@@ -33,7 +35,16 @@ export default function PageLogin() {
         <Text size="2" color="gray" mb="5" style={{ display: "block" }}>
           Sign in to continue.
         </Text>
-        <Button size="3" onClick={login} style={{ width: "100%" }}>
+        {desktopAuthError && (
+          <Text size="2" color="red" mb="3" style={{ display: "block" }}>
+            {desktopAuthError}
+          </Text>
+        )}
+        <Button
+          size="3"
+          onClick={() => { clearDesktopAuthError(); login(); }}
+          style={{ width: "100%" }}
+        >
           Sign in with Google
         </Button>
         <Text size="1" color="gray" mt="4" style={{ display: "block" }}>

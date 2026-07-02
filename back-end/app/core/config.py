@@ -148,7 +148,11 @@ class Settings(BaseSettings):
     AUTH_OAUTH_STATE_TTL_SECONDS: int = 300
     AUTH_COOKIE_NAME: str = "shore_session"
     AUTH_COOKIE_SECURE: bool = True  # set False for local http dev
-    AUTH_COOKIE_SAMESITE: str = "lax"
+    # "none" so the desktop client's webview (tauri://localhost — a
+    # genuinely cross-site origin vs. api.shore-keeper.com) can still send
+    # the cookie back. CSRF checks + admin-role gating are the primary
+    # defense on state-changing endpoints; SameSite was defense-in-depth.
+    AUTH_COOKIE_SAMESITE: str = "none"
     # When frontend and backend live on different subdomains of the same
     # registrable domain (e.g. bearer.shore-keeper.com ↔ api.shore-keeper.com),
     # set this to the shared parent (e.g. ".shore-keeper.com") so the
@@ -166,6 +170,15 @@ class Settings(BaseSettings):
     # pointing at the frontend; otherwise the browser lands on the
     # backend domain. Defaults to "/" for same-origin dev.
     AUTH_POST_LOGIN_REDIRECT_URL: str = "/"
+    # Custom URL scheme the desktop (Tauri) app registers for deep-link
+    # OAuth handoff. /callback redirects here (with a one-time exchange
+    # token) instead of AUTH_POST_LOGIN_REDIRECT_URL when the login was
+    # initiated with ?client=desktop.
+    AUTH_DESKTOP_REDIRECT_SCHEME: str = "shore-assistant"
+    # One-time exchange-token namespace (desktop OAuth handoff). Short TTL
+    # since it's consumed within seconds of the deep-link firing.
+    AUTH_EXCHANGE_KEY_PREFIX: str = "shore:auth_exchange:"
+    AUTH_EXCHANGE_TTL_SECONDS: int = 60
 
     # Node PTY microservice
     NODE_PTY_WS_URL: str = "wss://terminal.shore-keeper.com"

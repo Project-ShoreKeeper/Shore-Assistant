@@ -1,0 +1,12 @@
+# Rust build output
+/target/
+
+# Generated at build/dev time (permission JSON schemas for capabilities/*.json)
+/gen/
+
+# App icons — not committed in v1; generate locally, see README.md.
+/icons/
+
+# Updater signing keys — never commit these.
+*.key
+*.key.pub

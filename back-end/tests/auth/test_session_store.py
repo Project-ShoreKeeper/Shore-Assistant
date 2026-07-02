@@ -62,6 +62,43 @@ async def test_oauth_state_one_shot(fake_redis):
     store = SessionStore(redis=fake_redis, ttl_seconds=60, key_prefix="t:")
     state = await store.create_oauth_state(ttl_seconds=10, prefix="s:")
     assert isinstance(state, str) and len(state) >= 32
-    assert await store.consume_oauth_state(state, prefix="s:") is True
+    # Plain/legacy (no client tag) state consumes to "" — falsy but not
+    # None, distinguishing "valid, untagged" from "invalid/consumed".
+    assert await store.consume_oauth_state(state, prefix="s:") == ""
     # Second consume must fail (one-shot).
-    assert await store.consume_oauth_state(state, prefix="s:") is False
+    assert await store.consume_oauth_state(state, prefix="s:") is None
+
+
+async def test_oauth_state_carries_client_tag(fake_redis):
+    store = SessionStore(redis=fake_redis, ttl_seconds=60, key_prefix="t:")
+    state = await store.create_oauth_state(
+        ttl_seconds=10, prefix="s:", client="desktop",
+    )
+    assert await store.consume_oauth_state(state, prefix="s:") == "desktop"
+    # One-shot still holds regardless of tag.
+    assert await store.consume_oauth_state(state, prefix="s:") is None
+
+
+async def test_exchange_token_single_use_maps_to_sid(fake_redis):
+    store = SessionStore(redis=fake_redis, ttl_seconds=60, key_prefix="t:")
+    token = await store.create_exchange_token(
+        "sid-123", ttl_seconds=60, prefix="x:",
+    )
+    assert isinstance(token, str) and len(token) >= 32
+    assert await store.consume_exchange_token(token, prefix="x:") == "sid-123"
+    # Second consume must fail (single-use).
+    assert await store.consume_exchange_token(token, prefix="x:") is None
+
+
+async def test_exchange_token_unknown_returns_none(fake_redis):
+    store = SessionStore(redis=fake_redis, ttl_seconds=60, key_prefix="t:")
+    assert await store.consume_exchange_token("no-such-token", prefix="x:") is None
+
+
+async def test_exchange_token_respects_ttl(fake_redis):
+    store = SessionStore(redis=fake_redis, ttl_seconds=60, key_prefix="t:")
+    token = await store.create_exchange_token(
+        "sid-456", ttl_seconds=10, prefix="x:",
+    )
+    ttl = await fake_redis.ttl(f"x:{token}")
+    assert 0 < ttl <= 10

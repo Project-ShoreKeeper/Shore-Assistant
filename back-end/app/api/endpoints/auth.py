@@ -1,11 +1,27 @@
-"""Auth endpoints: /api/auth/{login,callback,logout,me}.
+"""Auth endpoints: /api/auth/{login,callback,exchange,logout,me}.
 
-Login flow:
+Login flow (web):
   GET  /api/auth/login       → 302 to Google with one-shot state
   GET  /api/auth/callback    → verify state, exchange code, allowlist
                                 check, create session, set cookie, 302 /
   POST /api/auth/logout      → delete session, clear cookie
   GET  /api/auth/me          → current user + csrf token
+
+Login flow (desktop, Tauri app — see docs/superpowers/specs/
+2026-07-02-tauri-desktop-client-design.md):
+  GET  /api/auth/login?client=desktop → same as above, but the oauth
+                                state is tagged "desktop"
+  GET  /api/auth/callback    → same verification, but on success (state
+                                tagged desktop) mints a one-time exchange
+                                token and 302s to
+                                {AUTH_DESKTOP_REDIRECT_SCHEME}://auth?xchg=...
+                                instead of setting a cookie (the system
+                                browser's cookie jar is invisible to the
+                                app's webview)
+  POST /api/auth/exchange    → consumes the one-time token (single-use)
+                                and sets the session cookie on *this*
+                                response, from inside the app's own
+                                webview
 
 The actual Google token-exchange is encapsulated in
 ``_exchange_code_for_userinfo`` so it can be substituted in tests.
@@ -17,6 +33,7 @@ from urllib.parse import urlencode
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse, RedirectResponse
+from pydantic import BaseModel
 
 from app.api.deps import (
     _resolve_session,
@@ -106,10 +123,11 @@ def _clear_session_cookie(response: Response) -> None:
 
 
 @router.get("/login")
-async def login() -> RedirectResponse:
+async def login(client: Optional[str] = None) -> RedirectResponse:
     state = await _store().create_oauth_state(
         ttl_seconds=settings.AUTH_OAUTH_STATE_TTL_SECONDS,
         prefix=settings.AUTH_OAUTH_STATE_KEY_PREFIX,
+        client=client or "",
     )
     params = {
         "client_id": settings.AUTH_GOOGLE_CLIENT_ID,
@@ -126,11 +144,29 @@ async def login() -> RedirectResponse:
 
 
 @router.get("/callback")
-async def callback(code: str, state: str) -> Response:
-    ok = await _store().consume_oauth_state(
+async def callback(
+    code: Optional[str] = None,
+    state: Optional[str] = None,
+    error: Optional[str] = None,
+) -> Response:
+    # Google redirects here with `error` (not `code`/`state`) when the
+    # user denies consent or the request itself was malformed. Surface
+    # this directly in the browser tab — never deep-link failures back
+    # into the app (see spec: avoids passing error/email details through
+    # a URL scheme).
+    if error:
+        raise HTTPException(
+            status_code=400, detail={"error": "oauth_denied", "reason": error},
+        )
+    if not code or not state:
+        raise HTTPException(
+            status_code=400, detail={"error": "oauth_missing_params"},
+        )
+
+    client = await _store().consume_oauth_state(
         state, prefix=settings.AUTH_OAUTH_STATE_KEY_PREFIX,
     )
-    if not ok:
+    if client is None:
         raise HTTPException(
             status_code=400, detail={"error": "oauth_state_invalid"},
         )
@@ -157,11 +193,63 @@ async def callback(code: str, state: str) -> Response:
     sid, _csrf = await _store().create(
         User(id=info["sub"], email=email.lower(), role=role),
     )
+
+    if client == "desktop":
+        # Desktop OAuth handoff: this response is delivered to the
+        # system browser, whose cookie jar is invisible to the app's
+        # own webview — setting a cookie here would be pointless.
+        # Instead mint a one-time exchange token and deep-link back
+        # into the app; the app's own webview calls /api/auth/exchange
+        # to actually receive the Set-Cookie.
+        token = await _store().create_exchange_token(
+            sid,
+            ttl_seconds=settings.AUTH_EXCHANGE_TTL_SECONDS,
+            prefix=settings.AUTH_EXCHANGE_KEY_PREFIX,
+        )
+        return RedirectResponse(
+            url=f"{settings.AUTH_DESKTOP_REDIRECT_SCHEME}://auth?xchg={token}",
+            status_code=302,
+        )
+
     response = RedirectResponse(
         url=settings.AUTH_POST_LOGIN_REDIRECT_URL, status_code=302,
     )
     _set_session_cookie(response, sid)
     return response
+
+
+class ExchangeRequest(BaseModel):
+    token: str
+
+
+@router.post("/exchange")
+async def exchange(body: ExchangeRequest, response: Response) -> dict:
+    """Desktop OAuth handoff, step 2: consume the one-time token minted
+    by `/callback` and set the session cookie on *this* response — the
+    app's own webview made this request, so the Set-Cookie lands in the
+    webview's own cookie jar (unlike the system-browser response from
+    `/callback`). No `csrf_check`: the one-time token itself is the
+    proof of possession, and there is no prior session to hold a CSRF
+    value against.
+    """
+    sid = await _store().consume_exchange_token(
+        body.token, prefix=settings.AUTH_EXCHANGE_KEY_PREFIX,
+    )
+    if sid is None:
+        raise HTTPException(
+            status_code=401, detail={"error": "invalid_token"},
+        )
+    session = await _store().read(sid)
+    if session is None:
+        raise HTTPException(
+            status_code=401, detail={"error": "invalid_token"},
+        )
+    _set_session_cookie(response, sid)
+    return {
+        "email": session.user.email,
+        "role": session.user.role,
+        "csrf": session.csrf,
+    }
 
 
 @router.post("/logout")

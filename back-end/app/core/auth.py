@@ -93,16 +93,69 @@ class SessionStore:
     # ── OAuth state (one-shot) ─────────────────────────────────────
 
     async def create_oauth_state(
-        self, ttl_seconds: int, prefix: str,
+        self, ttl_seconds: int, prefix: str, client: str = "",
     ) -> str:
+        """Create a one-shot OAuth state token.
+
+        `client` optionally tags which flow initiated the login (e.g.
+        "desktop" for the Tauri app's system-browser handoff) so
+        `/callback` can branch on it after consuming the state. Empty
+        string is the plain/legacy web flow and is stored as the same
+        "1" sentinel used before the desktop flow existed.
+        """
         state = secrets.token_urlsafe(32)
-        await self._redis.set(f"{prefix}{state}", "1", ex=ttl_seconds)
+        value = client or "1"
+        await self._redis.set(f"{prefix}{state}", value, ex=ttl_seconds)
         return state
 
-    async def consume_oauth_state(self, state: str, prefix: str) -> bool:
-        """Return True iff state existed (and is now deleted)."""
+    async def consume_oauth_state(
+        self, state: str, prefix: str,
+    ) -> Optional[str]:
+        """Consume (delete) a one-shot OAuth state.
+
+        Returns the tagged client string ("" for the plain/legacy "1"
+        sentinel, e.g. "desktop" for desktop-originated flows), or
+        None if the state didn't exist (invalid, expired, or already
+        consumed).
+        """
         key = f"{prefix}{state}"
-        # GETDEL would be one round-trip but isn't on every redis-py
-        # version we support. DELETE returns number of keys removed.
-        removed = await self._redis.delete(key)
-        return bool(removed)
+        # GET then DELETE (two round-trips): GETDEL isn't on every
+        # redis-py version we support, and we need the stored value
+        # (not just existence) to recover the client tag.
+        raw = await self._redis.get(key)
+        if raw is None:
+            return None
+        await self._redis.delete(key)
+        return "" if raw == "1" else raw
+
+    # ── Exchange token (one-shot, desktop OAuth handoff) ────────────
+
+    async def create_exchange_token(
+        self, sid: str, ttl_seconds: int, prefix: str,
+    ) -> str:
+        """Mint a one-time token mapping to a session id.
+
+        Used by the desktop OAuth flow: `/callback` (running in the
+        system browser) mints this token and deep-links it back into
+        the app; `/exchange` (running inside the app's own webview)
+        consumes it and sets the session cookie in the webview's own
+        cookie jar.
+        """
+        token = secrets.token_urlsafe(32)
+        await self._redis.set(f"{prefix}{token}", sid, ex=ttl_seconds)
+        return token
+
+    async def consume_exchange_token(
+        self, token: str, prefix: str,
+    ) -> Optional[str]:
+        """Return the sid mapped to `token` and delete it (single-use).
+
+        Returns None if the token is missing, expired, or already
+        consumed.
+        """
+        key = f"{prefix}{token}"
+        sid = await self._redis.get(key)
+        if sid is None:
+            return None
+        await self._redis.delete(key)
+        return sid

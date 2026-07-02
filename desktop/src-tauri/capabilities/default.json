@@ -1,0 +1,17 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Capability for the main window. Explicit allowlist: deep-link (OAuth callback), updater, and opener (scoped to the backend login URL only) — plus the core defaults needed for a plain webview window (window/webview/event/etc). No filesystem, shell, or process permissions are granted; see docs/superpowers/specs/2026-07-02-tauri-desktop-client-design.md#native-permission-scope.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "deep-link:default",
+    "updater:default",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [
+        { "url": "https://api.shore-keeper.com/*" }
+      ]
+    }
+  ]
+}

@@ -3,7 +3,9 @@ import {
 } from "react";
 
 import { authService, type MeResponse, type Role } from "@Shore/services/auth.service";
+import { registerAuthDeepLink } from "@Shore/services/deep-link.service";
 import { ApiError, onUnauthorized, setCsrfToken } from "@Shore/services/http.service";
+import { isTauri } from "@Shore/utils/tauri.util";
 
 export interface AuthUser {
   email: string;
@@ -13,12 +15,18 @@ export interface AuthUser {
 interface AuthContextValue {
   user: AuthUser | null;
   loading: boolean;
-  /** Hard-redirect to the backend OAuth start endpoint. */
+  /** Web: hard-redirect to the backend OAuth start endpoint. Desktop
+   *  (Tauri): opens the same endpoint in the system browser instead. */
   login: () => void;
   /** Server logout + local clear. */
   logout: () => Promise<void>;
   /** Re-fetch /me — call after a window regains focus, etc. */
   refresh: () => Promise<void>;
+  /** Desktop-only: set when the `xchg` deep-link exchange fails
+   *  (expired/already-consumed token). Null otherwise. */
+  desktopAuthError: string | null;
+  /** Clears desktopAuthError — call before retrying login. */
+  clearDesktopAuthError: () => void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -26,6 +34,7 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
+  const [desktopAuthError, setDesktopAuthError] = useState<string | null>(null);
 
   const apply = useCallback((me: MeResponse | null) => {
     if (me) {
@@ -65,8 +74,50 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return onUnauthorized(() => apply(null));
   }, [apply]);
 
+  // Desktop-only: registers the `shore-assistant://auth?xchg=...` deep
+  // link handler once at startup (also covers the cold-start "app was
+  // launched by the link" case). No-op outside Tauri.
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+
+    const handleToken = (token: string) => {
+      void (async () => {
+        try {
+          const me = await authService.exchange(token);
+          apply(me);
+          setDesktopAuthError(null);
+        } catch (e) {
+          if (e instanceof ApiError && e.status === 401) {
+            setDesktopAuthError("Login session expired, please try again.");
+          } else {
+            console.warn("[Auth] desktop exchange failed:", e);
+          }
+        }
+      })();
+    };
+
+    void registerAuthDeepLink(handleToken).then((cleanup) => {
+      if (cancelled) cleanup();
+      else unlisten = cleanup;
+    });
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [apply]);
+
   const login = useCallback(() => {
-    authService.startLoginRedirect();
+    if (isTauri()) {
+      void authService.startDesktopLogin();
+    } else {
+      authService.startLoginRedirect();
+    }
+  }, []);
+
+  const clearDesktopAuthError = useCallback(() => {
+    setDesktopAuthError(null);
   }, []);
 
   const logout = useCallback(async () => {
@@ -81,7 +132,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [apply]);
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout, refresh }}>
+    <AuthContext.Provider
+      value={{
+        user, loading, login, logout, refresh,
+        desktopAuthError, clearDesktopAuthError,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );

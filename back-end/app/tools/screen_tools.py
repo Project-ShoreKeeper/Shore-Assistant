@@ -1,34 +1,24 @@
-"""Screen capture and vision tools for the AI agent."""
+"""Screen capture and vision tools for the AI agent.
 
-import base64
-import io
+Screenshots come from the connected browser via RemoteCaptureService
+(getDisplayMedia in the frontend), not from the backend host's display.
+"""
 
 from langchain_core.tools import tool
 
+from app.services.remote_capture import remote_capture_service
 
-def _capture_screen_b64(max_size: int = 1280) -> str:
-    """Capture primary monitor and return as base64 JPEG string."""
-    import mss
-    from PIL import Image
 
-    with mss.mss() as sct:
-        monitor = sct.monitors[1]
-        screenshot = sct.grab(monitor)
+async def _capture_screen_b64() -> str | None:
+    """Request a full-resolution screenshot from the connected browser.
 
-        img = Image.frombytes(
-            "RGB", screenshot.size, screenshot.bgra, "raw", "BGRX"
-        )
-
-        w, h = img.size
-        if max(w, h) > max_size:
-            scale = max_size / max(w, h)
-            img = img.resize(
-                (int(w * scale), int(h * scale)), Image.LANCZOS
-            )
-
-        buffer = io.BytesIO()
-        img.save(buffer, format="JPEG", quality=85)
-        return base64.b64encode(buffer.getvalue()).decode("utf-8")
+    Returns the base64 JPEG payload, or None if the user declined the
+    consent prompt / getDisplayMedia, or the request timed out.
+    """
+    result = await remote_capture_service.request("full")
+    if result is None:
+        return None
+    return result["data_url"].split(",", 1)[1]
 
 
 async def _analyze(prompt: str, image_b64: str) -> str:
@@ -45,7 +35,9 @@ async def capture_screen(prompt: str = "Describe what you see on the screen") ->
         prompt: What to look for or analyze in the screenshot.
     """
     try:
-        image_b64 = _capture_screen_b64()
+        image_b64 = await _capture_screen_b64()
+        if image_b64 is None:
+            return "Screen sharing was declined or timed out."
         result = await _analyze(prompt, image_b64)
         return result if result else "Could not analyze the screen."
     except Exception as e:
@@ -72,7 +64,9 @@ async def analyze_screen(query: str) -> str:
                "Describe the screen") for more useful answers.
     """
     try:
-        image_b64 = _capture_screen_b64()
+        image_b64 = await _capture_screen_b64()
+        if image_b64 is None:
+            return "Screen sharing was declined or timed out."
         result = await _analyze(query, image_b64)
         return result if result else "Vision model returned an empty response."
     except Exception as e:

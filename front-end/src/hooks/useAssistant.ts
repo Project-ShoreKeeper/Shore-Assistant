@@ -142,9 +142,10 @@ export function useAssistant(): UseAssistantReturn {
   const handleScreenShareEnded = useCallback(() => {
     // Native "Stop sharing" control was used — if Co-pilot was running on
     // this stream, tell the backend so its tick loop actually stops instead
-    // of ticking into perpetual timeouts.
-    if (copilotActiveRef.current && wsRef.current) {
-      wsRef.current.sendCopilotStop();
+    // of ticking into perpetual timeouts. The local state must reset even
+    // if the socket happens to be down — the stream is gone either way.
+    if (copilotActiveRef.current) {
+      wsRef.current?.sendCopilotStop();
       setCopilotActive(false);
     }
   }, []);
@@ -819,6 +820,11 @@ export function useAssistant(): UseAssistantReturn {
     }
   }, []);
 
+  // Guards against a second click re-entering the "start" branch while an
+  // acquireStream() is already in flight (the native picker can sit open
+  // for several seconds, during which copilotActive is still false).
+  const isAcquiringRef = useRef(false);
+
   const toggleCopilot = useCallback(() => {
     if (!wsRef.current) return;
     if (copilotActive) {
@@ -826,26 +832,32 @@ export function useAssistant(): UseAssistantReturn {
       setCopilotActive(false);
       return;
     }
+    if (isAcquiringRef.current) return;
+    isAcquiringRef.current = true;
     // getDisplayMedia() must be called synchronously inside this click
     // handler (transient activation) — it cannot wait for a server round
     // trip. Only tell the backend to start once the stream is live; the
     // backend then finds an already-active stream on every subsequent tick
     // and never needs another gesture.
     void (async () => {
-      const ok = await screenShare.acquireStream();
-      if (!ok || !wsRef.current) return; // user cancelled the native picker
-      wsRef.current.sendCopilotStart();
-      setCopilotActive(true);
+      try {
+        const ok = await screenShare.acquireStream();
+        if (!ok || !wsRef.current) return; // user cancelled the native picker
+        wsRef.current.sendCopilotStart();
+        setCopilotActive(true);
+      } finally {
+        isAcquiringRef.current = false;
+      }
     })();
-  }, [copilotActive, screenShare]);
+  }, [copilotActive, screenShare.acquireStream]);
 
   const approveScreenShare = useCallback(() => {
     void screenShare.approveConsent();
-  }, [screenShare]);
+  }, [screenShare.approveConsent]);
 
   const denyScreenShare = useCallback(() => {
     screenShare.denyConsent();
-  }, [screenShare]);
+  }, [screenShare.denyConsent]);
 
   // Cleanup on unmount
   useEffect(() => {

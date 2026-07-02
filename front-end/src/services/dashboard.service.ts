@@ -72,6 +72,7 @@ export interface RemoteHardware {
   name: string;
   status: "up" | "down";
   hardware: Hardware | null;
+  last_error?: string | null;
 }
 
 export interface AiComponentStatus {

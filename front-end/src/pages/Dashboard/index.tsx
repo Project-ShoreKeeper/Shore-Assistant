@@ -390,7 +390,9 @@ const MACHINE_LABEL_STYLE: React.CSSProperties = {
 };
 
 function HardwareSection({ local, remote, localCpuHistory, gpuUtilHistory }: { local: Hardware; remote: RemoteHardware | null; localCpuHistory: number[]; gpuUtilHistory: number[] }) {
-  const hasGpu = local.gpu.length > 0;
+  const hasLocalGpu = local.gpu.length > 0;
+  const remoteGpus = remote?.hardware?.gpu ?? [];
+  const hasGpu = hasLocalGpu || remoteGpus.length > 0;
   const hasRemote = remote != null;
   // GPU spans: row 2 (local tiles) through row 4 (remote tiles) when remote exists, else just row 2
   const gpuRowSpan = hasRemote ? "2 / 5" : "2 / 3";
@@ -419,8 +421,14 @@ function HardwareSection({ local, remote, localCpuHistory, gpuUtilHistory }: { l
 
       {/* GPU card — spans rows 2→4 (or just row 2 if no remote) */}
       {hasGpu && (
-        <div className="hw-gpu-col" style={{ gridColumn: 2, gridRow: gpuRowSpan, display: "flex", flexDirection: "column" }}>
-          <GpuCard g={local.gpu[0]} utilHistory={gpuUtilHistory} style={{ flex: 1 }} />
+        <div className="hw-gpu-col" style={{ gridColumn: 2, gridRow: gpuRowSpan, display: "flex", flexDirection: "column", gap: 16 }}>
+          {hasLocalGpu && <GpuCard g={local.gpu[0]} utilHistory={gpuUtilHistory} style={{ flex: 1 }} />}
+          {remoteGpus.map((gpu, index) => (
+            <div key={`${remote?.name ?? "Remote"}-${gpu.name}-${index}`} style={{ display: "flex", flexDirection: "column", gap: 6, flex: hasLocalGpu ? "0 1 auto" : 1, minHeight: 0 }}>
+              <span style={{ ...MACHINE_LABEL_STYLE, fontSize: 10 }}>{remote?.name ?? "Remote"}</span>
+              <GpuCard g={gpu} utilHistory={index === 0 ? gpuUtilHistory : undefined} style={{ flex: 1 }} />
+            </div>
+          ))}
         </div>
       )}
 
@@ -438,7 +446,7 @@ function HardwareSection({ local, remote, localCpuHistory, gpuUtilHistory }: { l
           {remote!.status === "down" || !remote!.hardware ? (
             <Card>
               <span style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: "var(--md-on-surface-variant)", fontStyle: "italic" }}>
-                Remote unreachable. Check Glances is running.
+                {remote!.last_error || "Remote unreachable. Check the hardware probe configuration."}
               </span>
             </Card>
           ) : (

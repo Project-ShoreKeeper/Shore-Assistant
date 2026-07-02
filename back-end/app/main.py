@@ -15,9 +15,11 @@ from app.api.endpoints.dashboard import router as dashboard_router
 from app.api.endpoints.chronicles import router as chronicles_router
 from app.api.endpoints.auth import router as auth_router
 from app.api.endpoints.services import router as services_router
+from app.api.endpoints.images import router as images_router
 from app.api.websockets.chat_ws import router as chat_ws_router
 from app.services.service_manager import service_manager
 from app.services.ai_client import channel as ai_channel_mod
+from app.services.image_store import image_store
 from app.api import deps as auth_deps
 from app.core.auth import SessionStore
 
@@ -52,6 +54,9 @@ async def lifespan(app: FastAPI):
 
     # Initialize memory facade
     await memory_facade.startup()
+
+    # Image attachment store reuses the Profile Postgres pool (no second pool)
+    image_store.startup(memory_facade.profile.pool)
 
     # Wire the auth session store onto the same Redis the memory facade uses.
     # Session lookups share the connection pool — no extra infra cost.
@@ -140,6 +145,7 @@ app.include_router(auth_router)
 app.include_router(memory_router)
 app.include_router(dashboard_router)
 app.include_router(services_router)
+app.include_router(images_router)
 app.include_router(chronicles_router)
 app.include_router(chat_ws_router)
 

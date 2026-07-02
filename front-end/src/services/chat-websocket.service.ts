@@ -132,6 +132,14 @@ export interface PersistedAgentAction {
   timestamp: number;
 }
 
+export interface PersistedImage {
+  id: string;
+  url: string;
+  width: number;
+  height: number;
+  size_kb: number;
+}
+
 export interface PersistedMessage {
   role: "user" | "assistant";
   content: string;
@@ -140,6 +148,7 @@ export interface PersistedMessage {
   agent_actions?: PersistedAgentAction[] | null;
   is_notification?: boolean;
   task_id?: string | null;
+  images?: PersistedImage[];
 }
 
 export interface HistoryMessage {

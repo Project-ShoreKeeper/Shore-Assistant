@@ -121,10 +121,15 @@ def _parse_glances_uptime(v) -> Optional[int]:
 
 
 async def _remote_hardware_snapshot() -> Optional[dict]:
-    """Probe a Glances server via its JSON REST API. Returns None if
-    REMOTE_SERVER_ENABLED is off; returns a `{name, status, hardware}`
-    dict otherwise — `hardware` is None when the probe failed."""
-    if not settings.REMOTE_SERVER_ENABLED or not settings.REMOTE_SERVER_GLANCES_URL:
+    """Probe remote hardware. SSH is preferred when configured; otherwise
+    fall back to the older Glances JSON API integration."""
+    if not settings.REMOTE_SERVER_ENABLED:
+        return None
+
+    if settings.REMOTE_SERVER_SSH_ENABLED and settings.REMOTE_SERVER_SSH_HOST:
+        return await _remote_ssh_hardware_snapshot()
+
+    if not settings.REMOTE_SERVER_GLANCES_URL:
         return None
 
     base = settings.REMOTE_SERVER_GLANCES_URL.rstrip("/")
@@ -185,6 +190,135 @@ async def _remote_hardware_snapshot() -> Optional[dict]:
         "gpu": gpus,
     }
     return {"name": name, "status": "up", "hardware": hardware}
+
+
+def _parse_remote_ssh_snapshot(output: str) -> dict:
+    values: dict[str, str] = {}
+    gpu_lines: list[str] = []
+    in_gpu = False
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line == "GPU_CSV_BEGIN":
+            in_gpu = True
+            continue
+        if in_gpu:
+            gpu_lines.append(line)
+            continue
+        if "=" in line:
+            key, value = line.split("=", 1)
+            values[key.strip()] = value.strip()
+
+    def _float_value(key: str) -> Optional[float]:
+        try:
+            return float(values[key])
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    ram_total_kb = _float_value("RAM_TOTAL_KB")
+    ram_free_kb = _float_value("RAM_FREE_KB")
+    disk_total_bytes = _float_value("DISK_TOTAL_BYTES")
+    disk_free_bytes = _float_value("DISK_FREE_BYTES")
+    uptime_seconds = _float_value("UPTIME_SECONDS")
+
+    ram_used_gb = None
+    ram_total_gb = None
+    ram_pct = None
+    if ram_total_kb and ram_free_kb is not None:
+        ram_used_kb = max(0.0, ram_total_kb - ram_free_kb)
+        ram_used_gb = round(ram_used_kb / (1024 ** 2), 2)
+        ram_total_gb = round(ram_total_kb / (1024 ** 2), 2)
+        ram_pct = round((ram_used_kb / ram_total_kb) * 100, 1)
+
+    disk_pct = None
+    disk_free_gb = None
+    if disk_total_bytes and disk_free_bytes is not None:
+        disk_free_gb = round(disk_free_bytes / (1024 ** 3), 2)
+        disk_pct = round(((disk_total_bytes - disk_free_bytes) / disk_total_bytes) * 100, 1)
+
+    gpus = []
+    for line in gpu_lines:
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) < 5:
+            continue
+        try:
+            gpus.append({
+                "name": parts[0],
+                "util_pct": float(parts[1]),
+                "vram_used_mb": float(parts[2]),
+                "vram_total_mb": float(parts[3]),
+                "temp_c": float(parts[4]),
+            })
+        except ValueError:
+            continue
+
+    return {
+        "cpu_pct": _float_value("CPU_PCT"),
+        "ram_pct": ram_pct,
+        "ram_used_gb": ram_used_gb,
+        "ram_total_gb": ram_total_gb,
+        "disk_pct": disk_pct,
+        "disk_free_gb": disk_free_gb,
+        "uptime_seconds": int(uptime_seconds) if uptime_seconds is not None else None,
+        "gpu": gpus,
+    }
+
+
+def _remote_ssh_command() -> list[str]:
+    timeout = max(1, int(settings.REMOTE_SERVER_SSH_TIMEOUT_SECONDS))
+    target = f"{settings.REMOTE_SERVER_SSH_USER}@{settings.REMOTE_SERVER_SSH_HOST}"
+    remote_script = (
+        'cmd /c "echo GPU_CSV_BEGIN && '
+        'nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu '
+        '--format=csv,noheader,nounits"'
+    )
+    cmd = [
+        "ssh",
+        "-F", "none",
+        "-o", "BatchMode=yes",
+        "-o", f"ConnectTimeout={timeout}",
+        "-o", "LogLevel=ERROR",
+    ]
+    if settings.REMOTE_SERVER_SSH_KEY_PATH:
+        cmd.extend(["-i", settings.REMOTE_SERVER_SSH_KEY_PATH])
+    cmd.extend([target, remote_script])
+    return cmd
+
+
+async def _remote_ssh_hardware_snapshot() -> dict:
+    name = settings.REMOTE_SERVER_NAME
+    timeout = max(1.0, settings.REMOTE_SERVER_SSH_TIMEOUT_SECONDS)
+    def _down(error: str) -> dict:
+        return {
+            "name": name,
+            "status": "down",
+            "hardware": None,
+            "last_error": error[:500],
+        }
+
+    try:
+        proc = await asyncio.to_thread(
+            subprocess.run,
+            _remote_ssh_command(),
+            capture_output=True,
+            text=True,
+            timeout=timeout + 2.0,
+        )
+    except subprocess.TimeoutExpired:
+        return _down(f"ssh probe timed out after {timeout + 2.0:.1f}s")
+    except OSError as exc:
+        return _down(str(exc))
+
+    if proc.returncode != 0:
+        error = (proc.stderr or proc.stdout or f"ssh exited with {proc.returncode}").strip()
+        return _down(error)
+    return {
+        "name": name,
+        "status": "up",
+        "hardware": _parse_remote_ssh_snapshot(proc.stdout),
+        "last_error": None,
+    }
 
 
 def _hardware_snapshot() -> dict:

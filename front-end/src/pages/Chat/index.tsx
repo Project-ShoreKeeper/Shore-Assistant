@@ -249,8 +249,10 @@ function PageChat() {
     const hasThinking = !!msg.thinkingText;
     const isProcessing = msg.isStreaming;
 
-    // Skip empty finalized user messages (silence)
-    if (isUser && !isProcessing && isEmpty && !msg.audioUrl) return null;
+    // Skip empty finalized user messages (silence) — but not if there's
+    // an image or audio attachment to show instead of text.
+    const hasAttachment = !!msg.audioUrl || (msg.images && msg.images.length > 0);
+    if (isUser && !isProcessing && isEmpty && !hasAttachment) return null;
 
     const isThinkingExpanded = expandedThinking.has(msg.id);
     const toggleThinking = () => {

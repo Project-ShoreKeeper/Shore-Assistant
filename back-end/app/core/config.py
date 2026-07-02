@@ -56,10 +56,22 @@ class Settings(BaseSettings):
     # FileBrowser
     FILEBROWSER_URL: str = "http://image.shore-keeper.com"
 
+    # Chat image attachments — raw file storage (separate from the semantic
+    # memory layers; the agent never reads this, it's purely for re-viewing
+    # an image the user sent). Path is relative to the back-end/ CWD.
+    IMAGE_STORAGE_DIR: str = "data/images"
+    IMAGE_ATTACHMENT_MAX_DIMENSION: int = 1600  # longest edge after downscale
+    IMAGE_ATTACHMENT_JPEG_QUALITY: int = 80  # re-encoded as JPEG at this quality
+
     # Remote server hardware probe (Glances JSON API)
     REMOTE_SERVER_ENABLED: bool = False
     REMOTE_SERVER_NAME: str = "DB Server"
     REMOTE_SERVER_GLANCES_URL: str = ""  # e.g. http://192.168.1.50:61208
+    REMOTE_SERVER_SSH_ENABLED: bool = False
+    REMOTE_SERVER_SSH_HOST: str = ""  # e.g. 192.168.1.211
+    REMOTE_SERVER_SSH_USER: str = "monitor"
+    REMOTE_SERVER_SSH_KEY_PATH: str = ""  # e.g. /home/luna/.ssh/ai_monitor_key
+    REMOTE_SERVER_SSH_TIMEOUT_SECONDS: float = 5.0
 
     # Persona
     PERSONA: str = "kuudere"  # "base" or "kuudere"

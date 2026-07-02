@@ -1,16 +1,18 @@
 """Unit tests for ImageAttachmentStore — asyncpg + disk both faked."""
 import base64
 import uuid
+from io import BytesIO
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from PIL import Image
 
 from app.services.image_store import ImageAttachmentStore
 
-_PNG_1PX = base64.b64encode(bytes.fromhex(
-    "89504e470d0a1a0a0000000d494844520000000100000001080600000"
-    "01f15c4890000000a49444154789c6360000002000155a4fa0d0000000049454e44ae426082"
-)).decode()
+def _png_data_url(size: tuple[int, int] = (1, 1)) -> str:
+    buf = BytesIO()
+    Image.new("RGB", size, color=(10, 20, 30)).save(buf, format="PNG")
+    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
 
 
 def _make_pool_with_conn(conn: AsyncMock) -> AsyncMock:
@@ -32,7 +34,7 @@ def _tmp_storage_dir(tmp_path, monkeypatch):
 async def test_save_attachments_returns_empty_when_not_started():
     store = ImageAttachmentStore()
     result = await store.save_attachments(
-        [{"data_url": f"data:image/png;base64,{_PNG_1PX}", "width": 1, "height": 1}],
+        [{"data_url": _png_data_url(), "width": 1, "height": 1}],
         user_id="u1", role="user",
     )
     assert result == []
@@ -45,7 +47,7 @@ async def test_save_attachments_writes_file_and_inserts_row(_tmp_storage_dir):
     store.startup(pool)
 
     result = await store.save_attachments(
-        [{"data_url": f"data:image/png;base64,{_PNG_1PX}", "width": 1, "height": 1}],
+        [{"data_url": _png_data_url(), "width": 1, "height": 1}],
         user_id="u1", role="user",
     )
 
@@ -55,14 +57,40 @@ async def test_save_attachments_writes_file_and_inserts_row(_tmp_storage_dir):
     assert saved["width"] == 1 and saved["height"] == 1
     assert saved["size_kb"] > 0
 
-    # File actually landed on disk under the user's subdirectory.
-    on_disk = list((_tmp_storage_dir / "u1").glob("*.png"))
+    # File actually landed on disk under the user's subdirectory, re-encoded
+    # as JPEG regardless of the original format.
+    on_disk = list((_tmp_storage_dir / "u1").glob("*.jpg"))
     assert len(on_disk) == 1
 
-    # DB insert happened with the matching id.
+    # DB insert happened with the matching id + the compressed mime type.
     insert_call = conn.execute.await_args
     assert insert_call.args[1] == uuid.UUID(saved["id"])
     assert insert_call.args[2] == "u1"
+    assert insert_call.args[5] == "image/jpeg"
+
+
+async def test_save_attachments_downscales_oversized_image(_tmp_storage_dir, monkeypatch):
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "IMAGE_ATTACHMENT_MAX_DIMENSION", 500)
+
+    big = Image.new("RGB", (2000, 100), color=(200, 50, 50))
+    buf = BytesIO()
+    big.save(buf, format="PNG")
+    data_url = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
+    conn = AsyncMock()
+    pool = _make_pool_with_conn(conn)
+    store = ImageAttachmentStore()
+    store.startup(pool)
+
+    result = await store.save_attachments(
+        [{"data_url": data_url, "width": 2000, "height": 100}],
+        user_id="u1", role="user",
+    )
+
+    assert len(result) == 1
+    assert result[0]["width"] == 500  # downscaled from 2000, aspect preserved
+    assert result[0]["height"] == 25
 
 
 async def test_save_attachments_skips_malformed_image_without_raising(_tmp_storage_dir):

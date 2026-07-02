@@ -9,14 +9,37 @@ import asyncio
 import base64
 import time
 import uuid
+from io import BytesIO
 from pathlib import Path
 from typing import Optional
 
 import asyncpg
+from PIL import Image
 
 from app.core.config import settings
 
-_MIME_EXT = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
+
+def _compress_to_jpeg(raw: bytes) -> tuple[bytes, int, int]:
+    """Re-encode any input format as JPEG, downscaled to at most
+    IMAGE_ATTACHMENT_MAX_DIMENSION on the longest edge. Runs on a worker
+    thread (Pillow is sync/CPU-bound). Flattens transparency onto white
+    since JPEG has no alpha channel."""
+    img = Image.open(BytesIO(raw))
+    if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
+        img = img.convert("RGBA")
+        background = Image.new("RGB", img.size, (255, 255, 255))
+        background.paste(img, mask=img.split()[-1])
+        img = background
+    else:
+        img = img.convert("RGB")
+
+    max_dim = settings.IMAGE_ATTACHMENT_MAX_DIMENSION
+    if max(img.size) > max_dim:
+        img.thumbnail((max_dim, max_dim), Image.LANCZOS)
+
+    buf = BytesIO()
+    img.save(buf, format="JPEG", quality=settings.IMAGE_ATTACHMENT_JPEG_QUALITY, optimize=True)
+    return buf.getvalue(), img.width, img.height
 
 
 class ImageAttachmentStore:
@@ -51,14 +74,14 @@ class ImageAttachmentStore:
     async def _save_one(
         self, img: dict, user_id: str, role: str, base_dir: Path, now: float,
     ) -> dict:
-        header, b64data = img["data_url"].split(",", 1)
-        mime = header.split(";")[0].split(":", 1)[1]
-        ext = _MIME_EXT.get(mime, "bin")
+        _header, b64data = img["data_url"].split(",", 1)
         raw = base64.b64decode(b64data)
+        compressed, width, height = await asyncio.to_thread(_compress_to_jpeg, raw)
+
         image_id = uuid.uuid4()
-        path = base_dir / f"{image_id}.{ext}"
-        await asyncio.to_thread(path.write_bytes, raw)
-        rel_path = f"{base_dir.name}/{image_id}.{ext}"
+        path = base_dir / f"{image_id}.jpg"
+        await asyncio.to_thread(path.write_bytes, compressed)
+        rel_path = f"{base_dir.name}/{image_id}.jpg"
 
         async with self._pool.acquire() as conn:
             await conn.execute(
@@ -68,16 +91,16 @@ class ImageAttachmentStore:
                      byte_size, source_turn_ts)
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                 """,
-                image_id, user_id, role, rel_path, mime,
-                img.get("width"), img.get("height"), len(raw), now,
+                image_id, user_id, role, rel_path, "image/jpeg",
+                width, height, len(compressed), now,
             )
 
         return {
             "id": str(image_id),
             "url": f"/api/images/{image_id}",
-            "width": img.get("width"),
-            "height": img.get("height"),
-            "size_kb": round(len(raw) / 1024, 1),
+            "width": width,
+            "height": height,
+            "size_kb": round(len(compressed) / 1024, 1),
         }
 
     async def get(self, image_id: str) -> Optional[dict]:

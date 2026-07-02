@@ -9,6 +9,11 @@ import {
 } from "../services/chat-websocket.service";
 import { float32ToWav } from "../utils/audio.util";
 import { BACKEND_URL } from "@Shore/constants/backend.constant";
+
+// Matches the text placeholder chat_ws.py's _build_memory_message appends
+// when images are attached, e.g. "[Attached 2 image(s): 935x702, 800x600]".
+// Once real thumbnails are hydrated from `images`, this is redundant.
+const IMAGE_PLACEHOLDER_RE = /\n?\n?\[Attached \d+ image\(s\): [^\]]*\]$/;
 import { TTSPlayer } from "../utils/tts-player.util";
 import { STT_DEFAULT_LANGUAGE } from "../constants/stt.constant";
 
@@ -226,10 +231,13 @@ export function useAssistant(): UseAssistantReturn {
               status: a.status,
               timestamp: new Date(a.timestamp * 1000),
             }));
+            const hasImages = !!(m.images && m.images.length > 0);
             return {
               id: `hist-${m.timestamp}-${rand()}`,
               role: m.role,
-              text: m.content,
+              text: hasImages
+                ? m.content.replace(IMAGE_PLACEHOLDER_RE, "")
+                : m.content,
               thinkingText: m.thinking_text || undefined,
               isThinkingPhase: false,
               isStreaming: false,

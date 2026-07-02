@@ -60,6 +60,8 @@ class Settings(BaseSettings):
     # memory layers; the agent never reads this, it's purely for re-viewing
     # an image the user sent). Path is relative to the back-end/ CWD.
     IMAGE_STORAGE_DIR: str = "data/images"
+    IMAGE_ATTACHMENT_MAX_DIMENSION: int = 1600  # longest edge after downscale
+    IMAGE_ATTACHMENT_JPEG_QUALITY: int = 80  # re-encoded as JPEG at this quality
 
     # Remote server hardware probe (Glances JSON API)
     REMOTE_SERVER_ENABLED: bool = False

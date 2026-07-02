@@ -4,7 +4,10 @@
   "version": "0.1.0",
   "identifier": "com.shore-keeper.assistant",
   "build": {
-    "beforeBuildCommand": "cd ../../front-end && VITE_API_URL=https://api.shore-keeper.com VITE_WS_URL=wss://conv.shore-keeper.com npm run build",
+    "beforeBuildCommand": {
+      "cwd": "../../front-end",
+      "script": "VITE_API_URL=https://api.shore-keeper.com VITE_WS_URL=wss://conv.shore-keeper.com npm run build"
+    },
     "frontendDist": "../../front-end/dist"
   },
   "app": {

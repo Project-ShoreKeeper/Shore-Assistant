@@ -15,6 +15,7 @@ from app.services.ai_client.stt import SttUnavailable, stt_client
 from app.services.agent_service import agent_service
 from app.services.ai_client.tts import tts_client
 from app.services.memory import memory_facade, worker_service
+from app.services.image_store import image_store
 from app.services.connection_manager import connection_manager
 from app.services.notification_service import notification_service
 from app.services.copilot_service import copilot_service, summarize_copilot_run
@@ -249,11 +250,19 @@ async def websocket_chat(websocket: WebSocket):
         # land on disk or in conversation_history), and the multimodal "live"
         # form that llama-server sees just this turn.
         if not is_notification:
+            # Persist the raw image bytes (disk + Postgres metadata row) so
+            # the user can view them again later — separate from the text
+            # placeholder below, which is all the agent/memory layers see.
+            saved_images = (
+                await image_store.save_attachments(images, user_id=ws_user_id, role="user")
+                if images else []
+            )
             memory_message = _build_memory_message(user_text, images or [])
             conversation_history.append(memory_message)
             await memory_facade.append_user(
                 content=memory_message["content"],
                 user_id=ws_user_id,
+                extras={"images": saved_images} if saved_images else None,
             )
         live_user_message = (
             _build_live_message(user_text, images) if images else None

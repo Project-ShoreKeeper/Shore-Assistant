@@ -56,6 +56,11 @@ class Settings(BaseSettings):
     # FileBrowser
     FILEBROWSER_URL: str = "http://image.shore-keeper.com"
 
+    # Chat image attachments — raw file storage (separate from the semantic
+    # memory layers; the agent never reads this, it's purely for re-viewing
+    # an image the user sent). Path is relative to the back-end/ CWD.
+    IMAGE_STORAGE_DIR: str = "data/images"
+
     # Remote server hardware probe (Glances JSON API)
     REMOTE_SERVER_ENABLED: bool = False
     REMOTE_SERVER_NAME: str = "DB Server"

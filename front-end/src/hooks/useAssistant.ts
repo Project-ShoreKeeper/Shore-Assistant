@@ -8,6 +8,7 @@ import {
   type ImageAttachment,
 } from "../services/chat-websocket.service";
 import { float32ToWav } from "../utils/audio.util";
+import { BACKEND_URL } from "@Shore/constants/backend.constant";
 import { TTSPlayer } from "../utils/tts-player.util";
 import { STT_DEFAULT_LANGUAGE } from "../constants/stt.constant";
 
@@ -236,6 +237,13 @@ export function useAssistant(): UseAssistantReturn {
               taskId: m.task_id || undefined,
               timestamp: new Date(m.timestamp * 1000),
               agentActions: actions.length > 0 ? actions : undefined,
+              images: m.images?.map((img) => ({
+                id: img.id,
+                dataUrl: `${BACKEND_URL}${img.url}`,
+                width: img.width,
+                height: img.height,
+                sizeKb: img.size_kb,
+              })),
             };
           });
           setMessages(hydrated);

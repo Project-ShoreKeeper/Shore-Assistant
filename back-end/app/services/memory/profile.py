@@ -80,6 +80,12 @@ class ProfileMemory:
             await self._pool.close()
             self._pool = None
 
+    @property
+    def pool(self) -> Optional[asyncpg.Pool]:
+        """Expose the pool so sibling stores (e.g. image_store) can reuse
+        the same Postgres connection instead of opening a second pool."""
+        return self._pool
+
     async def read(self) -> dict:
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(

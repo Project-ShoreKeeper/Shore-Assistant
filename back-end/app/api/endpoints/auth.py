@@ -19,9 +19,8 @@ Login flow (desktop, Tauri app — see docs/superpowers/specs/
                                 browser's cookie jar is invisible to the
                                 app's webview)
   POST /api/auth/exchange    → consumes the one-time token (single-use)
-                                and sets the session cookie on *this*
-                                response, from inside the app's own
-                                webview
+                                and returns the opaque session id as a
+                                Bearer access token
 
 The actual Google token-exchange is encapsulated in
 ``_exchange_code_for_userinfo`` so it can be substituted in tests.
@@ -37,6 +36,7 @@ from pydantic import BaseModel
 
 from app.api.deps import (
     _resolve_session,
+    _session_id,
     _session_expired,
     csrf_check,
     current_user,
@@ -195,12 +195,9 @@ async def callback(
     )
 
     if client == "desktop":
-        # Desktop OAuth handoff: this response is delivered to the
-        # system browser, whose cookie jar is invisible to the app's
-        # own webview — setting a cookie here would be pointless.
-        # Instead mint a one-time exchange token and deep-link back
-        # into the app; the app's own webview calls /api/auth/exchange
-        # to actually receive the Set-Cookie.
+        # Desktop OAuth handoff: mint a short-lived, one-time code and
+        # deep-link it back into the app. The app redeems the code for
+        # the opaque session id, which it then uses as a Bearer token.
         token = await _store().create_exchange_token(
             sid,
             ttl_seconds=settings.AUTH_EXCHANGE_TTL_SECONDS,
@@ -223,14 +220,12 @@ class ExchangeRequest(BaseModel):
 
 
 @router.post("/exchange")
-async def exchange(body: ExchangeRequest, response: Response) -> dict:
-    """Desktop OAuth handoff, step 2: consume the one-time token minted
-    by `/callback` and set the session cookie on *this* response — the
-    app's own webview made this request, so the Set-Cookie lands in the
-    webview's own cookie jar (unlike the system-browser response from
-    `/callback`). No `csrf_check`: the one-time token itself is the
-    proof of possession, and there is no prior session to hold a CSRF
-    value against.
+async def exchange(body: ExchangeRequest) -> dict:
+    """Redeem the one-time desktop code for a Bearer access token.
+
+    The access token is the opaque Redis session id; it carries no user
+    data and inherits the session's sliding TTL. No prior authentication
+    or CSRF token is required because the exchange code is single-use.
     """
     sid = await _store().consume_exchange_token(
         body.token, prefix=settings.AUTH_EXCHANGE_KEY_PREFIX,
@@ -244,8 +239,9 @@ async def exchange(body: ExchangeRequest, response: Response) -> dict:
         raise HTTPException(
             status_code=401, detail={"error": "invalid_token"},
         )
-    _set_session_cookie(response, sid)
     return {
+        "access_token": sid,
+        "token_type": "bearer",
         "email": session.user.email,
         "role": session.user.role,
         "csrf": session.csrf,
@@ -258,11 +254,12 @@ async def logout(
     _csrf: None = Depends(csrf_check),
     _user: User = Depends(current_user),
 ) -> Response:
-    sid = request.cookies.get(settings.AUTH_COOKIE_NAME)
+    sid = _session_id(request)
     if sid:
         await _store().delete(sid)
     response = JSONResponse({"ok": True})
-    _clear_session_cookie(response)
+    if getattr(request.state, "_auth_scheme", None) == "cookie":
+        _clear_session_cookie(response)
     return response
 
 

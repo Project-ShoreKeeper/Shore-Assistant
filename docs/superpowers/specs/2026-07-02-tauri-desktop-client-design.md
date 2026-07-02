@@ -71,11 +71,11 @@ Google's guidance disallows OAuth consent inside an embedded webview.
 Desktop login uses the standard native-app pattern: system browser +
 custom URL scheme + one-time exchange.
 
-**Why an exchange step is required:** the system browser and the app's
-WKWebView have separate cookie jars. A cookie set while the OAuth callback
-runs in the system browser is invisible to the app. The exchange endpoint
-lets the *app's own webview* make the request that receives `Set-Cookie`,
-so the session cookie lands in the right cookie jar.
+**Why an exchange step is required:** the OAuth callback runs in the system
+browser, but the resulting desktop credential must return to the app without
+placing a reusable session id in the custom-scheme URL. The callback therefore
+deep-links a short-lived, single-use exchange code; the app redeems it for an
+opaque Bearer token over HTTPS.
 
 ### Sequence
 
@@ -105,33 +105,30 @@ so the session cookie lands in the right cookie jar.
    forwards the URL to the webview.
 6. The frontend (inside the app's webview) receives the deep-link URL,
    extracts `xchg`, and calls
-   `POST https://api.shore-keeper.com/api/auth/exchange {token}` with
-   `credentials: 'include'`.
-7. Backend validates + deletes the one-time token (single-use) and sets the
-   session cookie on **this** response — now stored in the app's own
-   WKWebView cookie jar. From this point, every REST/WS call from the app
-   is authenticated exactly like the web app today.
+   `POST https://api.shore-keeper.com/api/auth/exchange {token}`.
+7. Backend validates + deletes the one-time code and returns
+   `{access_token, token_type: "bearer", email, role, csrf}`. The app persists
+   the opaque access token in its own origin storage.
+8. REST calls send `Authorization: Bearer <access_token>`. Browser WebSocket
+   APIs cannot set an Authorization header, so `/ws/chat` sends the token via
+   `Sec-WebSocket-Protocol: bearer, <access_token>` and the server selects only
+   the non-secret `bearer` protocol in its response.
 
-### Cross-site cookie requirement
+### Bearer-token transport
 
-The app's webview origin (`tauri://localhost` on macOS) is not part of the
-`shore-keeper.com` site, unlike `bearer.shore-keeper.com` →
-`api.shore-keeper.com` (same registrable domain, different subdomain,
-already works with `SameSite=Lax` today). A `tauri://localhost` → 
-`api.shore-keeper.com` fetch is genuinely cross-site, so the session cookie
-must use `SameSite=None; Secure` or the webview will not send it back on
-subsequent requests.
+The access token is the same random, opaque session id already mapped to the
+Redis session payload; it is not a self-contained JWT. Redis remains the source
+of truth for expiry, revocation, user role, and sliding TTL. Logout deletes the
+Redis session and clears the locally stored token.
 
-This is a global config change (`AUTH_COOKIE_SAMESITE` default → `"none"`),
-so it also affects the existing web cookie. Accepted because CSRF token
-verification (`csrf_check`) and admin-role gating already guard all
-state-changing endpoints — `SameSite` was defense-in-depth, not the only
-protection.
+The hosted browser app remains on its existing HttpOnly cookie + CSRF flow.
+Bearer credentials take precedence if both transports are present, and Bearer
+requests do not require CSRF because browsers do not attach Authorization
+headers ambiently.
 
 ## Backend changes
 
 - `app/core/config.py`:
-  - `AUTH_COOKIE_SAMESITE` default changes from `"lax"` to `"none"`.
   - New `AUTH_DESKTOP_REDIRECT_SCHEME: str = "shore-assistant"`.
   - `AUTH_FRONTEND_ORIGINS` gains `tauri://localhost` in deployed config
     (not a code change — an env value change, documented in the config
@@ -147,13 +144,14 @@ protection.
     Also gains explicit handling of Google's `error` query param (today's
     handler assumes `code`/`state` are always present).
   - New `POST /api/auth/exchange {token}` — validates + consumes the
-    token, sets the session cookie on the response, returns the same shape
-    as `/api/auth/me` (`{email, role, csrf}`). No `csrf_check` dependency:
-    like `/callback`, the one-time token itself is the proof of
-    possession — there is no prior session to hold a CSRF value against.
-- No changes to `/ws/chat` upgrade auth, `current_user`, `csrf_check`,
-  memory/dashboard/services endpoints — all continue to work unmodified
-  because the desktop client ends up with an ordinary cookie session.
+    token and returns
+    `{access_token, token_type: "bearer", email, role, csrf}` without setting
+    a cookie. No `csrf_check` dependency: like `/callback`, the one-time token
+    itself is the proof of possession.
+- `app/api/deps.py`: resolve Bearer credentials before the hosted web cookie;
+  skip CSRF validation for authenticated Bearer requests.
+- `/ws/chat`: accept standard Authorization Bearer headers for non-browser
+  clients and the `bearer` WebSocket subprotocol form for the Tauri webview.
 
 ## Distribution & updates
 

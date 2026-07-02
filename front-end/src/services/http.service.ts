@@ -1,11 +1,13 @@
 /**
  * Shared HTTP client for authenticated REST calls.
  *
- * Sends cookies via `credentials: "include"` and attaches the CSRF
- * token from AuthContext on state-changing requests. Throws
- * `ApiError` on non-2xx so the caller can branch on `status`.
+ * Desktop requests attach the persisted access token as
+ * `Authorization: Bearer ...`. The hosted web app keeps cookie + CSRF
+ * compatibility. Throws `ApiError` on non-2xx so callers can branch on
+ * `status`.
  */
 import { BACKEND_URL } from "@Shore/constants/backend.constant";
+import { isTauri } from "@Shore/utils/tauri.util";
 
 export class ApiError extends Error {
   status: number;
@@ -17,9 +19,40 @@ export class ApiError extends Error {
   }
 }
 
-// A module-level CSRF token, populated by AuthContext on /me. This
-// avoids threading a context through every service call.
+const ACCESS_TOKEN_STORAGE_KEY = "shore_access_token";
+const IS_DESKTOP = isTauri();
+
+function loadAccessToken(): string | null {
+  try {
+    return window.localStorage.getItem(ACCESS_TOKEN_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+// Module-level credentials avoid threading AuthContext through every
+// service. The access token is persisted so the desktop session survives
+// app restarts; the hosted web origin never receives or stores one.
+let _accessToken: string | null = IS_DESKTOP ? loadAccessToken() : null;
 let _csrfToken: string | null = null;
+
+export function setAccessToken(token: string | null): void {
+  _accessToken = token;
+  try {
+    if (token) {
+      window.localStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, token);
+    } else {
+      window.localStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY);
+    }
+  } catch {
+    // Some embedded/private contexts disable persistent storage. The
+    // in-memory token still keeps the current app session functional.
+  }
+}
+
+export function getAccessToken(): string | null {
+  return _accessToken;
+}
 
 export function setCsrfToken(token: string | null): void {
   _csrfToken = token;
@@ -52,12 +85,18 @@ export async function apiFetch<T>(
   if (!headers.has("Content-Type") && init?.body !== undefined) {
     headers.set("Content-Type", "application/json");
   }
-  if (_isWrite(init?.method) && _csrfToken) {
+  if (_accessToken) {
+    headers.set("Authorization", `Bearer ${_accessToken}`);
+  }
+  if (!_accessToken && _isWrite(init?.method) && _csrfToken) {
     headers.set("X-CSRF-Token", _csrfToken);
   }
 
   const res = await fetch(`${BACKEND_URL}${path}`, {
-    credentials: "include",
+    // Never send ambient cookies from Tauri, including cookies left by
+    // versions that predate Bearer auth. The hosted web app still needs
+    // credentials for its HttpOnly-cookie flow.
+    credentials: IS_DESKTOP ? "omit" : "include",
     ...init,
     headers,
   });

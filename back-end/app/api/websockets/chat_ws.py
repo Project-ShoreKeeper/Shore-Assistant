@@ -9,7 +9,7 @@ import uuid
 import base64 as _b64
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from app.api.deps import get_session_store
+from app.api.deps import _bearer_token, get_session_store
 from app.core.auth import current_user_id
 from app.services.ai_client.stt import SttUnavailable, stt_client
 from app.services.agent_service import agent_service
@@ -76,6 +76,31 @@ router = APIRouter()
 SAMPLE_RATE = 16000
 
 
+def _websocket_session_id(
+    websocket: WebSocket,
+) -> tuple[str | None, str | None]:
+    """Read Bearer auth from the upgrade or browser WS subprotocol.
+
+    Browsers do not expose custom WebSocket headers, so the desktop
+    frontend sends protocols ``["bearer", "<token>"]``. Non-browser
+    clients may use the standard Authorization header. Cookie fallback
+    keeps the hosted web app compatible.
+    """
+    sid = _bearer_token(websocket.headers.get("Authorization"))
+    if sid is not None:
+        return sid, None
+
+    protocols = [
+        value.strip()
+        for value in websocket.headers.get("Sec-WebSocket-Protocol", "").split(",")
+        if value.strip()
+    ]
+    if len(protocols) >= 2 and protocols[0].lower() == "bearer":
+        return protocols[1], "bearer"
+
+    return websocket.cookies.get(settings.AUTH_COOKIE_NAME), None
+
+
 @router.websocket("/ws/chat")
 async def websocket_chat(websocket: WebSocket):
     """
@@ -97,8 +122,9 @@ async def websocket_chat(websocket: WebSocket):
     """
     # Authenticate at upgrade. When AUTH_ENABLED=False, deps treat the
     # connection as the legacy admin user.
+    accepted_subprotocol = None
     if settings.AUTH_ENABLED:
-        sid = websocket.cookies.get(settings.AUTH_COOKIE_NAME)
+        sid, accepted_subprotocol = _websocket_session_id(websocket)
         session = await get_session_store().read(sid) if sid else None
         if session is None:
             # 4401 = our custom "unauthenticated" close code — frontend
@@ -115,7 +141,7 @@ async def websocket_chat(websocket: WebSocket):
     # run in this WS's asyncio task.
     current_user_id.set(ws_user_id)
 
-    await websocket.accept()
+    await websocket.accept(subprotocol=accepted_subprotocol)
 
     # Per-connection state
     session_id = str(uuid.uuid4())[:8]

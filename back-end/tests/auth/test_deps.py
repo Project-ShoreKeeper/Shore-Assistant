@@ -62,6 +62,14 @@ def test_current_user_401_with_bad_cookie(app_with_store):
     assert r.json()["detail"]["error"] == "session_expired"
 
 
+def test_current_user_401_with_bad_bearer(app_with_store):
+    app, _ = app_with_store
+    client = TestClient(app)
+    r = client.get("/me", headers={"Authorization": "Bearer garbage"})
+    assert r.status_code == 401
+    assert r.json()["detail"]["error"] == "session_expired"
+
+
 async def test_current_user_200_with_valid_cookie(app_with_store):
     app, store = app_with_store
     sid, _csrf = await _make_session(store)
@@ -72,6 +80,15 @@ async def test_current_user_200_with_valid_cookie(app_with_store):
     body = r.json()
     assert body["email"] == "luna@x.com"
     assert body["role"] == "admin"
+
+
+async def test_current_user_200_with_valid_bearer(app_with_store):
+    app, store = app_with_store
+    sid, _csrf = await _make_session(store)
+    client = TestClient(app)
+    r = client.get("/me", headers={"Authorization": f"Bearer {sid}"})
+    assert r.status_code == 200
+    assert r.json()["email"] == "luna@x.com"
 
 
 async def test_csrf_check_403_when_header_missing(app_with_store):
@@ -100,6 +117,24 @@ async def test_csrf_check_passes_with_correct_header(app_with_store):
     client.cookies.set("shore_session", sid)
     r = client.post("/write", headers={"X-CSRF-Token": csrf})
     assert r.status_code == 200
+
+
+async def test_bearer_write_does_not_require_csrf(app_with_store):
+    app, store = app_with_store
+    sid, _csrf = await _make_session(store)
+    client = TestClient(app)
+    r = client.post("/write", headers={"Authorization": f"Bearer {sid}"})
+    assert r.status_code == 200
+
+
+async def test_bearer_takes_precedence_over_cookie(app_with_store):
+    app, store = app_with_store
+    sid, _csrf = await _make_session(store)
+    client = TestClient(app)
+    client.cookies.set("shore_session", sid)
+    r = client.get("/me", headers={"Authorization": "Bearer garbage"})
+    assert r.status_code == 401
+    assert r.json()["detail"]["error"] == "session_expired"
 
 
 async def test_require_admin_403_for_user_role(app_with_store):

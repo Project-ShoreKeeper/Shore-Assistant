@@ -3,6 +3,9 @@
 A Tauri v2 shell around the existing `front-end/` React app. It talks to
 the production backend over the internet (`api.shore-keeper.com` /
 `conv.shore-keeper.com`) — this is a client, not a self-hosted deployment.
+Desktop authentication uses an opaque Bearer token obtained through the
+system-browser OAuth/deep-link exchange; it does not depend on webview
+cookies.
 See `docs/superpowers/specs/2026-07-02-tauri-desktop-client-design.md`
 for the full design (architecture, auth flow, scope decisions).
 

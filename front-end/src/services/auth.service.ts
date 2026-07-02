@@ -12,13 +12,18 @@ export interface MeResponse {
   csrf: string;
 }
 
+export interface TokenExchangeResponse extends MeResponse {
+  access_token: string;
+  token_type: "bearer";
+}
+
 export const authService = {
   /** GET /me — throws ApiError(401) when no/expired session. */
   me(): Promise<MeResponse> {
     return apiFetch<MeResponse>("/api/auth/me");
   },
 
-  /** POST /logout — clears server session + cookie. */
+  /** POST /logout — revokes the server session. */
   logout(): Promise<{ ok: true }> {
     return apiFetch<{ ok: true }>("/api/auth/logout", { method: "POST" });
   },
@@ -41,12 +46,11 @@ export const authService = {
 
   /**
    * POST /exchange — redeems the one-time desktop deep-link token
-   * (`shore-assistant://auth?xchg=<token>`) for a session cookie set on
-   * this response, in the app's own webview cookie jar. Same response
-   * shape as /me. Throws ApiError(401) on an invalid/expired/used token.
+   * (`shore-assistant://auth?xchg=<token>`) for an opaque Bearer access
+   * token. Throws ApiError(401) on an invalid/expired/used token.
    */
-  exchange(token: string): Promise<MeResponse> {
-    return apiFetch<MeResponse>("/api/auth/exchange", {
+  exchange(token: string): Promise<TokenExchangeResponse> {
+    return apiFetch<TokenExchangeResponse>("/api/auth/exchange", {
       method: "POST",
       body: JSON.stringify({ token }),
     });

@@ -40,7 +40,7 @@ asyncpg>=0.29.0
 # Episodic (Phase 2)
 qdrant-client>=1.12.0
 
-# Auth (Google OAuth + signed cookies)
+# Auth (Google OAuth + Redis sessions)
 authlib>=1.7.0
 itsdangerous>=2.2.0
 

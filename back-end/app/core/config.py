@@ -148,11 +148,9 @@ class Settings(BaseSettings):
     AUTH_OAUTH_STATE_TTL_SECONDS: int = 300
     AUTH_COOKIE_NAME: str = "shore_session"
     AUTH_COOKIE_SECURE: bool = True  # set False for local http dev
-    # "none" so the desktop client's webview (tauri://localhost — a
-    # genuinely cross-site origin vs. api.shore-keeper.com) can still send
-    # the cookie back. CSRF checks + admin-role gating are the primary
-    # defense on state-changing endpoints; SameSite was defense-in-depth.
-    AUTH_COOKIE_SAMESITE: str = "none"
+    # The hosted web client uses this cookie. The desktop client uses an
+    # Authorization Bearer token and does not require cross-site cookies.
+    AUTH_COOKIE_SAMESITE: str = "lax"
     # When frontend and backend live on different subdomains of the same
     # registrable domain (e.g. bearer.shore-keeper.com ↔ api.shore-keeper.com),
     # set this to the shared parent (e.g. ".shore-keeper.com") so the

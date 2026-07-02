@@ -2,6 +2,8 @@
  * WebSocket service for the /ws/chat endpoint.
  * Handles the full pipeline: text/audio input -> STT -> Agent -> LLM streaming -> TTS.
  */
+import { CHAT_WS_URL } from "../constants/stt.constant";
+import { getAccessToken } from "./http.service";
 
 export type WebSocketStatus =
   | "CONNECTING"
@@ -243,7 +245,13 @@ export class ChatWebSocketService {
     this.updateStatus("CONNECTING");
 
     try {
-      this.socket = new WebSocket(this.url);
+      const accessToken = getAccessToken();
+      // Browser WebSocket does not support custom Authorization headers.
+      // Send the opaque token as a subprotocol credential; the server
+      // selects only the non-secret "bearer" protocol in its response.
+      this.socket = accessToken
+        ? new WebSocket(this.url, ["bearer", accessToken])
+        : new WebSocket(this.url);
       this.socket.binaryType = "arraybuffer";
 
       this.socket.onopen = this.handleOpen.bind(this);
@@ -450,6 +458,5 @@ export class ChatWebSocketService {
 
 // ─── Singleton ───
 // Shared instance used by useAssistant and useTerminal so both operate on the same socket.
-import { CHAT_WS_URL } from "../constants/stt.constant";
 export const chatWebsocketService = new ChatWebSocketService(CHAT_WS_URL);
 export default chatWebsocketService;

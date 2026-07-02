@@ -67,6 +67,23 @@ async def test_logout_deletes_session_and_clears_cookie(app_with_auth):
     assert "Max-Age=0" in set_cookie or "max-age=0" in set_cookie.lower()
 
 
+async def test_bearer_logout_deletes_session_without_cookie_or_csrf(
+    app_with_auth,
+):
+    app, store = app_with_auth
+    sid, _csrf = await store.create(
+        User(id="s1", email="luna@x.com", role="admin"),
+    )
+    client = TestClient(app)
+    r = client.post(
+        "/api/auth/logout",
+        headers={"Authorization": f"Bearer {sid}"},
+    )
+    assert r.status_code == 200
+    assert await store.read(sid) is None
+    assert "set-cookie" not in {key.lower() for key in r.headers}
+
+
 async def test_callback_rejects_non_allowlisted_email(app_with_auth, monkeypatch):
     app, store = app_with_auth
     # Pre-create an OAuth state so the callback's state check passes.
@@ -236,7 +253,7 @@ async def test_callback_desktop_allowlist_rejection_does_not_deep_link(
     assert r.json()["detail"]["error"] == "not_allowlisted"
 
 
-async def test_exchange_success_sets_cookie_and_returns_me_shape(
+async def test_exchange_success_returns_bearer_token(
     app_with_auth, monkeypatch,
 ):
     app, store = app_with_auth
@@ -249,14 +266,20 @@ async def test_exchange_success_sets_cookie_and_returns_me_shape(
     client = TestClient(app)
     r = client.post("/api/auth/exchange", json={"token": token})
     assert r.status_code == 200
-    assert r.json() == {"email": "luna@x.com", "role": "admin", "csrf": csrf}
-    set_cookie = r.headers.get("set-cookie", "")
-    assert "shore_session=" in set_cookie
-    assert "HttpOnly" in set_cookie or "httponly" in set_cookie.lower()
+    assert r.json() == {
+        "access_token": sid,
+        "token_type": "bearer",
+        "email": "luna@x.com",
+        "role": "admin",
+        "csrf": csrf,
+    }
+    assert "set-cookie" not in {key.lower() for key in r.headers}
 
-    # Cookie is usable on a subsequent authenticated request.
-    client.cookies.set("shore_session", sid)
-    r2 = client.get("/api/auth/me")
+    # The returned opaque token authenticates subsequent requests.
+    r2 = client.get(
+        "/api/auth/me",
+        headers={"Authorization": f"Bearer {sid}"},
+    )
     assert r2.status_code == 200
     assert r2.json()["email"] == "luna@x.com"
 

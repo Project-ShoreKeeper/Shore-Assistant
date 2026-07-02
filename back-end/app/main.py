@@ -117,9 +117,9 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS: when auth is on, we MUST pin origins to a specific list because
-# cookies + wildcard CORS is rejected by browsers. When auth is off, keep
-# the open-everything default for dev convenience.
+# CORS: auth-enabled deployments pin origins for both the hosted cookie
+# client and the desktop Bearer client. When auth is off, keep the
+# open-everything default for dev convenience.
 if settings.AUTH_ENABLED:
     _allowed_origins = [
         o.strip() for o in settings.AUTH_FRONTEND_ORIGINS.split(",") if o.strip()
@@ -129,7 +129,7 @@ if settings.AUTH_ENABLED:
         allow_origins=_allowed_origins,
         allow_credentials=True,
         allow_methods=["*"],
-        allow_headers=["*", "X-CSRF-Token"],
+        allow_headers=["*", "Authorization", "X-CSRF-Token"],
     )
 else:
     app.add_middleware(

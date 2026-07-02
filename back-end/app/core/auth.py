@@ -1,7 +1,7 @@
 """Redis-backed session store + user types for Google-OAuth sign-in.
 
-The cookie carries an opaque session id; the actual session payload
-(user, csrf, timestamps) lives in Redis under
+The cookie or Bearer credential carries an opaque session id; the actual
+session payload (user, csrf, timestamps) lives in Redis under
 ``{key_prefix}{sid}`` with a sliding TTL that's refreshed on every
 read.
 
@@ -135,11 +135,9 @@ class SessionStore:
     ) -> str:
         """Mint a one-time token mapping to a session id.
 
-        Used by the desktop OAuth flow: `/callback` (running in the
-        system browser) mints this token and deep-links it back into
-        the app; `/exchange` (running inside the app's own webview)
-        consumes it and sets the session cookie in the webview's own
-        cookie jar.
+        Used by the desktop OAuth flow: `/callback` mints this token and
+        deep-links it back into the app; `/exchange` consumes it and
+        returns the mapped session id as a Bearer access token.
         """
         token = secrets.token_urlsafe(32)
         await self._redis.set(f"{prefix}{token}", sid, ex=ttl_seconds)

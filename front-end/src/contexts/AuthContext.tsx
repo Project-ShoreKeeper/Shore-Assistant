@@ -4,7 +4,12 @@ import {
 
 import { authService, type MeResponse, type Role } from "@Shore/services/auth.service";
 import { registerAuthDeepLink } from "@Shore/services/deep-link.service";
-import { ApiError, onUnauthorized, setCsrfToken } from "@Shore/services/http.service";
+import {
+  ApiError,
+  onUnauthorized,
+  setAccessToken,
+  setCsrfToken,
+} from "@Shore/services/http.service";
 import { isTauri } from "@Shore/utils/tauri.util";
 
 export interface AuthUser {
@@ -42,6 +47,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setCsrfToken(me.csrf);
     } else {
       setUser(null);
+      setAccessToken(null);
       setCsrfToken(null);
     }
   }, []);
@@ -84,8 +90,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const handleToken = (token: string) => {
       void (async () => {
         try {
-          const me = await authService.exchange(token);
-          apply(me);
+          const result = await authService.exchange(token);
+          setAccessToken(result.access_token);
+          apply(result);
           setDesktopAuthError(null);
         } catch (e) {
           if (e instanceof ApiError && e.status === 401) {

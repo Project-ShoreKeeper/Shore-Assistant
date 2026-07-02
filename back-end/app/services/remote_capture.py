@@ -8,6 +8,7 @@ the existing terminal_service.broadcast = send_json_safe line.
 """
 
 import asyncio
+import base64
 import uuid
 from typing import Awaitable, Callable, Optional
 
@@ -16,6 +17,17 @@ from app.core.config import settings
 SendJson = Callable[[dict], Awaitable[None]]
 
 THUMBNAIL_MAX_SIZE = 64
+
+
+def _within_size_limit(data_url: str) -> bool:
+    """Reject malformed or oversized data URLs, mirroring chat_ws._validate_images's
+    MAX_IMAGE_BYTES cap for manually-attached images."""
+    try:
+        payload = data_url.split(",", 1)[1]
+        size = len(base64.b64decode(payload, validate=False))
+    except Exception:
+        return False
+    return size <= settings.MAX_IMAGE_BYTES
 
 
 class RemoteCaptureService:
@@ -66,7 +78,10 @@ class RemoteCaptureService:
         fut = self._pending.get(request_id)
         if fut is None or fut.done():
             return False
-        fut.set_result(None if data_url is None else {"data_url": data_url, "label": label})
+        result = None
+        if data_url is not None and _within_size_limit(data_url):
+            result = {"data_url": data_url, "label": label}
+        fut.set_result(result)
         return True
 
 

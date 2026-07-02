@@ -111,3 +111,36 @@ async def test_resolve_twice_second_call_returns_false():
 
     asyncio.create_task(resolve_soon())
     await svc.request("full")
+
+
+@pytest.mark.asyncio
+async def test_resolve_with_oversized_data_url_resolves_to_none(monkeypatch):
+    monkeypatch.setattr(settings, "MAX_IMAGE_BYTES", 2)
+    svc, sent = _svc_with_recorder()
+
+    async def resolve_soon():
+        await asyncio.sleep(0)
+        request_id = sent[0]["request_id"]
+        # "QUJD" decodes to b"ABC" -> 3 bytes, over the 2-byte cap above.
+        assert svc.resolve(request_id, "data:image/jpeg;base64,QUJD") is True
+
+    asyncio.create_task(resolve_soon())
+    result = await svc.request("full")
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_resolve_with_malformed_data_url_resolves_to_none():
+    svc, sent = _svc_with_recorder()
+
+    async def resolve_soon():
+        await asyncio.sleep(0)
+        request_id = sent[0]["request_id"]
+        # No comma -> not a valid "data:...;base64,<payload>" URL.
+        assert svc.resolve(request_id, "not-a-data-url") is True
+
+    asyncio.create_task(resolve_soon())
+    result = await svc.request("full")
+
+    assert result is None

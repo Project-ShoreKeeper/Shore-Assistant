@@ -701,3 +701,4 @@ async def websocket_chat(websocket: WebSocket):
             notification_service.clear_agent_callback()
             connection_manager.unregister()
             terminal_service.broadcast = None
+            remote_capture_service.send_json = None

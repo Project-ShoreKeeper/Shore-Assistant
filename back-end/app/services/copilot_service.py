@@ -4,15 +4,22 @@ Pure helpers (norm_abs_diff, should_trigger, summarize_copilot_run,
 build_copilot_prompt) are kept module-level and I/O-free so they can be unit
 tested. The CopilotService singleton owns the background watch loop and is wired
 into the /ws/chat handler the same way NotificationService is.
+
+Screenshots come from the connected browser (RemoteCaptureService), not from
+the backend host's display — see docs/superpowers/specs/2026-07-02-client-side-screen-capture-design.md.
 """
 
 import asyncio
+import base64
+import io
 import time
 from pathlib import Path
 
 import numpy as np
+from PIL import Image
 
 from app.core.config import settings
+from app.services.remote_capture import remote_capture_service
 
 NOOP_SENTINEL = "__NOOP__"
 
@@ -43,7 +50,8 @@ def should_trigger(
 
     Trigger only when not busy, past the cooldown, the screen changed enough,
     and the user has been idle long enough. idle=None means the idle probe is
-    unavailable (e.g. non-Windows) -> the idle gate is skipped (degrade open).
+    unavailable (browsers cannot read system-wide idle time) -> the idle gate
+    is skipped (degrade open).
     """
     if busy:
         return False
@@ -103,56 +111,37 @@ def build_copilot_prompt(window_title: str) -> str:
     return _prompt_template.replace("{window_title}", window_title or "unknown")
 
 
-def _default_grab_thumbnail(monitor_index: int, size: int = 64) -> np.ndarray:
-    """Small grayscale thumbnail of the monitor — cheap input for diffing."""
-    import mss
-    from PIL import Image
-    with mss.mss() as sct:
-        shot = sct.grab(sct.monitors[monitor_index])
-        img = (
-            Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
-            .convert("L")
-            .resize((size, size))
-        )
-        return np.asarray(img, dtype=np.uint8)
+def _decode_thumbnail_grayscale(data_url: str, size: int = 64) -> np.ndarray:
+    """Decode a JPEG data URL into the (size, size) uint8 grayscale array
+    shape norm_abs_diff expects."""
+    payload = data_url.split(",", 1)[1]
+    img = Image.open(io.BytesIO(base64.b64decode(payload))).convert("L").resize((size, size))
+    return np.asarray(img, dtype=np.uint8)
 
 
-def _default_capture_full_b64() -> str:
-    from app.tools.screen_tools import _capture_screen_b64
-    return _capture_screen_b64(max_size=settings.COPILOT_MAX_IMAGE_SIZE)
-
-
-def _default_os_idle_seconds() -> float | None:
-    """Seconds since the last system-wide keyboard/mouse input (Windows).
-
-    Returns None on non-Windows or on failure, so the idle gate degrades open.
-    """
-    try:
-        import ctypes
-
-        class _LASTINPUTINFO(ctypes.Structure):
-            _fields_ = [("cbSize", ctypes.c_uint), ("dwTime", ctypes.c_uint)]
-
-        info = _LASTINPUTINFO()
-        info.cbSize = ctypes.sizeof(info)
-        if not ctypes.windll.user32.GetLastInputInfo(ctypes.byref(info)):
-            return None
-        millis = ctypes.windll.kernel32.GetTickCount() - info.dwTime
-        return millis / 1000.0
-    except Exception:
+async def _remote_grab_thumbnail() -> np.ndarray | None:
+    result = await remote_capture_service.request("thumbnail")
+    if result is None:
         return None
+    return _decode_thumbnail_grayscale(result["data_url"])
 
 
-def _default_active_window_title() -> str:
-    try:
-        import ctypes
-        hwnd = ctypes.windll.user32.GetForegroundWindow()
-        length = ctypes.windll.user32.GetWindowTextLengthW(hwnd)
-        buf = ctypes.create_unicode_buffer(length + 1)
-        ctypes.windll.user32.GetWindowTextW(hwnd, buf, length + 1)
-        return buf.value
-    except Exception:
-        return ""
+async def _remote_capture_full_b64() -> str | None:
+    result = await remote_capture_service.request("full")
+    if result is None:
+        return None
+    return result["data_url"].split(",", 1)[1]
+
+
+async def _remote_os_idle_seconds() -> float | None:
+    """Browsers cannot read system-wide idle time -> always degrade open."""
+    return None
+
+
+async def _remote_active_window_title() -> str:
+    """Best-effort label from the MediaStreamTrack the browser reported
+    alongside the most recent full-frame capture."""
+    return remote_capture_service.last_label or "shared screen"
 
 
 class CopilotService:
@@ -164,10 +153,10 @@ class CopilotService:
 
     def __init__(self, *, grab_thumbnail=None, capture_full_b64=None,
                  os_idle=None, active_window=None):
-        self._grab_thumbnail = grab_thumbnail or _default_grab_thumbnail
-        self._capture_full_b64 = capture_full_b64 or _default_capture_full_b64
-        self._os_idle = os_idle or _default_os_idle_seconds
-        self._active_window = active_window or _default_active_window_title
+        self._grab_thumbnail = grab_thumbnail or _remote_grab_thumbnail
+        self._capture_full_b64 = capture_full_b64 or _remote_capture_full_b64
+        self._os_idle = os_idle or _remote_os_idle_seconds
+        self._active_window = active_window or _remote_active_window_title
         self._trigger_cb = None
         self._is_busy_cb = None
         self._active = False
@@ -215,9 +204,11 @@ class CopilotService:
     async def _tick(self) -> bool:
         if self._is_busy_cb and self._is_busy_cb():
             return False
-        thumb = self._grab_thumbnail(settings.COPILOT_MONITOR_INDEX)
+        thumb = await self._grab_thumbnail()
+        if thumb is None:
+            return False  # no active browser stream (yet) -> nothing to compare
         diff = norm_abs_diff(thumb, self._last_thumb)
-        idle = self._os_idle()
+        idle = await self._os_idle()
         since_last = time.monotonic() - self._last_action_ts
         if not should_trigger(
             diff, idle, since_last, busy=False,
@@ -226,8 +217,10 @@ class CopilotService:
             cooldown=settings.COPILOT_COOLDOWN_SECONDS,
         ):
             return False
-        image_b64 = self._capture_full_b64()
-        title = self._active_window()
+        image_b64 = await self._capture_full_b64()
+        if image_b64 is None:
+            return False  # consent prompt declined or timed out
+        title = await self._active_window()
         prompt = build_copilot_prompt(title)
         screenshot = {"data_url": f"data:image/jpeg;base64,{image_b64}"}
         self._last_thumb = thumb

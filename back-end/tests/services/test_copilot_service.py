@@ -84,14 +84,27 @@ async def _noop(*args, **kwargs):
     return None
 
 
-def _make_service(idle=10.0, thumb=None):
-    """A CopilotService with all platform shims replaced by fakes."""
+def _make_service(idle=10.0, thumb=None, image_b64="QUJD"):
+    """A CopilotService with all capture callables replaced by async fakes."""
     thumb = np.zeros((8, 8), dtype=np.uint8) if thumb is None else thumb
+
+    async def grab_thumbnail():
+        return thumb
+
+    async def capture_full_b64():
+        return image_b64
+
+    async def os_idle():
+        return idle
+
+    async def active_window():
+        return "Editor"
+
     return CopilotService(
-        grab_thumbnail=lambda idx: thumb,
-        capture_full_b64=lambda: "QUJD",  # base64 for "ABC"
-        os_idle=lambda: idle,
-        active_window=lambda: "Editor",
+        grab_thumbnail=grab_thumbnail,
+        capture_full_b64=capture_full_b64,
+        os_idle=os_idle,
+        active_window=active_window,
     )
 
 
@@ -171,3 +184,43 @@ async def test_start_then_stop_session(monkeypatch):
     assert svc.active is True
     await svc.stop_session()
     assert svc.active is False
+
+
+@pytest.mark.asyncio
+async def test_tick_skips_silently_when_thumbnail_unavailable():
+    """No active stream (e.g. browser hasn't granted screen share yet) ->
+    grab_thumbnail degrades to None -> tick does nothing, no exception."""
+    svc = _make_service(idle=10.0)
+
+    async def none_thumbnail():
+        return None
+
+    svc._grab_thumbnail = none_thumbnail
+    fired = []
+
+    async def rec(prompt, shot):
+        fired.append(1)
+
+    svc.attach(trigger_cb=rec, is_busy_cb=lambda: False)
+    assert await svc._tick() is False
+    assert fired == []
+
+
+@pytest.mark.asyncio
+async def test_tick_skips_silently_when_full_frame_denied():
+    """Gates pass (thumbnail changed enough) but the user declines the
+    consent prompt for the full-resolution frame -> tick aborts quietly."""
+    svc = _make_service(idle=10.0)
+
+    async def none_full():
+        return None
+
+    svc._capture_full_b64 = none_full
+    fired = []
+
+    async def rec(prompt, shot):
+        fired.append(1)
+
+    svc.attach(trigger_cb=rec, is_busy_cb=lambda: False)
+    assert await svc._tick() is False
+    assert fired == []

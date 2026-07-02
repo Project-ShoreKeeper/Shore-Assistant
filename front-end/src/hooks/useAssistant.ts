@@ -849,14 +849,17 @@ export function useAssistant(): UseAssistantReturn {
         isAcquiringRef.current = false;
       }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [copilotActive, screenShare.acquireStream]);
 
   const approveScreenShare = useCallback(() => {
     void screenShare.approveConsent();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [screenShare.approveConsent]);
 
   const denyScreenShare = useCallback(() => {
     screenShare.denyConsent();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [screenShare.denyConsent]);
 
   // Cleanup on unmount

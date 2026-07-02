@@ -101,6 +101,18 @@ export interface NotificationMessage {
   timestamp: number;
 }
 
+export interface CopilotStateMessage {
+  type: "copilot_state";
+  active: boolean;
+}
+
+export interface CopilotMessage {
+  type: "copilot_message";
+  text: string;
+  agent_actions?: PersistedAgentAction[];
+  timestamp: number;
+}
+
 export interface MemoryWorkerMessage {
   type: "memory_worker";
   stage: "started" | "completed" | "failed";
@@ -149,6 +161,8 @@ export type ChatServerMessage =
   | ErrorMessage
   | NotificationMessage
   | MemoryWorkerMessage
+  | CopilotStateMessage
+  | CopilotMessage
   | HistoryMessage;
 
 // ─── Event system ───
@@ -279,6 +293,16 @@ export class ChatWebSocketService {
   public sendClearMemory(): void {
     if (!this.isReady()) return;
     this.socket!.send(JSON.stringify({ type: "clear_memory" }));
+  }
+
+  public sendCopilotStart(): void {
+    if (!this.isReady()) return;
+    this.socket!.send(JSON.stringify({ type: "copilot_start" }));
+  }
+
+  public sendCopilotStop(): void {
+    if (!this.isReady()) return;
+    this.socket!.send(JSON.stringify({ type: "copilot_stop" }));
   }
 
   // ─── Event system ───

@@ -49,3 +49,14 @@ async def test_encode_unavailable_raises():
     client = EmbedClient(stub=_FakeStub(err=grpc.StatusCode.UNAVAILABLE))
     with pytest.raises(EmbedUnavailable):
         await client.encode(["a"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "code",
+    [grpc.StatusCode.UNAUTHENTICATED, grpc.StatusCode.PERMISSION_DENIED],
+)
+async def test_encode_auth_failures_raise_embed_unavailable(code):
+    client = EmbedClient(stub=_FakeStub(err=code))
+    with pytest.raises(EmbedUnavailable):
+        await client.encode(["a"])

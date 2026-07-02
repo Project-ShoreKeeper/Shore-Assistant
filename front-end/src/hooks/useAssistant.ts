@@ -10,6 +10,7 @@ import {
 import { float32ToWav } from "../utils/audio.util";
 import { TTSPlayer } from "../utils/tts-player.util";
 import { STT_DEFAULT_LANGUAGE } from "../constants/stt.constant";
+import { useScreenShare, type PendingConsent } from "./useScreenShare";
 
 // ─── Types ───
 
@@ -77,6 +78,9 @@ export interface UseAssistantReturn {
   setThinkingEnabled: (enabled: boolean) => void;
   copilotActive: boolean;
   toggleCopilot: () => void;
+  screenShareConsent: PendingConsent | null;
+  approveScreenShare: () => void;
+  denyScreenShare: () => void;
 
   // Controls
   startRecording: (deviceId?: string) => void;
@@ -129,6 +133,23 @@ export function useAssistant(): UseAssistantReturn {
   const streamRef = useRef<MediaStream | null>(null);
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+
+  const copilotActiveRef = useRef(false);
+  useEffect(() => {
+    copilotActiveRef.current = copilotActive;
+  }, [copilotActive]);
+
+  const handleScreenShareEnded = useCallback(() => {
+    // Native "Stop sharing" control was used — if Co-pilot was running on
+    // this stream, tell the backend so its tick loop actually stops instead
+    // of ticking into perpetual timeouts.
+    if (copilotActiveRef.current && wsRef.current) {
+      wsRef.current.sendCopilotStop();
+      setCopilotActive(false);
+    }
+  }, []);
+
+  const screenShare = useScreenShare(handleScreenShareEnded);
 
   useEffect(() => {
     languageRef.current = language;
@@ -802,12 +823,29 @@ export function useAssistant(): UseAssistantReturn {
     if (!wsRef.current) return;
     if (copilotActive) {
       wsRef.current.sendCopilotStop();
-    } else {
-      wsRef.current.sendCopilotStart();
+      setCopilotActive(false);
+      return;
     }
-    // Optimistic; the backend echoes copilot_state to confirm the real value.
-    setCopilotActive((v) => !v);
-  }, [copilotActive]);
+    // getDisplayMedia() must be called synchronously inside this click
+    // handler (transient activation) — it cannot wait for a server round
+    // trip. Only tell the backend to start once the stream is live; the
+    // backend then finds an already-active stream on every subsequent tick
+    // and never needs another gesture.
+    void (async () => {
+      const ok = await screenShare.acquireStream();
+      if (!ok || !wsRef.current) return; // user cancelled the native picker
+      wsRef.current.sendCopilotStart();
+      setCopilotActive(true);
+    })();
+  }, [copilotActive, screenShare]);
+
+  const approveScreenShare = useCallback(() => {
+    void screenShare.approveConsent();
+  }, [screenShare]);
+
+  const denyScreenShare = useCallback(() => {
+    screenShare.denyConsent();
+  }, [screenShare]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -840,6 +878,9 @@ export function useAssistant(): UseAssistantReturn {
     setThinkingEnabled,
     copilotActive,
     toggleCopilot,
+    screenShareConsent: screenShare.pendingConsent,
+    approveScreenShare,
+    denyScreenShare,
 
     startRecording,
     stopRecording,

@@ -169,8 +169,11 @@ class Settings(BaseSettings):
     COPILOT_IDLE_THRESHOLD_SECONDS: float = 3.0  # min hands-off idle before analyzing
     COPILOT_CHANGE_THRESHOLD: float = 0.06  # normalized thumbnail diff treated as "changed"
     COPILOT_COOLDOWN_SECONDS: float = 45.0  # min gap between triggers
-    COPILOT_MONITOR_INDEX: int = 1  # mss monitor index to capture
     COPILOT_MAX_IMAGE_SIZE: int = 1280  # longest edge of the JPEG sent to the vision model
+
+    # ── Remote (client-side) screen capture ──
+    SCREEN_CAPTURE_THUMBNAIL_TIMEOUT_SECONDS: float = 2.0  # per-tick cheap-frame round trip
+    SCREEN_CAPTURE_FULL_TIMEOUT_SECONDS: float = 20.0  # covers time to read the consent prompt + click
 
     class Config:
         env_file = ".env"

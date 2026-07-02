@@ -84,71 +84,76 @@ async def _noop(*args, **kwargs):
     return None
 
 
-def _make_service(idle=10.0, thumb=None):
-    """A CopilotService with all platform shims replaced by fakes."""
+def _make_service(thumb=None, screenshot="data:image/jpeg;base64,QUJD"):
+    """A CopilotService with the client-bridge calls replaced by fakes."""
     thumb = np.zeros((8, 8), dtype=np.uint8) if thumb is None else thumb
+
+    async def fake_request_screenshot():
+        return screenshot
+
     return CopilotService(
-        grab_thumbnail=lambda idx: thumb,
-        capture_full_b64=lambda: "QUJD",  # base64 for "ABC"
-        os_idle=lambda: idle,
-        active_window=lambda: "Editor",
+        decode_thumbnail=lambda data_url: thumb,
+        request_screenshot=fake_request_screenshot,
     )
 
 
 @pytest.mark.asyncio
-async def test_tick_triggers_when_all_gates_pass():
-    svc = _make_service(idle=10.0)
+async def test_handle_frame_triggers_when_all_gates_pass():
+    svc = _make_service()
     fired = []
 
     async def rec(prompt, shot):
         fired.append((prompt, shot))
 
     svc.attach(trigger_cb=rec, is_busy_cb=lambda: False)
-    assert await svc._tick() is True
+    await svc.start_session()
+    assert await svc.handle_frame("thumb-data-url") is True
     assert len(fired) == 1
     prompt, shot = fired[0]
-    assert "Editor" in prompt
-    assert shot["data_url"].startswith("data:image/jpeg;base64,")
+    assert "unknown" in prompt
+    assert shot["data_url"] == "data:image/jpeg;base64,QUJD"
     assert svc._last_thumb is not None
 
 
 @pytest.mark.asyncio
-async def test_tick_skips_when_busy():
-    svc = _make_service(idle=10.0)
+async def test_handle_frame_skips_when_session_not_active():
+    svc = _make_service()
+    fired = []
+
+    async def rec(prompt, shot):
+        fired.append(1)
+
+    svc.attach(trigger_cb=rec, is_busy_cb=lambda: False)
+    assert await svc.handle_frame("thumb-data-url") is False
+    assert fired == []
+
+
+@pytest.mark.asyncio
+async def test_handle_frame_skips_when_busy():
+    svc = _make_service()
     fired = []
 
     async def rec(prompt, shot):
         fired.append(1)
 
     svc.attach(trigger_cb=rec, is_busy_cb=lambda: True)
-    assert await svc._tick() is False
+    await svc.start_session()
+    assert await svc.handle_frame("thumb-data-url") is False
     assert fired == []
 
 
 @pytest.mark.asyncio
-async def test_tick_skips_when_user_typing():
-    svc = _make_service(idle=0.5)  # below COPILOT_IDLE_THRESHOLD_SECONDS
+async def test_handle_frame_skips_when_within_cooldown():
+    svc = _make_service()
     fired = []
 
     async def rec(prompt, shot):
         fired.append(1)
 
     svc.attach(trigger_cb=rec, is_busy_cb=lambda: False)
-    assert await svc._tick() is False
-    assert fired == []
-
-
-@pytest.mark.asyncio
-async def test_tick_skips_when_within_cooldown():
-    svc = _make_service(idle=10.0)
-    fired = []
-
-    async def rec(prompt, shot):
-        fired.append(1)
-
-    svc.attach(trigger_cb=rec, is_busy_cb=lambda: False)
+    await svc.start_session()
     svc._last_action_ts = time.monotonic()  # just acted -> inside cooldown
-    assert await svc._tick() is False
+    assert await svc.handle_frame("thumb-data-url") is False
     assert fired == []
 
 
@@ -164,8 +169,7 @@ async def test_start_session_disabled_returns_false(monkeypatch):
 @pytest.mark.asyncio
 async def test_start_then_stop_session(monkeypatch):
     monkeypatch.setattr(settings, "COPILOT_ENABLED", True)
-    # idle below threshold -> the loop never actually triggers while it spins
-    svc = _make_service(idle=0.0)
+    svc = _make_service()
     svc.attach(trigger_cb=_noop, is_busy_cb=lambda: False)
     assert await svc.start_session() is True
     assert svc.active is True

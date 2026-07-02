@@ -19,6 +19,7 @@ from app.services.image_store import image_store
 from app.services.connection_manager import connection_manager
 from app.services.notification_service import notification_service
 from app.services.copilot_service import copilot_service, summarize_copilot_run
+from app.services.screenshot_bridge import screenshot_bridge
 from app.core.config import settings
 import numpy as np
 import json
@@ -138,6 +139,7 @@ async def websocket_chat(websocket: WebSocket):
 
     from app.services.terminal_service import terminal_service
     terminal_service.broadcast = send_json_safe
+    screenshot_bridge.broadcast = send_json_safe
 
     # Load persisted history. The frontend rehydration code expects
     # assistant metadata (thinking_text, agent_actions, ...) at the top
@@ -529,6 +531,8 @@ async def websocket_chat(websocket: WebSocket):
                         await send_json_safe({
                             "type": "copilot_state",
                             "active": started,
+                            "interval_seconds": settings.COPILOT_CAPTURE_INTERVAL_SECONDS,
+                            "max_image_size": settings.COPILOT_MAX_IMAGE_SIZE,
                         })
 
                     elif msg_type == "copilot_stop":
@@ -537,6 +541,33 @@ async def websocket_chat(websocket: WebSocket):
                             "type": "copilot_state",
                             "active": False,
                         })
+
+                    elif msg_type == "copilot_frame":
+                        # Runs in its own task: if it decides to trigger, it awaits
+                        # screenshot_bridge, whose response can only be delivered by
+                        # this very receive loop -- inline awaiting would deadlock.
+                        asyncio.create_task(
+                            copilot_service.handle_frame(data.get("thumbnail", ""))
+                        )
+
+                    elif msg_type == "screenshot_response":
+                        data_url = data.get("data_url")
+                        error = data.get("error")
+                        if data_url and not error:
+                            if not _ALLOWED_IMAGE_MIME_RE.match(data_url):
+                                error, data_url = "Unsupported screenshot format.", None
+                            else:
+                                try:
+                                    payload = data_url.split(",", 1)[1]
+                                    size = len(_b64.b64decode(payload, validate=False))
+                                except Exception:
+                                    error, data_url = "Malformed screenshot data.", None
+                                else:
+                                    if size > settings.MAX_IMAGE_BYTES:
+                                        error, data_url = "Screenshot too large.", None
+                        screenshot_bridge.resolve(
+                            data.get("request_id", ""), data_url, error
+                        )
 
                     elif msg_type == "clear_memory":
                         conversation_history.clear()
@@ -701,3 +732,4 @@ async def websocket_chat(websocket: WebSocket):
             notification_service.clear_agent_callback()
             connection_manager.unregister()
             terminal_service.broadcast = None
+            screenshot_bridge.broadcast = None

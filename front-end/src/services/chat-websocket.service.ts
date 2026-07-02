@@ -104,6 +104,14 @@ export interface NotificationMessage {
 export interface CopilotStateMessage {
   type: "copilot_state";
   active: boolean;
+  interval_seconds?: number;
+  max_image_size?: number;
+}
+
+export interface RequestScreenshotMessage {
+  type: "request_screenshot";
+  request_id: string;
+  max_size?: number;
 }
 
 export interface CopilotMessage {
@@ -172,6 +180,7 @@ export type ChatServerMessage =
   | MemoryWorkerMessage
   | CopilotStateMessage
   | CopilotMessage
+  | RequestScreenshotMessage
   | HistoryMessage;
 
 // ─── Event system ───
@@ -312,6 +321,27 @@ export class ChatWebSocketService {
   public sendCopilotStop(): void {
     if (!this.isReady()) return;
     this.socket!.send(JSON.stringify({ type: "copilot_stop" }));
+  }
+
+  public sendCopilotFrame(thumbnail: string): void {
+    if (!this.isReady()) return;
+    this.socket!.send(JSON.stringify({ type: "copilot_frame", thumbnail }));
+  }
+
+  public sendScreenshotResponse(
+    requestId: string,
+    dataUrl?: string,
+    error?: string,
+  ): void {
+    if (!this.isReady()) return;
+    this.socket!.send(
+      JSON.stringify({
+        type: "screenshot_response",
+        request_id: requestId,
+        ...(dataUrl ? { data_url: dataUrl } : {}),
+        ...(error ? { error } : {}),
+      }),
+    );
   }
 
   // ─── Event system ───

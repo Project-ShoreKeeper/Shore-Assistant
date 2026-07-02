@@ -18,8 +18,7 @@ ddgs>=8.0.0
 readability-lxml>=0.8.0
 lxml>=5.0.0
 
-# Vision / Screen capture
-mss>=9.0.0
+# Vision / Screen capture (capture is client-side; Pillow decodes client-sent thumbnails)
 Pillow>=10.0.0
 psutil>=5.9.0
 

@@ -9,6 +9,13 @@ import {
 } from "../services/chat-websocket.service";
 import { float32ToWav } from "../utils/audio.util";
 import { BACKEND_URL } from "@Shore/constants/backend.constant";
+import {
+  captureFrameDataUrl,
+  captureThumbnailDataUrl,
+  onScreenShareEnded,
+  requestScreenShare,
+  stopScreenStream,
+} from "../services/screen-capture.service";
 
 // Matches the text placeholder chat_ws.py's _build_memory_message appends
 // when images are attached, e.g. "[Attached 2 image(s): 935x702, 800x600]".
@@ -82,7 +89,7 @@ export interface UseAssistantReturn {
   thinkingEnabled: boolean;
   setThinkingEnabled: (enabled: boolean) => void;
   copilotActive: boolean;
-  toggleCopilot: () => void;
+  toggleCopilot: () => void | Promise<void>;
 
   // Controls
   startRecording: (deviceId?: string) => void;
@@ -573,6 +580,27 @@ export function useAssistant(): UseAssistantReturn {
 
         case "copilot_state": {
           setCopilotActive(msg.active);
+          if (msg.active) {
+            startCopilotFrameLoop(msg.interval_seconds || 4);
+          } else {
+            stopCopilotFrameLoop();
+          }
+          break;
+        }
+
+        case "request_screenshot": {
+          (async () => {
+            try {
+              const dataUrl = await captureFrameDataUrl(msg.max_size || 1280);
+              ws.sendScreenshotResponse(msg.request_id, dataUrl);
+            } catch (err) {
+              ws.sendScreenshotResponse(
+                msg.request_id,
+                undefined,
+                err instanceof Error ? err.message : "Screen capture failed.",
+              );
+            }
+          })();
           break;
         }
 
@@ -613,6 +641,39 @@ export function useAssistant(): UseAssistantReturn {
       }
     };
 
+    // Co-pilot frame loop: while active, push a small thumbnail to the
+    // backend every interval_seconds so it can decide (diff/cooldown) when
+    // to pull a full-resolution frame via a request_screenshot round trip.
+    let copilotFrameInterval: ReturnType<typeof setInterval> | null = null;
+
+    function stopCopilotFrameLoop() {
+      if (copilotFrameInterval) {
+        clearInterval(copilotFrameInterval);
+        copilotFrameInterval = null;
+      }
+    }
+
+    function startCopilotFrameLoop(intervalSeconds: number) {
+      stopCopilotFrameLoop();
+      copilotFrameInterval = setInterval(async () => {
+        try {
+          const thumb = await captureThumbnailDataUrl(64);
+          ws.sendCopilotFrame(thumb);
+        } catch {
+          // Screen share ended or unavailable — stop pushing frames.
+          stopCopilotFrameLoop();
+          ws.sendCopilotStop();
+          setCopilotActive(false);
+        }
+      }, Math.max(1, intervalSeconds) * 1000);
+    }
+
+    const unsubScreenShareEnded = onScreenShareEnded(() => {
+      stopCopilotFrameLoop();
+      ws.sendCopilotStop();
+      setCopilotActive(false);
+    });
+
     ws.on("statusChange", handleStatusChange);
     ws.on("open", handleOpen);
     ws.on("message", handleMessage);
@@ -625,6 +686,8 @@ export function useAssistant(): UseAssistantReturn {
       ws.off("open", handleOpen);
       ws.off("message", handleMessage);
       ws.off("binaryMessage", handleBinaryMessage);
+      stopCopilotFrameLoop();
+      unsubScreenShareEnded();
       // Do not disconnect the singleton — it's shared with useTerminal
       wsRef.current = null;
     };
@@ -814,15 +877,24 @@ export function useAssistant(): UseAssistantReturn {
     }
   }, []);
 
-  const toggleCopilot = useCallback(() => {
+  const toggleCopilot = useCallback(async () => {
     if (!wsRef.current) return;
     if (copilotActive) {
       wsRef.current.sendCopilotStop();
-    } else {
-      wsRef.current.sendCopilotStart();
+      stopScreenStream();
+      setCopilotActive(false); // optimistic; copilot_state will confirm
+      return;
     }
-    // Optimistic; the backend echoes copilot_state to confirm the real value.
-    setCopilotActive((v) => !v);
+    // Screen capture is client-side: the browser's share picker must be
+    // granted before the backend starts expecting frames.
+    try {
+      await requestScreenShare();
+    } catch (err) {
+      console.error("[Copilot] Screen share permission denied:", err);
+      return;
+    }
+    wsRef.current.sendCopilotStart();
+    // copilotActive flips to true when copilot_state echoes back.
   }, [copilotActive]);
 
   // Cleanup on unmount

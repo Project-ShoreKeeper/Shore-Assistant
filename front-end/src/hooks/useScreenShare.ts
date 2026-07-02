@@ -35,6 +35,9 @@ export function useScreenShare(onStreamEnded: () => void): UseScreenShareReturn 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [hasStream, setHasStream] = useState(false);
+  // Single value, not a queue: only one screen_capture_request can be
+  // awaiting consent at a time, matching this feature's single-connection
+  // assumption (one client, one in-flight backend request).
   const [pendingConsent, setPendingConsent] = useState<PendingConsent | null>(null);
 
   const getVideo = useCallback((): HTMLVideoElement => {
@@ -74,27 +77,42 @@ export function useScreenShare(onStreamEnded: () => void): UseScreenShareReturn 
   const stopStream = useCallback(() => {
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
+    if (videoRef.current) videoRef.current.srcObject = null;
     setHasStream(false);
   }, []);
 
+  // Caches the in-flight getDisplayMedia() attempt so overlapping callers
+  // (e.g. a double-click, or approveConsent() racing a second incoming
+  // screen_capture_request) await the same promise instead of each
+  // triggering their own browser share-picker / orphaning a stream.
+  const acquirePromiseRef = useRef<Promise<boolean> | null>(null);
+
   const acquireStream = useCallback(async (): Promise<boolean> => {
     if (streamRef.current) return true;
-    try {
-      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
-      const track = stream.getVideoTracks()[0];
-      track.onended = () => {
-        stopStream();
-        onStreamEnded();
-      };
-      streamRef.current = stream;
-      const video = getVideo();
-      video.srcObject = stream;
-      await video.play();
-      setHasStream(true);
-      return true;
-    } catch {
-      return false;
-    }
+    if (acquirePromiseRef.current) return acquirePromiseRef.current;
+    const promise = (async (): Promise<boolean> => {
+      try {
+        const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+        const track = stream.getVideoTracks()[0];
+        track.onended = () => {
+          stopStream();
+          onStreamEnded();
+        };
+        streamRef.current = stream;
+        const video = getVideo();
+        video.srcObject = stream;
+        await video.play();
+        setHasStream(true);
+        return true;
+      } catch (err) {
+        console.warn("[useScreenShare] getDisplayMedia failed:", err);
+        return false;
+      } finally {
+        acquirePromiseRef.current = null;
+      }
+    })();
+    acquirePromiseRef.current = promise;
+    return promise;
   }, [getVideo, onStreamEnded, stopStream]);
 
   const respond = useCallback((requestId: string, frame: CapturedFrame | null) => {
@@ -117,6 +135,13 @@ export function useScreenShare(onStreamEnded: () => void): UseScreenShareReturn 
     chatWebsocketService.on("message", handler);
     return () => chatWebsocketService.off("message", handler);
   }, [grabFrame, respond]);
+
+  // Release the owned MediaStream if the component unmounts while sharing
+  // is active — otherwise the tracks (and the browser's "sharing" indicator)
+  // outlive the hook.
+  useEffect(() => {
+    return () => stopStream();
+  }, [stopStream]);
 
   const approveConsent = useCallback(async () => {
     const consent = pendingConsent;

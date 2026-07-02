@@ -21,7 +21,8 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
     if (poll.data?.hardware.cpu_pct != null) {
       setLocalCpuHistory(prev => [...prev.slice(-(CPU_BARS - 1)), poll.data!.hardware.cpu_pct!]);
     }
-    const util = poll.data?.hardware.gpu[0]?.util_pct;
+    const util = poll.data?.remote_hardware?.hardware?.gpu[0]?.util_pct
+      ?? poll.data?.hardware.gpu[0]?.util_pct;
     if (util != null) {
       setGpuUtilHistory(prev => [...prev.slice(-(CPU_BARS - 1)), util]);
     }

@@ -60,6 +60,11 @@ class Settings(BaseSettings):
     REMOTE_SERVER_ENABLED: bool = False
     REMOTE_SERVER_NAME: str = "DB Server"
     REMOTE_SERVER_GLANCES_URL: str = ""  # e.g. http://192.168.1.50:61208
+    REMOTE_SERVER_SSH_ENABLED: bool = False
+    REMOTE_SERVER_SSH_HOST: str = ""  # e.g. 192.168.1.211
+    REMOTE_SERVER_SSH_USER: str = "monitor"
+    REMOTE_SERVER_SSH_KEY_PATH: str = ""  # e.g. /home/luna/.ssh/ai_monitor_key
+    REMOTE_SERVER_SSH_TIMEOUT_SECONDS: float = 5.0
 
     # Persona
     PERSONA: str = "kuudere"  # "base" or "kuudere"

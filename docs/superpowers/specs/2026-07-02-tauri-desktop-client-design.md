@@ -45,7 +45,7 @@ pointed at the real backend:
 
 ```
 VITE_API_URL=https://api.shore-keeper.com \
-VITE_WS_URL=wss://conv.shore-keeper.com \
+VITE_WS_URL=wss://api.shore-keeper.com \
 npm run build   # (in front-end/)
 ```
 
@@ -60,7 +60,7 @@ Runtime shape:
 [macOS client]
   Tauri shell (Rust) — window, updater, deep-link handler
     └── WKWebView (bundled React dist, origin = tauri://localhost)
-          ├── Chat WS  → wss://conv.shore-keeper.com/ws/chat
+          ├── Chat WS  → wss://api.shore-keeper.com/ws/chat
           ├── REST     → https://api.shore-keeper.com/api/*
           └── OAuth    → opens the user's system browser (never the webview)
 ```

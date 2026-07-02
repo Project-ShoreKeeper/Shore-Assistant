@@ -1,8 +1,8 @@
 # Shore Assistant — Desktop Client
 
 A Tauri v2 shell around the existing `front-end/` React app. It talks to
-the production backend over the internet (`api.shore-keeper.com` /
-`conv.shore-keeper.com`) — this is a client, not a self-hosted deployment.
+the production backend over the internet (`api.shore-keeper.com`) — this
+is a client, not a self-hosted deployment.
 Desktop authentication uses an opaque Bearer token obtained through the
 system-browser OAuth/deep-link exchange; it does not depend on webview
 cookies.
@@ -76,7 +76,7 @@ cargo tauri build
 `beforeBuildCommand` in `tauri.conf.json` runs the existing Vite build
 in `front-end/` with production env vars pointed at the real backend
 (`VITE_API_URL=https://api.shore-keeper.com`,
-`VITE_WS_URL=wss://conv.shore-keeper.com`) before bundling —
+`VITE_WS_URL=wss://api.shore-keeper.com`) before bundling —
 `front-end/` is not duplicated or modified for the desktop build, it's
 built unmodified. `frontendDist` (`../../front-end/dist`) is what gets
 bundled into the app.

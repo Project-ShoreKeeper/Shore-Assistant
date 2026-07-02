@@ -6,7 +6,7 @@
   "build": {
     "beforeBuildCommand": {
       "cwd": "../../front-end",
-      "script": "VITE_API_URL=https://api.shore-keeper.com VITE_WS_URL=wss://conv.shore-keeper.com npm run build"
+      "script": "VITE_API_URL=https://api.shore-keeper.com VITE_WS_URL=wss://api.shore-keeper.com npm run build"
     },
     "frontendDist": "../../front-end/dist"
   },

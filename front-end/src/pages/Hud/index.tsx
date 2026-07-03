@@ -33,6 +33,7 @@ import {
 import "./hud.css";
 
 type HudRootStyle = CSSProperties & Record<`--hud-${string}`, string>;
+const HUD_WIDGET_MARGIN_PX = 16;
 
 function hudWidgetFromTarget(target: EventTarget | null): HTMLElement | null {
   return target instanceof Element
@@ -48,6 +49,17 @@ function hudWidgetId(element: HTMLElement): HudWidgetId | null {
     || value === "connection"
     ? value
     : null;
+}
+
+function clampWidgetAxis(
+  value: number,
+  halfSizePct: number,
+  viewportSize: number,
+): number {
+  const marginPct = HUD_WIDGET_MARGIN_PX / viewportSize * 100;
+  const min = Math.min(50, halfSizePct + marginPct);
+  const max = Math.max(50, 100 - halfSizePct - marginPct);
+  return Math.min(max, Math.max(min, value));
 }
 
 export default function PageHud() {
@@ -107,13 +119,15 @@ export default function PageHud() {
           const halfXPct = rect.width / 2 / window.innerWidth * 100;
           const halfYPct = rect.height / 2 / window.innerHeight * 100;
           const position = positions[widget];
-          const xPct = Math.min(
-            100 - halfXPct,
-            Math.max(halfXPct, position.xPct),
+          const xPct = clampWidgetAxis(
+            position.xPct,
+            halfXPct,
+            window.innerWidth,
           );
-          const yPct = Math.min(
-            100 - halfYPct,
-            Math.max(halfYPct, position.yPct),
+          const yPct = clampWidgetAxis(
+            position.yPct,
+            halfYPct,
+            window.innerHeight,
           );
           if (xPct !== position.xPct || yPct !== position.yPct) {
             positions[widget] = { xPct, yPct };
@@ -184,8 +198,8 @@ export default function PageHud() {
       positions: {
         ...current.positions,
         [widget]: {
-          xPct: Math.min(100 - halfXPct, Math.max(halfXPct, xPct)),
-          yPct: Math.min(100 - halfYPct, Math.max(halfYPct, yPct)),
+          xPct: clampWidgetAxis(xPct, halfXPct, window.innerWidth),
+          yPct: clampWidgetAxis(yPct, halfYPct, window.innerHeight),
         },
       },
     }));

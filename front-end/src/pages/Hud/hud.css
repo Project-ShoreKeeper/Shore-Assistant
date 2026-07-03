@@ -18,7 +18,7 @@ html.hud-transparent .radix-themes {
 .hud-root::before {
   content: "";
   position: fixed;
-  inset: 6px;
+  inset: 0;
   border: 1px solid transparent;
   border-radius: 16px;
   pointer-events: none;
@@ -83,23 +83,23 @@ html.hud-transparent .radix-themes {
 }
 
 .hud-tl {
-  top: var(--hud-agent-y, 6%);
-  left: var(--hud-agent-x, 12%);
+  top: var(--hud-agent-y, 0%);
+  left: var(--hud-agent-x, 0%);
   transform: translate(-50%, -50%);
 }
 .hud-tr {
-  top: var(--hud-task-y, 6%);
-  left: var(--hud-task-x, 88%);
+  top: var(--hud-task-y, 0%);
+  left: var(--hud-task-x, 100%);
   transform: translate(-50%, -50%);
 }
 .hud-bl {
-  top: var(--hud-answer-y, 94%);
-  left: var(--hud-answer-x, 12%);
+  top: var(--hud-answer-y, 100%);
+  left: var(--hud-answer-x, 0%);
   transform: translate(-50%, -50%);
 }
 .hud-br {
-  top: var(--hud-connection-y, 94%);
-  left: var(--hud-connection-x, 88%);
+  top: var(--hud-connection-y, 100%);
+  left: var(--hud-connection-x, 100%);
   transform: translate(-50%, -50%);
 }
 

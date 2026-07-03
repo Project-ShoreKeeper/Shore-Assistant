@@ -60,8 +60,18 @@ export function HudProvider({ children }: { children: React.ReactNode }) {
         });
         await invoke("hud_set_mode", { active: false });
         navigate("/chat");
-        const { getCurrentWindow } = await import("@tauri-apps/api/window");
-        const mainWindow = getCurrentWindow();
+        const { getAllWindows } = await import("@tauri-apps/api/window");
+        const mainWindow = (await getAllWindows()).find(
+          (window) => window.label === "main",
+        );
+        if (!mainWindow) {
+          return {
+            ok: false,
+            error: "unavailable",
+            message: "The main app window is not available.",
+          };
+        }
+        await mainWindow.show();
         await mainWindow.unminimize();
         await mainWindow.setFocus();
         return { ok: true, message: "Opened the main app." };

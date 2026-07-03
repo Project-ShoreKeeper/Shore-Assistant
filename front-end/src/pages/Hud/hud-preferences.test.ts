@@ -30,4 +30,20 @@ describe("parseHudPreferences", () => {
     );
     expect(parseHudPreferences("broken")).toEqual(DEFAULT_HUD_PREFERENCES);
   });
+
+  it("migrates the oversized percentage defaults back to edge anchors", () => {
+    const parsed = parseHudPreferences({
+      version: 1,
+      opacity: 0.9,
+      scale: 1,
+      positions: {
+        agent: { xPct: 12, yPct: 6 },
+        task: { xPct: 88, yPct: 6 },
+        answer: { xPct: 12, yPct: 94 },
+        connection: { xPct: 88, yPct: 94 },
+      },
+    });
+
+    expect(parsed.positions).toEqual(DEFAULT_HUD_PREFERENCES.positions);
+  });
 });

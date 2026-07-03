@@ -19,11 +19,18 @@ export const DEFAULT_HUD_PREFERENCES: HudPreferencesV1 = {
   opacity: 0.9,
   scale: 1,
   positions: {
-    agent: { xPct: 12, yPct: 6 },
-    task: { xPct: 88, yPct: 6 },
-    answer: { xPct: 12, yPct: 94 },
-    connection: { xPct: 88, yPct: 94 },
+    agent: { xPct: 0, yPct: 0 },
+    task: { xPct: 100, yPct: 0 },
+    answer: { xPct: 0, yPct: 100 },
+    connection: { xPct: 100, yPct: 100 },
   },
+};
+
+const OVERSIZED_DEFAULT_POSITIONS: HudPreferencesV1["positions"] = {
+  agent: { xPct: 12, yPct: 6 },
+  task: { xPct: 88, yPct: 6 },
+  answer: { xPct: 12, yPct: 94 },
+  connection: { xPct: 88, yPct: 94 },
 };
 
 function clamp(value: number, min: number, max: number): number {
@@ -66,28 +73,38 @@ export function parseHudPreferences(value: unknown): HudPreferencesV1 {
     return structuredClone(DEFAULT_HUD_PREFERENCES);
   }
 
+  const positions = {
+    agent: readPosition(
+      value.positions.agent,
+      DEFAULT_HUD_PREFERENCES.positions.agent,
+    ),
+    task: readPosition(
+      value.positions.task,
+      DEFAULT_HUD_PREFERENCES.positions.task,
+    ),
+    answer: readPosition(
+      value.positions.answer,
+      DEFAULT_HUD_PREFERENCES.positions.answer,
+    ),
+    connection: readPosition(
+      value.positions.connection,
+      DEFAULT_HUD_PREFERENCES.positions.connection,
+    ),
+  };
+  const hasOversizedDefaults = (
+    Object.keys(positions) as HudWidgetId[]
+  ).every((widget) =>
+    positions[widget].xPct === OVERSIZED_DEFAULT_POSITIONS[widget].xPct
+    && positions[widget].yPct === OVERSIZED_DEFAULT_POSITIONS[widget].yPct
+  );
+
   return {
     version: 1,
     opacity: clamp(value.opacity, 0.2, 1),
     scale: clamp(value.scale, 0.75, 1.5),
-    positions: {
-      agent: readPosition(
-        value.positions.agent,
-        DEFAULT_HUD_PREFERENCES.positions.agent,
-      ),
-      task: readPosition(
-        value.positions.task,
-        DEFAULT_HUD_PREFERENCES.positions.task,
-      ),
-      answer: readPosition(
-        value.positions.answer,
-        DEFAULT_HUD_PREFERENCES.positions.answer,
-      ),
-      connection: readPosition(
-        value.positions.connection,
-        DEFAULT_HUD_PREFERENCES.positions.connection,
-      ),
-    },
+    positions: hasOversizedDefaults
+      ? structuredClone(DEFAULT_HUD_PREFERENCES.positions)
+      : positions,
   };
 }
 

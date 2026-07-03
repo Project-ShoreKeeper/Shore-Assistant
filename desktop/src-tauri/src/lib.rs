@@ -6,9 +6,10 @@
 //! filesystem/shell/process capabilities are granted; see
 //! `capabilities/default.json` and
 //! `docs/superpowers/specs/2026-07-02-tauri-desktop-client-design.md`.
-//! One app command is exposed: `capture_screen_png`, the native
-//! screen-capture path for the Screen Co-pilot / analyze_screen (WKWebView
-//! has no `getDisplayMedia`).
+//! App commands exposed: `capture_screen_png` (native screen-capture for
+//! the Screen Co-pilot / analyze_screen since WKWebView has no
+//! `getDisplayMedia`), and the HUD overlay window lifecycle commands
+//! `hud_show`, `hud_hide`, `hud_set_mode` from the `hud` module.
 //!
 //! Deep-link events (`shore-assistant://auth?xchg=<token>`) are consumed
 //! entirely from the frontend via the plugin's JS API (`onOpenUrl` /
@@ -26,6 +27,8 @@
 //! Windows/Linux support is added.
 
 use base64::Engine as _;
+
+mod hud;
 
 /// Capture the primary monitor as a PNG and return it as a
 /// `data:image/png;base64,...` URL.
@@ -71,7 +74,14 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![capture_screen_png])
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .manage(hud::HudState::default())
+        .invoke_handler(tauri::generate_handler![
+            capture_screen_png,
+            hud::hud_show,
+            hud::hud_hide,
+            hud::hud_set_mode
+        ])
         .setup(|app| {
             #[cfg(desktop)]
             {

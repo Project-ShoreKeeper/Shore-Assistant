@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "hud",
+  "description": "Capability for the transparent HUD overlay window: core defaults only (invoke + events). No plugin permissions — the HUD never opens URLs, updates, or deep-links.",
+  "windows": ["hud"],
+  "permissions": ["core:default"]
+}

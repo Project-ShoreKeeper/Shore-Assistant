@@ -10,6 +10,7 @@ import {
   Switch,
   IconButton,
   Tooltip,
+  Dialog,
 } from "@radix-ui/themes";
 import type { WebSocketStatus } from "../../services/chat-websocket.service";
 import type {
@@ -36,6 +37,7 @@ export interface SettingsPanelProps {
   thinkingEnabled?: boolean;
   onThinkingEnabledChange?: (enabled: boolean) => void;
   copilotEnabled?: boolean;
+  copilotError?: string | null;
   onCopilotEnabledChange?: (enabled: boolean) => void;
   onClearMessages?: () => void;
   messageCount?: number;
@@ -182,6 +184,7 @@ export default function SettingsPanel({
   thinkingEnabled = false,
   onThinkingEnabledChange,
   copilotEnabled = false,
+  copilotError,
   onCopilotEnabledChange,
   onClearMessages,
   messageCount = 0,
@@ -277,12 +280,37 @@ export default function SettingsPanel({
   const agentColor: DotColor = isAssistantThinking ? "orange" : "gray";
   const overallColor = worst(vadColor, wsColor); // agent thinking / mic idle aren't "issues"
 
+  // window.confirm is a silent no-op inside Tauri's WKWebView (wry doesn't
+  // implement native JS dialogs), so confirmation is an in-app Radix dialog —
+  // same pattern as the Dashboard's stop-service confirm.
+  const [clearDialogOpen, setClearDialogOpen] = useState(false);
+
   const handleClear = () => {
     if (messageCount === 0) return;
-    if (window.confirm(`Clear ${messageCount} message${messageCount === 1 ? "" : "s"} and reset memory?`)) {
-      onClearMessages?.();
-    }
+    setClearDialogOpen(true);
   };
+
+  const clearConfirmDialog = (
+    <Dialog.Root open={clearDialogOpen} onOpenChange={setClearDialogOpen}>
+      <Dialog.Content style={{ maxWidth: 420 }}>
+        <Dialog.Title>Clear chat &amp; memory?</Dialog.Title>
+        <Dialog.Description size="2" mb="4">
+          This clears {messageCount} message{messageCount === 1 ? "" : "s"} and
+          resets short-term conversation memory.
+        </Dialog.Description>
+        <Flex gap="3" justify="end">
+          <Dialog.Close>
+            <Button variant="soft" color="gray">Cancel</Button>
+          </Dialog.Close>
+          <Dialog.Close>
+            <Button color="red" onClick={() => onClearMessages?.()}>
+              Clear
+            </Button>
+          </Dialog.Close>
+        </Flex>
+      </Dialog.Content>
+    </Dialog.Root>
+  );
 
   // ── Collapsed render ─────────────────────────────────────────────────
   if (collapsed) {
@@ -381,6 +409,7 @@ export default function SettingsPanel({
             <TrashIcon />
           </IconButton>
         </Tooltip>
+        {clearConfirmDialog}
       </Flex>
     );
   }
@@ -447,6 +476,11 @@ export default function SettingsPanel({
           <Text size="2" color="gray">Co-pilot</Text>
           <Switch size="1" checked={copilotEnabled} onCheckedChange={onCopilotEnabledChange} />
         </Flex>
+        {copilotError && (
+          <Text size="1" color="red" mt="1" style={{ display: "block" }}>
+            {copilotError}
+          </Text>
+        )}
       </Box>
 
       <Separator size="4" my="3" style={{ backgroundColor: "var(--gray-5)" }} />
@@ -594,6 +628,7 @@ export default function SettingsPanel({
           >
             Clear chat &amp; memory
           </Button>
+          {clearConfirmDialog}
         </Flex>
       </Box>
 

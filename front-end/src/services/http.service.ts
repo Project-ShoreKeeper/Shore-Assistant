@@ -119,3 +119,34 @@ export async function apiFetch<T>(
   }
   return res.json() as Promise<T>;
 }
+
+/**
+ * Fetch a protected binary resource (e.g. `/api/images/{id}`) with the same
+ * auth semantics as `apiFetch` and return a blob object URL for `<img src>`.
+ *
+ * Needed because a plain `<img src>` can't attach the desktop Bearer header —
+ * only cookies ride along automatically. Returns `null` on any failure
+ * (401/404/network) so callers can drop the image instead of rendering a
+ * broken one.
+ */
+export async function fetchBlobUrl(path: string): Promise<string | null> {
+  try {
+    const headers = new Headers();
+    if (_accessToken) {
+      headers.set("Authorization", `Bearer ${_accessToken}`);
+    }
+    const res = await fetch(`${BACKEND_URL}${path}`, {
+      credentials: IS_DESKTOP ? "omit" : "include",
+      headers,
+    });
+    if (res.status === 401) {
+      _onUnauthorized.forEach((fn) => fn());
+    }
+    if (!res.ok) {
+      return null;
+    }
+    return URL.createObjectURL(await res.blob());
+  } catch {
+    return null;
+  }
+}

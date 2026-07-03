@@ -6,9 +6,10 @@ import {
   type WebSocketStatus,
   type ChatServerMessage,
   type ImageAttachment,
+  type PersistedImage,
 } from "../services/chat-websocket.service";
 import { float32ToWav } from "../utils/audio.util";
-import { BACKEND_URL } from "@Shore/constants/backend.constant";
+import { fetchBlobUrl } from "../services/http.service";
 import {
   captureFrameDataUrl,
   captureThumbnailDataUrl,
@@ -89,6 +90,7 @@ export interface UseAssistantReturn {
   thinkingEnabled: boolean;
   setThinkingEnabled: (enabled: boolean) => void;
   copilotActive: boolean;
+  copilotError: string | null;
   toggleCopilot: () => void | Promise<void>;
 
   // Controls
@@ -116,6 +118,7 @@ export function useAssistant(): UseAssistantReturn {
   const [thinkingEnabled, setThinkingEnabled] = useState(false);
   const thinkingEnabledRef = useRef(false);
   const [copilotActive, setCopilotActive] = useState(false);
+  const [copilotError, setCopilotError] = useState<string | null>(null);
 
   // Conversation state
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -227,6 +230,13 @@ export function useAssistant(): UseAssistantReturn {
       switch (msg.type) {
         case "history": {
           const rand = () => Math.random().toString(36).slice(2, 7);
+          // Persisted images live behind `/api/images/{id}`, which requires
+          // auth. A plain <img src> only carries the session cookie — the
+          // desktop app's Bearer token can't ride along — so render history
+          // immediately without images and patch each message's images in
+          // once authenticated fetches resolve to blob URLs.
+          const pendingImages: { msgId: string; images: PersistedImage[] }[] =
+            [];
           const hydrated: ChatMessage[] = msg.messages.map((m) => {
             const actions: AgentAction[] = (m.agent_actions || []).map((a) => ({
               id: `hist-act-${a.timestamp}-${rand()}`,
@@ -239,8 +249,12 @@ export function useAssistant(): UseAssistantReturn {
               timestamp: new Date(a.timestamp * 1000),
             }));
             const hasImages = !!(m.images && m.images.length > 0);
+            const id = `hist-${m.timestamp}-${rand()}`;
+            if (hasImages) {
+              pendingImages.push({ msgId: id, images: m.images! });
+            }
             return {
-              id: `hist-${m.timestamp}-${rand()}`,
+              id,
               role: m.role,
               text: hasImages
                 ? m.content.replace(IMAGE_PLACEHOLDER_RE, "")
@@ -252,16 +266,34 @@ export function useAssistant(): UseAssistantReturn {
               taskId: m.task_id || undefined,
               timestamp: new Date(m.timestamp * 1000),
               agentActions: actions.length > 0 ? actions : undefined,
-              images: m.images?.map((img) => ({
-                id: img.id,
-                dataUrl: `${BACKEND_URL}${img.url}`,
-                width: img.width,
-                height: img.height,
-                sizeKb: img.size_kb,
-              })),
             };
           });
           setMessages(hydrated);
+          for (const { msgId, images } of pendingImages) {
+            void (async () => {
+              const resolved = (
+                await Promise.all(
+                  images.map(async (img) => {
+                    const blobUrl = await fetchBlobUrl(img.url);
+                    if (!blobUrl) return null; // 401/404/network — drop it
+                    return {
+                      id: img.id,
+                      dataUrl: blobUrl,
+                      width: img.width,
+                      height: img.height,
+                      sizeKb: img.size_kb,
+                    };
+                  }),
+                )
+              ).filter((img): img is ImageAttachment => img !== null);
+              if (resolved.length === 0) return;
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === msgId ? { ...m, images: resolved } : m,
+                ),
+              );
+            })();
+          }
           break;
         }
 
@@ -581,6 +613,7 @@ export function useAssistant(): UseAssistantReturn {
         case "copilot_state": {
           setCopilotActive(msg.active);
           if (msg.active) {
+            setCopilotError(null);
             startCopilotFrameLoop(msg.interval_seconds || 4);
           } else {
             stopCopilotFrameLoop();
@@ -883,14 +916,19 @@ export function useAssistant(): UseAssistantReturn {
       wsRef.current.sendCopilotStop();
       stopScreenStream();
       setCopilotActive(false); // optimistic; copilot_state will confirm
+      setCopilotError(null);
       return;
     }
+    setCopilotError(null);
     // Screen capture is client-side: the browser's share picker must be
     // granted before the backend starts expecting frames.
     try {
       await requestScreenShare();
     } catch (err) {
       console.error("[Copilot] Screen share permission denied:", err);
+      setCopilotError(
+        err instanceof Error ? err.message : "Screen sharing failed.",
+      );
       return;
     }
     wsRef.current.sendCopilotStart();
@@ -927,6 +965,7 @@ export function useAssistant(): UseAssistantReturn {
     thinkingEnabled,
     setThinkingEnabled,
     copilotActive,
+    copilotError,
     toggleCopilot,
 
     startRecording,

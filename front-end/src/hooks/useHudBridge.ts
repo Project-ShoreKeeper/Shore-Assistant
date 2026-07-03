@@ -8,18 +8,36 @@
 import { useEffect, useRef } from "react";
 import { isTauri } from "@Shore/utils/tauri.util";
 import {
+  HUD_ACTION_EVENT,
   HUD_FOCUS_MAIN_EVENT,
   HUD_READY_EVENT,
   deriveHudState,
+  emitHudActionResult,
   publishHudState,
   type HudBridgeInput,
 } from "@Shore/services/hud-bridge.service";
+import {
+  HudActionDeduplicator,
+  validateHudAction,
+  type HudAction,
+  type HudActionOutcome,
+} from "@Shore/services/hud-actions";
 
 const HEARTBEAT_MS = 3000;
+const actionDeduplicator = new HudActionDeduplicator();
 
-export function useHudBridge(input: HudBridgeInput): void {
+export type HudActionExecutor = (
+  action: HudAction,
+) => Promise<HudActionOutcome>;
+
+export function useHudBridge(
+  input: HudBridgeInput,
+  executeAction?: HudActionExecutor,
+): void {
   const inputRef = useRef(input);
+  const executorRef = useRef(executeAction);
   inputRef.current = input;
+  executorRef.current = executeAction;
 
   // Push on every relevant state change (throttled inside publishHudState).
   const snapshot = JSON.stringify(deriveHudState(input));
@@ -44,12 +62,33 @@ export function useHudBridge(input: HudBridgeInput): void {
           void w.setFocus();
         });
       });
+      const un3 = await listen<unknown>(HUD_ACTION_EVENT, (event) => {
+        const validation = validateHudAction(event.payload);
+        if (!validation.ok) {
+          if (validation.result) emitHudActionResult(validation.result);
+          return;
+        }
+
+        void actionDeduplicator
+          .run(
+            validation.action,
+            (action) => executorRef.current
+              ? executorRef.current(action)
+              : Promise.resolve({
+                  ok: false,
+                  error: "unavailable",
+                  message: "HUD action is not available yet.",
+                }),
+          )
+          .then(emitHudActionResult);
+      });
       if (disposed) {
         un1();
         un2();
+        un3();
         return;
       }
-      unlisteners.push(un1, un2);
+      unlisteners.push(un1, un2, un3);
     });
 
     const heartbeat = setInterval(() => {

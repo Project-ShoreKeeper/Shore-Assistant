@@ -11,6 +11,14 @@
  */
 import { isTauri } from "@Shore/utils/tauri.util";
 import type { WebSocketStatus } from "./chat-websocket.service";
+import {
+  HUD_ACTION_EVENT,
+  HUD_ACTION_RESULT_EVENT,
+  type HudAction,
+  type HudActionResult,
+} from "./hud-actions";
+
+export { HUD_ACTION_EVENT, HUD_ACTION_RESULT_EVENT };
 
 export const HUD_STATE_EVENT = "hud://state";
 export const HUD_MODE_EVENT = "hud://mode";
@@ -27,6 +35,13 @@ export interface HudStatePayload {
   /** Tail of the latest assistant answer, or null. */
   answer: string | null;
   connection: HudConnection;
+  capabilities: {
+    sendPrompt: boolean;
+    cancelGeneration: boolean;
+    stopCopilot: boolean;
+    retryConnection: boolean;
+    terminalConfirm: boolean;
+  };
 }
 
 /** Duck-typed subset of ChatMessage — avoids importing the hook's types. */
@@ -79,7 +94,21 @@ export function deriveHudState(input: HudBridgeInput): HudStatePayload {
         ? "reconnecting"
         : "offline";
 
-  return { agent, lastTask, answer, connection };
+  return {
+    agent,
+    lastTask,
+    answer,
+    connection,
+    capabilities: {
+      sendPrompt: input.wsStatus === "OPEN",
+      cancelGeneration:
+        input.wsStatus === "OPEN" && input.isAssistantThinking,
+      stopCopilot: input.wsStatus === "OPEN" && input.copilotActive,
+      retryConnection:
+        input.wsStatus !== "OPEN" && input.wsStatus !== "CONNECTING",
+      terminalConfirm: false,
+    },
+  };
 }
 
 // ── Emit side (main window) ──────────────────────────────────────────────
@@ -92,8 +121,8 @@ export function publishHudState(payload: HudStatePayload): void {
   if (!isTauri()) return;
   const send = () => {
     lastEmitAt = Date.now();
-    void import("@tauri-apps/api/event").then(({ emit }) =>
-      emit(HUD_STATE_EVENT, payload),
+    void import("@tauri-apps/api/event").then(({ emitTo }) =>
+      emitTo("hud", HUD_STATE_EVENT, payload),
     );
   };
   const elapsed = Date.now() - lastEmitAt;
@@ -109,14 +138,28 @@ export function publishHudState(payload: HudStatePayload): void {
 
 export function emitHudReady(): void {
   if (!isTauri()) return;
-  void import("@tauri-apps/api/event").then(({ emit }) =>
-    emit(HUD_READY_EVENT),
+  void import("@tauri-apps/api/event").then(({ emitTo }) =>
+    emitTo("main", HUD_READY_EVENT),
   );
 }
 
 export function emitHudFocusMain(): void {
   if (!isTauri()) return;
-  void import("@tauri-apps/api/event").then(({ emit }) =>
-    emit(HUD_FOCUS_MAIN_EVENT),
+  void import("@tauri-apps/api/event").then(({ emitTo }) =>
+    emitTo("main", HUD_FOCUS_MAIN_EVENT),
+  );
+}
+
+export function emitHudAction(action: HudAction): void {
+  if (!isTauri()) return;
+  void import("@tauri-apps/api/event").then(({ emitTo }) =>
+    emitTo("main", HUD_ACTION_EVENT, action),
+  );
+}
+
+export function emitHudActionResult(result: HudActionResult): void {
+  if (!isTauri()) return;
+  void import("@tauri-apps/api/event").then(({ emitTo }) =>
+    emitTo("hud", HUD_ACTION_RESULT_EVENT, result),
   );
 }

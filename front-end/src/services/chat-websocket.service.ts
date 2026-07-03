@@ -123,6 +123,21 @@ export interface CopilotMessage {
   timestamp: number;
 }
 
+export interface CuaStepMessage {
+  type: "cua_step";
+  request_id: string;
+  action: { func: string } & Record<string, unknown>;
+  display_hint: string;
+}
+
+export interface CuaStateMessage {
+  type: "cua_state";
+  running: boolean;
+  step: number;
+  max_steps: number;
+  task: string;
+}
+
 export interface MemoryWorkerMessage {
   type: "memory_worker";
   stage: "started" | "completed" | "failed";
@@ -182,6 +197,8 @@ export type ChatServerMessage =
   | MemoryWorkerMessage
   | CopilotStateMessage
   | CopilotMessage
+  | CuaStepMessage
+  | CuaStateMessage
   | RequestScreenshotMessage
   | HistoryMessage;
 
@@ -367,6 +384,21 @@ export class ChatWebSocketService {
   public sendCopilotFrame(thumbnail: string): void {
     if (!this.isReady()) return;
     this.socket!.send(JSON.stringify({ type: "copilot_frame", thumbnail }));
+  }
+
+  public sendCuaReady(screen: { width: number; height: number }): void {
+    if (!this.isReady()) return;
+    this.socket!.send(JSON.stringify({ type: "cua_ready", screen }));
+  }
+
+  public sendCuaStepResult(payload: object): void {
+    if (!this.isReady()) return;
+    this.socket!.send(JSON.stringify({ type: "cua_step_result", ...payload }));
+  }
+
+  public sendCuaAbort(): void {
+    if (!this.isReady()) return;
+    this.socket!.send(JSON.stringify({ type: "cua_abort" }));
   }
 
   public sendScreenshotResponse(

@@ -20,6 +20,11 @@ import {
   requestScreenShare,
   stopScreenStream,
 } from "../services/screen-capture.service";
+import {
+  announceCuaReady,
+  executeCuaStep,
+} from "../services/cua-executor.service";
+import { isTauri } from "../utils/tauri.util";
 
 // Matches the text placeholder chat_ws.py's _build_memory_message appends
 // when images are attached, e.g. "[Attached 2 image(s): 935x702, 800x600]".
@@ -105,6 +110,12 @@ export interface UseAssistantReturn {
   toggleCopilot: () => void | Promise<void>;
   stopCopilot: () => AssistantControlResult;
 
+  // Computer use
+  cuaRunning: boolean;
+  cuaTask: string | null;
+  cuaStep: number;
+  abortComputerUse: () => void;
+
   // Controls
   startRecording: (deviceId?: string) => void;
   stopRecording: () => void;
@@ -135,6 +146,9 @@ export function useAssistant(): UseAssistantReturn {
   const thinkingEnabledRef = useRef(false);
   const [copilotActive, setCopilotActive] = useState(false);
   const [copilotError, setCopilotError] = useState<string | null>(null);
+  const [cuaRunning, setCuaRunning] = useState(false);
+  const [cuaTask, setCuaTask] = useState<string | null>(null);
+  const [cuaStep, setCuaStep] = useState(0);
 
   // Conversation state
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -161,6 +175,10 @@ export function useAssistant(): UseAssistantReturn {
   const streamRef = useRef<MediaStream | null>(null);
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+
+  const abortComputerUse = useCallback(() => {
+    chatWebsocketService.sendCuaAbort();
+  }, []);
 
   useEffect(() => {
     languageRef.current = language;
@@ -636,9 +654,25 @@ export function useAssistant(): UseAssistantReturn {
           if (msg.active) {
             setCopilotError(null);
             startCopilotFrameLoop(msg.interval_seconds || 4);
+            void announceCuaReady((screen) => ws.sendCuaReady(screen));
           } else {
             stopCopilotFrameLoop();
           }
+          break;
+        }
+
+        case "cua_step": {
+          void executeCuaStep(
+            msg,
+            (payload) => ws.sendCuaStepResult(payload),
+          );
+          break;
+        }
+
+        case "cua_state": {
+          setCuaRunning(Boolean(msg.running));
+          setCuaTask(msg.running ? String(msg.task ?? "") : null);
+          setCuaStep(Number(msg.step ?? 0));
           break;
         }
 
@@ -748,6 +782,32 @@ export function useAssistant(): UseAssistantReturn {
       wsRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    if (!isTauri() || !cuaRunning) return;
+    let disposed = false;
+    void import("@tauri-apps/plugin-global-shortcut")
+      .then(async (shortcut) => {
+        await shortcut.register(
+          "CommandOrControl+Shift+Escape",
+          () => abortComputerUse(),
+        );
+        if (disposed) {
+          await shortcut.unregister("CommandOrControl+Shift+Escape");
+        }
+      })
+      .catch((error) => {
+        console.warn("[CUA] shortcut registration failed:", error);
+      });
+    return () => {
+      disposed = true;
+      void import("@tauri-apps/plugin-global-shortcut")
+        .then((shortcut) =>
+          shortcut.unregister("CommandOrControl+Shift+Escape"),
+        )
+        .catch(() => {});
+    };
+  }, [cuaRunning, abortComputerUse]);
 
   // Send config updates
   useEffect(() => {
@@ -1064,6 +1124,11 @@ export function useAssistant(): UseAssistantReturn {
     copilotError,
     toggleCopilot,
     stopCopilot,
+
+    cuaRunning,
+    cuaTask,
+    cuaStep,
+    abortComputerUse,
 
     startRecording,
     stopRecording,

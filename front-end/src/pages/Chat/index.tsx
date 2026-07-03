@@ -107,6 +107,10 @@ function PageChat() {
     copilotActive,
     copilotError,
     toggleCopilot,
+    cuaRunning,
+    cuaTask,
+    cuaStep,
+    abortComputerUse,
     startRecording,
     stopRecording,
     sendTextMessage,
@@ -685,6 +689,21 @@ function PageChat() {
           onDrop={handleDrop}
           onDragOver={handleDragOver}
         >
+        {cuaRunning && (
+          <div className="flex items-center justify-between gap-3 border-b border-amber-500/40 bg-amber-500/10 px-4 py-2 text-sm">
+            <span>
+              Shore đang điều khiển màn hình (bước {cuaStep}) — {cuaTask}
+            </span>
+            <button
+              type="button"
+              className="rounded bg-amber-600 px-3 py-1 text-white hover:bg-amber-500"
+              onClick={abortComputerUse}
+            >
+              Dừng (⌘⇧Esc)
+            </button>
+          </div>
+        )}
+
         {/* Chat body */}
         <ScrollArea
           type="auto"

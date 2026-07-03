@@ -1,0 +1,74 @@
+/* Force full transparency while the HUD route is mounted. */
+html.hud-transparent,
+html.hud-transparent body,
+html.hud-transparent #root {
+  background: transparent !important;
+}
+html.hud-transparent .radix-themes {
+  background: transparent !important;
+}
+
+.hud-root {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none; /* passive mode: nothing is interactive */
+  user-select: none;
+}
+
+.hud-ring {
+  position: fixed;
+  inset: 0;
+  border-radius: 18px;
+  box-shadow: inset 0 0 40px 6px rgba(56, 189, 248, 0.28);
+  animation: hud-breathe 4s ease-in-out infinite;
+  pointer-events: none;
+  transition: box-shadow 300ms ease;
+}
+.hud-active .hud-ring {
+  box-shadow: inset 0 0 60px 10px rgba(56, 189, 248, 0.5);
+}
+@keyframes hud-breathe {
+  50% {
+    opacity: 0.55;
+  }
+}
+
+.hud-widget {
+  position: fixed;
+  max-width: 320px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  background: rgba(10, 15, 20, 0.55);
+  color: #cfe9f7;
+  font: 12px/1.4 system-ui, sans-serif;
+  opacity: 0.35;
+  transition: opacity 200ms ease;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hud-active .hud-widget {
+  opacity: 0.9;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.hud-tl { top: 16px; left: 16px; }
+.hud-tr { top: 16px; right: 16px; }
+.hud-bl { bottom: 16px; left: 16px; }
+.hud-br { bottom: 16px; right: 16px; }
+
+.hud-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: baseline;
+}
+.hud-dot-green { background: #4ade80; }
+.hud-dot-orange { background: #fb923c; }
+.hud-dot-gray { background: #6b7280; }
+.hud-dot-red { background: #f87171; }

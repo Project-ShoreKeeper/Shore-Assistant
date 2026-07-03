@@ -6,6 +6,7 @@ import PageMemory from "@Shore/pages/Memory";
 import PageChronicles from "@Shore/pages/Chronicles";
 import PageLogin from "@Shore/pages/Login";
 import PageForbidden from "@Shore/pages/Forbidden";
+import PageHud from "@Shore/pages/Hud";
 import { Routes, Route } from "react-router-dom";
 
 export default function PublicRoutes() {
@@ -14,6 +15,8 @@ export default function PublicRoutes() {
       {/* Public — no auth required */}
       <Route path="/login" element={<PageLogin />} />
       <Route path="/403" element={<PageForbidden />} />
+      {/* Desktop-only HUD overlay window — presentational, no auth */}
+      <Route path="/hud" element={<PageHud />} />
       <Route element={<AppLayout />}>
         {/* Public-within-shell — Chronicles is a public changelog */}
         <Route path="/chronicles" element={<PageChronicles />} />

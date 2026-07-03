@@ -120,6 +120,7 @@ function PageChat() {
 
   const [hudEnabled, setHudEnabled] = useState(false);
   const [hudError, setHudError] = useState<string | null>(null);
+  const hudRestoredRef = useRef(false);
 
   const toggleHud = useCallback(async (enabled: boolean) => {
     if (!isTauri()) return;
@@ -140,8 +141,12 @@ function PageChat() {
     }
   }, []);
 
-  // Restore the HUD if it was on last session.
+  // Restore the HUD if it was on last session. Ref-guarded: StrictMode
+  // double-invokes mount effects in dev, and a second hud_show racing the
+  // first can fail and clobber the successful toggle's state.
   useEffect(() => {
+    if (hudRestoredRef.current) return;
+    hudRestoredRef.current = true;
     if (isTauri() && window.localStorage.getItem("shore.hud.enabled") === "1") {
       void toggleHud(true);
     }

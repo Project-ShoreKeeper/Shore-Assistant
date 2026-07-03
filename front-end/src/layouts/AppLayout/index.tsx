@@ -5,6 +5,7 @@ import Footer from "./Footer";
 import { MemoryHealthBanner } from "./MemoryHealthBanner";
 import { AssistantProvider } from "@Shore/contexts/AssistantContext";
 import { DashboardProvider } from "@Shore/contexts/DashboardContext";
+import { HudProvider } from "@Shore/contexts/HudProvider";
 
 // ── Bottom nav icons ──────────────────────────────────────────────────
 
@@ -104,6 +105,7 @@ export default function AppLayout() {
 
   return (
     <AssistantProvider>
+    <HudProvider>
     <DashboardProvider>
     <Flex style={{ height: "100dvh", width: "100vw", overflow: "hidden" }}>
       <div className="sidebar-wrapper" style={{ display: "flex", flexShrink: 0 }}>
@@ -129,6 +131,7 @@ export default function AppLayout() {
       </Flex>
     </Flex>
     </DashboardProvider>
+    </HudProvider>
     </AssistantProvider>
   );
 }

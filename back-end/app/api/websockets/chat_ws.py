@@ -10,7 +10,7 @@ import base64 as _b64
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from app.api.deps import _bearer_token, get_session_store
-from app.core.auth import current_user_id
+from app.core.auth import current_user_id, current_user_role
 from app.services.ai_client.stt import SttUnavailable, stt_client
 from app.services.agent_service import agent_service
 from app.services.ai_client.tts import tts_client
@@ -19,6 +19,7 @@ from app.services.image_store import image_store
 from app.services.connection_manager import connection_manager
 from app.services.notification_service import notification_service
 from app.services.copilot_service import copilot_service, summarize_copilot_run
+from app.services.cua.service import computer_use_service
 from app.services.screenshot_bridge import screenshot_bridge
 from app.core.config import settings
 import numpy as np
@@ -140,6 +141,7 @@ async def websocket_chat(websocket: WebSocket):
     # Make the active user visible to tool calls (clear_memory etc) that
     # run in this WS's asyncio task.
     current_user_id.set(ws_user_id)
+    current_user_role.set(ws_user_role)
 
     await websocket.accept(subprotocol=accepted_subprotocol)
 
@@ -166,6 +168,7 @@ async def websocket_chat(websocket: WebSocket):
     from app.services.terminal_service import terminal_service
     terminal_service.broadcast = send_json_safe
     screenshot_bridge.broadcast = send_json_safe
+    computer_use_service.attach(send_json_safe)
 
     # Load persisted history. The frontend rehydration code expects
     # assistant metadata (thinking_text, agent_actions, ...) at the top
@@ -576,6 +579,20 @@ async def websocket_chat(websocket: WebSocket):
                             copilot_service.handle_frame(data.get("thumbnail", ""))
                         )
 
+                    elif msg_type == "cua_ready":
+                        computer_use_service.set_ready(data.get("screen"))
+
+                    elif msg_type == "cua_step_result":
+                        computer_use_service.resolve_step(
+                            data.get("request_id", ""),
+                            screenshot=data.get("screenshot"),
+                            screen=data.get("screen"),
+                            error=data.get("error"),
+                        )
+
+                    elif msg_type == "cua_abort":
+                        computer_use_service.abort()
+
                     elif msg_type == "screenshot_response":
                         data_url = data.get("data_url")
                         error = data.get("error")
@@ -753,6 +770,7 @@ async def websocket_chat(websocket: WebSocket):
             except (asyncio.CancelledError, Exception):
                 pass
         copilot_service.detach()
+        computer_use_service.detach()
         # Only unregister if we're still the active connection
         if connection_manager._send_json is my_send_json:
             notification_service.clear_agent_callback()

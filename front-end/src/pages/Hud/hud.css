@@ -213,6 +213,46 @@ html.hud-transparent .radix-themes {
   color: #fca5a5;
 }
 
+.hud-widget-popover {
+  position: fixed;
+  z-index: 18;
+  display: grid;
+  min-width: 210px;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid rgba(125, 211, 252, 0.45);
+  border-radius: 12px;
+  background: rgba(4, 12, 20, 0.94);
+  box-shadow: 0 12px 35px rgba(0, 0, 0, 0.38);
+  pointer-events: auto;
+}
+
+.hud-agent-popover {
+  top: 56px;
+  left: 16px;
+}
+
+.hud-widget-popover button {
+  padding: 9px 10px;
+  border: 1px solid rgba(125, 211, 252, 0.24);
+  border-radius: 8px;
+  background: rgba(14, 116, 144, 0.16);
+  color: #d9f2ff;
+  font: 600 12px/1.2 system-ui, sans-serif;
+  text-align: left;
+  cursor: pointer;
+}
+
+.hud-widget-popover button:hover:not(:disabled) {
+  border-color: rgba(125, 211, 252, 0.75);
+  background: rgba(14, 116, 144, 0.42);
+}
+
+.hud-widget-popover button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .hud-ring {
     animation: none;

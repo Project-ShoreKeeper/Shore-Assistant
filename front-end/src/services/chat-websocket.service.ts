@@ -215,11 +215,12 @@ export class ChatWebSocketService {
     Record<keyof ChatWSEvents, ChatWSEventCallback<keyof ChatWSEvents>[]>
   > = {};
 
-  private terminalListeners: Set<(msg: any) => void> = new Set();
+  private terminalListeners: Set<(msg: unknown) => void> = new Set();
 
-  public onTerminalMessage(cb: (msg: any) => void): () => void {
-    this.terminalListeners.add(cb);
-    return () => this.terminalListeners.delete(cb);
+  public onTerminalMessage<T>(cb: (msg: T) => void): () => void {
+    const listener = (message: unknown) => cb(message as T);
+    this.terminalListeners.add(listener);
+    return () => this.terminalListeners.delete(listener);
   }
 
   public sendTerminalMessage(msg: object): void {
@@ -281,24 +282,30 @@ export class ChatWebSocketService {
     text: string,
     source: "voice" | "keyboard" = "keyboard",
     images?: ImageAttachment[],
-  ): void {
-    if (!this.isReady()) return;
-    this.socket!.send(
-      JSON.stringify({
-        type: "user_message",
-        text,
-        source,
-        ...(images && images.length > 0
-          ? {
-              images: images.map((i) => ({
-                data_url: i.dataUrl,
-                width: i.width,
-                height: i.height,
-              })),
-            }
-          : {}),
-      }),
-    );
+  ): boolean {
+    if (!this.isReady()) return false;
+    try {
+      this.socket!.send(
+        JSON.stringify({
+          type: "user_message",
+          text,
+          source,
+          ...(images && images.length > 0
+            ? {
+                images: images.map((i) => ({
+                  data_url: i.dataUrl,
+                  width: i.width,
+                  height: i.height,
+                })),
+              }
+            : {}),
+        }),
+      );
+      return true;
+    } catch (error) {
+      console.error("[Chat WS] Failed to send user message:", error);
+      return false;
+    }
   }
 
   public sendAudioBuffer(buffer: Float32Array): void {
@@ -311,9 +318,15 @@ export class ChatWebSocketService {
     this.socket!.send(JSON.stringify({ type: "config", data }));
   }
 
-  public sendCancel(): void {
-    if (!this.isReady()) return;
-    this.socket!.send(JSON.stringify({ type: "cancel" }));
+  public sendCancel(): boolean {
+    if (!this.isReady()) return false;
+    try {
+      this.socket!.send(JSON.stringify({ type: "cancel" }));
+      return true;
+    } catch (error) {
+      console.error("[Chat WS] Failed to send cancellation:", error);
+      return false;
+    }
   }
 
   public sendClearMemory(): void {
@@ -326,9 +339,15 @@ export class ChatWebSocketService {
     this.socket!.send(JSON.stringify({ type: "copilot_start" }));
   }
 
-  public sendCopilotStop(): void {
-    if (!this.isReady()) return;
-    this.socket!.send(JSON.stringify({ type: "copilot_stop" }));
+  public sendCopilotStop(): boolean {
+    if (!this.isReady()) return false;
+    try {
+      this.socket!.send(JSON.stringify({ type: "copilot_stop" }));
+      return true;
+    } catch (error) {
+      console.error("[Chat WS] Failed to stop Co-pilot:", error);
+      return false;
+    }
   }
 
   public sendCopilotFrame(thumbnail: string): void {

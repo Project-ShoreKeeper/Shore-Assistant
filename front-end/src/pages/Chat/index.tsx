@@ -199,7 +199,11 @@ function PageChat() {
     const hasText = inputText.trim().length > 0;
     const hasImages = imageAttachments.length > 0;
     if (!hasText && !hasImages) return;
-    sendTextMessage(inputText, hasImages ? imageAttachments : undefined);
+    const result = sendTextMessage(
+      inputText,
+      hasImages ? imageAttachments : undefined,
+    );
+    if (!result.ok) return;
     setInputText("");
     setImageAttachments([]);
   };

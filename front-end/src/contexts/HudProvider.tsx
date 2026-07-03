@@ -1,24 +1,82 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { useNavigate } from "react-router-dom";
 
 import { useAssistantContext } from "@Shore/contexts/AssistantContext";
 import { HudContext } from "@Shore/contexts/hud-context";
 import { useHudBridge } from "@Shore/hooks/useHudBridge";
+import type {
+  HudAction,
+  HudActionOutcome,
+} from "@Shore/services/hud-actions";
 import { isTauri } from "@Shore/utils/tauri.util";
 
 const HUD_ENABLED_KEY = "shore.hud.enabled";
 
 export function HudProvider({ children }: { children: React.ReactNode }) {
+  const navigate = useNavigate();
   const {
     wsStatus,
     copilotActive,
     isAssistantThinking,
     messages,
+    sendTextMessage,
+    cancelGeneration,
+    stopCopilot,
   } = useAssistantContext();
   const [enabled, setEnabledState] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useHudBridge({ wsStatus, copilotActive, isAssistantThinking, messages });
+  const executeAction = useCallback(async (
+    action: HudAction,
+  ): Promise<HudActionOutcome> => {
+    switch (action.action) {
+      case "send_prompt":
+        return sendTextMessage(action.payload.text);
+      case "cancel_generation":
+        return cancelGeneration();
+      case "stop_copilot":
+        return stopCopilot();
+      case "focus_main": {
+        if (!isTauri()) {
+          return {
+            ok: false,
+            error: "unavailable",
+            message: "Main-window focus is available only on desktop.",
+          };
+        }
+        await invoke("hud_set_mode", { active: false });
+        navigate("/chat");
+        const { getCurrentWindow } = await import("@tauri-apps/api/window");
+        const mainWindow = getCurrentWindow();
+        await mainWindow.unminimize();
+        await mainWindow.setFocus();
+        return { ok: true, message: "Opened the main app." };
+      }
+      case "retry_connection":
+        return {
+          ok: false,
+          error: "unavailable",
+          message: "Manual reconnect is not available yet.",
+        };
+      case "terminal_confirm":
+        return {
+          ok: false,
+          error: "unauthorized",
+          message: "Terminal confirmation is not enabled in HUD.",
+        };
+    }
+  }, [
+    cancelGeneration,
+    navigate,
+    sendTextMessage,
+    stopCopilot,
+  ]);
+
+  useHudBridge(
+    { wsStatus, copilotActive, isAssistantThinking, messages },
+    executeAction,
+  );
 
   const setEnabled = useCallback(async (nextEnabled: boolean) => {
     if (!isTauri()) return;

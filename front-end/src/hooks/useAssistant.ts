@@ -63,6 +63,12 @@ export interface MemoryWorkerLogEntry {
   timestamp: Date;
 }
 
+export interface AssistantControlResult {
+  ok: boolean;
+  error?: "unavailable" | "failed";
+  message?: string;
+}
+
 const MEMORY_WORKER_LOG_MAX = 20;
 
 export interface UseAssistantReturn {
@@ -92,12 +98,16 @@ export interface UseAssistantReturn {
   copilotActive: boolean;
   copilotError: string | null;
   toggleCopilot: () => void | Promise<void>;
+  stopCopilot: () => AssistantControlResult;
 
   // Controls
   startRecording: (deviceId?: string) => void;
   stopRecording: () => void;
-  sendTextMessage: (text: string, images?: ImageAttachment[]) => void;
-  cancelGeneration: () => void;
+  sendTextMessage: (
+    text: string,
+    images?: ImageAttachment[],
+  ) => AssistantControlResult;
+  cancelGeneration: () => AssistantControlResult;
   clearMessages: () => void;
 }
 
@@ -759,8 +769,14 @@ export function useAssistant(): UseAssistantReturn {
 
         streamRef.current = stream;
 
+        const legacyWindow = window as typeof window & {
+          webkitAudioContext?: typeof AudioContext;
+        };
         const AudioContextCtor =
-          window.AudioContext || (window as any).webkitAudioContext;
+          window.AudioContext || legacyWindow.webkitAudioContext;
+        if (!AudioContextCtor) {
+          throw new Error("Web Audio API is unavailable.");
+        }
         const audioContext = new AudioContextCtor({ sampleRate: 16000 });
         audioContextRef.current = audioContext;
 
@@ -829,9 +845,28 @@ export function useAssistant(): UseAssistantReturn {
   }, []);
 
   const sendTextMessage = useCallback(
-    (text: string, images?: ImageAttachment[]) => {
+    (
+      text: string,
+      images?: ImageAttachment[],
+    ): AssistantControlResult => {
       const trimmed = text.trim();
-      if (!trimmed && !(images && images.length > 0)) return;
+      if (!trimmed && !(images && images.length > 0)) {
+        return {
+          ok: false,
+          error: "unavailable",
+          message: "Message is empty.",
+        };
+      }
+      if (
+        !wsRef.current
+        || !wsRef.current.sendUserMessage(trimmed, "keyboard", images)
+      ) {
+        return {
+          ok: false,
+          error: "unavailable",
+          message: "Chat is not connected.",
+        };
+      }
 
       // Add user message + streaming assistant placeholder so the
       // "Thinking..." indicator shows immediately while we wait for the
@@ -867,18 +902,20 @@ export function useAssistant(): UseAssistantReturn {
         setIsAssistantSpeaking(false);
       }
 
-      // Send to backend
-      if (wsRef.current) {
-        wsRef.current.sendUserMessage(trimmed, "keyboard", images);
-      }
+      return { ok: true, message: "Prompt sent." };
     },
     [],
   );
 
-  const cancelGeneration = useCallback(() => {
-    if (wsRef.current) {
-      wsRef.current.sendCancel();
+  const cancelGeneration = useCallback((): AssistantControlResult => {
+    if (!isAssistantThinking) {
+      return {
+        ok: false,
+        error: "unavailable",
+        message: "There is no active response to stop.",
+      };
     }
+    const sent = wsRef.current?.sendCancel() ?? false;
     setIsAssistantThinking(false);
     // Finalize any in-flight streaming assistant bubble so it stops
     // showing "Thinking..." forever. Drop it if it has no content at all.
@@ -901,7 +938,14 @@ export function useAssistant(): UseAssistantReturn {
       ttsPlayerRef.current = null;
     }
     setIsAssistantSpeaking(false);
-  }, []);
+    return sent
+      ? { ok: true, message: "Response stopped." }
+      : {
+          ok: false,
+          error: "unavailable",
+          message: "Response stopped locally; chat is disconnected.",
+        };
+  }, [isAssistantThinking]);
 
   const clearMessages = useCallback(() => {
     setMessages([]);
@@ -910,13 +954,31 @@ export function useAssistant(): UseAssistantReturn {
     }
   }, []);
 
+  const stopCopilot = useCallback((): AssistantControlResult => {
+    if (!copilotActive) {
+      return {
+        ok: false,
+        error: "unavailable",
+        message: "Co-pilot is not active.",
+      };
+    }
+    if (!wsRef.current?.sendCopilotStop()) {
+      return {
+        ok: false,
+        error: "unavailable",
+        message: "Chat is not connected.",
+      };
+    }
+    stopScreenStream();
+    setCopilotActive(false); // optimistic; copilot_state will confirm
+    setCopilotError(null);
+    return { ok: true, message: "Co-pilot paused." };
+  }, [copilotActive]);
+
   const toggleCopilot = useCallback(async () => {
     if (!wsRef.current) return;
     if (copilotActive) {
-      wsRef.current.sendCopilotStop();
-      stopScreenStream();
-      setCopilotActive(false); // optimistic; copilot_state will confirm
-      setCopilotError(null);
+      stopCopilot();
       return;
     }
     setCopilotError(null);
@@ -933,7 +995,7 @@ export function useAssistant(): UseAssistantReturn {
     }
     wsRef.current.sendCopilotStart();
     // copilotActive flips to true when copilot_state echoes back.
-  }, [copilotActive]);
+  }, [copilotActive, stopCopilot]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -967,6 +1029,7 @@ export function useAssistant(): UseAssistantReturn {
     copilotActive,
     copilotError,
     toggleCopilot,
+    stopCopilot,
 
     startRecording,
     stopRecording,

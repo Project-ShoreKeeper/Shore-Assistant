@@ -4,7 +4,6 @@
  * hud-bridge.service.ts); no WebSocket, no REST, no auth.
  */
 import { useCallback, useEffect, useState } from "react";
-import { emitHudFocusMain } from "@Shore/services/hud-bridge.service";
 import { useHudState } from "./useHudState";
 import { useHudActions } from "./useHudActions";
 import { useHudInteractionMode } from "./useHudInteractionMode";
@@ -28,6 +27,11 @@ export default function PageHud() {
   const setPaletteOpen = useCallback((open: boolean) => {
     setPalette({ open, modeRevision });
   }, [modeRevision]);
+  const [panel, setPanel] = useState<{
+    name: "agent" | null;
+    modeRevision: number;
+  }>({ name: null, modeRevision: 0 });
+  const openPanel = panel.modeRevision === modeRevision ? panel.name : null;
 
   useEffect(() => {
     document.documentElement.classList.add("hud-transparent");
@@ -35,17 +39,28 @@ export default function PageHud() {
   }, []);
 
   const dismissTopLayer = useCallback(() => {
-    if (!paletteOpen) return false;
-    setPaletteOpen(false);
-    return true;
-  }, [paletteOpen, setPaletteOpen]);
+    if (paletteOpen) {
+      setPaletteOpen(false);
+      return true;
+    }
+    if (openPanel) {
+      setPanel({ name: null, modeRevision });
+      return true;
+    }
+    return false;
+  }, [modeRevision, openPanel, paletteOpen, setPaletteOpen]);
   const { setPassive } = useHudInteractionMode({
     active,
     dismissTopLayer,
   });
 
   const focusMain = () => {
-    if (active) emitHudFocusMain();
+    if (active && !hasPending) {
+      sendAction({
+        action: "focus_main",
+        payload: { destination: "chat" },
+      });
+    }
   };
 
   return (
@@ -68,7 +83,24 @@ export default function PageHud() {
         sendAction={sendAction}
         onPromptSent={setPassive}
       />
-      <AgentStatusWidget status={state?.agent ?? "idle"} onClick={focusMain} />
+      <AgentStatusWidget
+        status={state?.agent ?? "idle"}
+        active={active}
+        expanded={openPanel === "agent"}
+        capabilities={state?.capabilities ?? {
+          sendPrompt: false,
+          cancelGeneration: false,
+          stopCopilot: false,
+          retryConnection: false,
+          terminalConfirm: false,
+        }}
+        hasPending={hasPending}
+        onToggle={() => setPanel({
+          name: openPanel === "agent" ? null : "agent",
+          modeRevision,
+        })}
+        sendAction={sendAction}
+      />
       <LastTaskWidget task={state?.lastTask ?? null} onClick={focusMain} />
       <AnswerWidget answer={state?.answer ?? null} onClick={focusMain} />
       <ConnectionWidget

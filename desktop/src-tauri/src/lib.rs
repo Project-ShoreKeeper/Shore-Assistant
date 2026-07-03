@@ -7,9 +7,9 @@
 //! `capabilities/default.json` and
 //! `docs/superpowers/specs/2026-07-02-tauri-desktop-client-design.md`.
 //! App commands exposed: `capture_screen_png` (native screen-capture for
-//! the Screen Co-pilot / analyze_screen since WKWebView has no
-//! `getDisplayMedia`), and the HUD overlay window lifecycle commands
-//! `hud_show`, `hud_hide`, `hud_set_mode` from the `hud` module.
+//! analyze_screen/computer use since WKWebView has no `getDisplayMedia`),
+//! `input_execute` (mouse/keyboard computer-use actions), and the HUD overlay
+//! window lifecycle commands `hud_show`, `hud_hide`, `hud_set_mode`.
 //!
 //! Deep-link events (`shore-assistant://auth?xchg=<token>`) are consumed
 //! entirely from the frontend via the plugin's JS API (`onOpenUrl` /
@@ -29,6 +29,7 @@
 use base64::Engine as _;
 
 mod hud;
+mod input;
 
 /// Capture the primary monitor as a PNG and return it as a
 /// `data:image/png;base64,...` URL.
@@ -78,6 +79,7 @@ pub fn run() {
         .manage(hud::HudState::default())
         .invoke_handler(tauri::generate_handler![
             capture_screen_png,
+            input::input_execute,
             hud::hud_show,
             hud::hud_hide,
             hud::hud_set_mode

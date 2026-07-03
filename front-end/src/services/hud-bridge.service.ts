@@ -24,8 +24,8 @@ export interface HudStatePayload {
   agent: HudAgentStatus;
   /** Last agent tool action, or null if none this session. */
   lastTask: { label: string; ts: number } | null;
-  /** Tail of the latest reasoning stream, or null. */
-  thought: string | null;
+  /** Tail of the latest assistant answer, or null. */
+  answer: string | null;
   connection: HudConnection;
 }
 
@@ -35,12 +35,13 @@ export interface HudBridgeInput {
   copilotActive: boolean;
   isAssistantThinking: boolean;
   messages: Array<{
-    thinkingText?: string;
+    role: "user" | "assistant";
+    text: string;
     agentActions?: Array<{ tool?: string; detail: string; timestamp: Date }>;
   }>;
 }
 
-const THOUGHT_TAIL_CHARS = 120;
+const ANSWER_TAIL_CHARS = 240;
 const TASK_LABEL_CHARS = 60;
 const EMIT_THROTTLE_MS = 250;
 
@@ -63,10 +64,12 @@ export function deriveHudState(input: HudBridgeInput): HudStatePayload {
     }
   }
 
-  let thought: string | null = null;
-  for (let i = input.messages.length - 1; i >= 0 && thought === null; i--) {
-    const t = input.messages[i].thinkingText;
-    if (t && t.trim()) thought = t.trim().slice(-THOUGHT_TAIL_CHARS);
+  let answer: string | null = null;
+  for (let i = input.messages.length - 1; i >= 0 && answer === null; i--) {
+    const message = input.messages[i];
+    if (message.role !== "assistant") continue;
+    const text = message.text.trim().replace(/\s+/g, " ");
+    if (text) answer = text.slice(-ANSWER_TAIL_CHARS);
   }
 
   const connection: HudConnection =
@@ -76,7 +79,7 @@ export function deriveHudState(input: HudBridgeInput): HudStatePayload {
         ? "reconnecting"
         : "offline";
 
-  return { agent, lastTask, thought, connection };
+  return { agent, lastTask, answer, connection };
 }
 
 // ── Emit side (main window) ──────────────────────────────────────────────

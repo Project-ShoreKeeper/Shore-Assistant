@@ -5,7 +5,7 @@
 **Scope:** A second, fully transparent, always-on-top Tauri window that covers the
 primary monitor's usable work area (excluding the macOS menu bar/notch and Dock)
 and renders an ambient HUD: a soft glowing ring around the work-area edges plus
-four low-opacity corner widgets (agent status, last task, thought process,
+four low-opacity corner widgets (agent status, last task, latest answer,
 connection). Click-through by default; a global hotkey (`Cmd+Shift+Space`) switches
 between **passive** (observe-only) and **active** (interactive) modes.
 **Out of scope (Phase 1):** Windows/Linux support, multi-monitor coverage, voice
@@ -36,8 +36,8 @@ Key properties:
   `tauri-plugin-global-shortcut`) toggles; `Esc` in active mode returns to passive.
 - **All data sources already exist.** No new backend telemetry: agent status maps
   from `copilotActive` + `isAssistantThinking`; last task from the tail of the
-  Agent Action log; thought process from `copilot_message` / reasoning-token
-  streams; connection from `wsStatus`.
+  Agent Action log; latest answer from the newest assistant chat message;
+  connection from `wsStatus`.
 
 ## Decisions (locked with user)
 
@@ -64,7 +64,7 @@ front-end/src/
 │   └── widgets/
 │       ├── AgentStatusWidget.tsx     # top-left:  Monitoring / Thinking / Idle
 │       ├── LastTaskWidget.tsx        # top-right: last agent action + relative time
-│       ├── ThoughtProcessWidget.tsx  # bottom-left: copilot/reasoning stream tail
+│       ├── AnswerWidget.tsx          # bottom-left: latest assistant answer tail
 │       └── ConnectionWidget.tsx      # bottom-right: WS status dot + label
 ├── services/hud-bridge.service.ts # NEW — dual-role:
 │                                  #   main window: subscribe app state → emit hud://state
@@ -105,7 +105,7 @@ front-end/src/
 - **`hud-bridge.service.ts`** exposes two halves:
   - `startHudBridge(snapshotFns)` — called once in the main window (inside
     `useAssistant` or a small hook next to it). Emits `hud://state` with a compact
-    payload `{agent, lastTask, thought, connection}` on every relevant state change,
+    payload `{agent, lastTask, answer, connection}` on every relevant state change,
     throttled to ≥250 ms between emits. Also re-emits a full snapshot when the HUD
     window announces itself (`hud://ready`).
   - `useHudState()` — used by the HUD page. Listens for `hud://state`, `hud://mode`,
@@ -129,7 +129,7 @@ front-end/src/
 |---|---|---|
 | Agent status (top-left) | `copilotActive`, `isAssistantThinking` | `Thinking…` > `Monitoring` > `Idle` (priority order) |
 | Last task (top-right) | last `AgentAction` entry | tool name + relative time ("3m ago"), refreshed every 30 s |
-| Thought process (bottom-left) | streaming reasoning tokens / latest `copilot_message` | last ~120 chars, single line, ellipsized |
+| Latest answer (bottom-left) | newest assistant message, including streaming updates | last ~240 chars, normalized to one line and ellipsized |
 | Connection (bottom-right) | `wsStatus` | `Active` / `Reconnecting` / `Offline` dot + label |
 
 ## Error handling

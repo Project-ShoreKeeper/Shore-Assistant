@@ -10,7 +10,7 @@ import { useHudState } from "./useHudState";
 import EdgeRing from "./EdgeRing";
 import AgentStatusWidget from "./widgets/AgentStatusWidget";
 import LastTaskWidget from "./widgets/LastTaskWidget";
-import ThoughtProcessWidget from "./widgets/ThoughtProcessWidget";
+import AnswerWidget from "./widgets/AnswerWidget";
 import ConnectionWidget from "./widgets/ConnectionWidget";
 import "./hud.css";
 
@@ -44,7 +44,7 @@ export default function PageHud() {
       <EdgeRing />
       <AgentStatusWidget status={state?.agent ?? "idle"} onClick={focusMain} />
       <LastTaskWidget task={state?.lastTask ?? null} onClick={focusMain} />
-      <ThoughtProcessWidget thought={state?.thought ?? null} onClick={focusMain} />
+      <AnswerWidget answer={state?.answer ?? null} onClick={focusMain} />
       <ConnectionWidget
         connection={state?.connection ?? "offline"}
         linked={linked}

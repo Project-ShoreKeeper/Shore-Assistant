@@ -91,11 +91,16 @@ Owns one run at a time (module singleton, same convention as
   `CUA_HISTORY_MAX_TURNS` (default 4, per EvoCUA scaffold), abort flag.
 - **Prompt:** ported from the meituan/EvoCUA reference agent
   (`prompts/computer_use.txt`), including the action-space definition.
-- **Action parser:** pure function `parse_cua_action(text) -> CuaAction`,
-  ported from the EvoCUA repo's parser. Supported actions (the scaffold's
-  canonical set): `click`, `left_double`, `right_single`, `drag`, `scroll`,
-  `type`, `hotkey`, `wait`, `finished`, `call_user`. Unknown or malformed
-  output aborts the run with a parse error in the summary.
+- **Action parser:** pure functions ported from the EvoCUA repo
+  (`mm_agents/evocua/`). The model responds in `## Thought / ## Action /
+  ## Code` sections; the last fenced code block carries either a constrained
+  PyAutoGUI subset (`click`, `doubleClick`, `tripleClick`, `rightClick`,
+  `middleClick`, `moveTo`, `dragTo`, `scroll`, `hscroll`, `write`, `press`,
+  `hotkey`, `keyDown`, `keyUp`) or a control call (`computer.wait`,
+  `computer.terminate(status="success"|"failure", answer=...)`). Unknown or
+  malformed output aborts the run with a parse error in the summary. The
+  ported system prompt drops the reference scaffold's sudo-password line —
+  Shore never provides credentials to the sub-agent.
 - **Coordinate mapping:** pure function mapping EvoCUA's relative
   coordinates → captured-image pixels → the client's logical screen
   coordinates. Each `cua_step_result` includes the client's logical screen
@@ -129,7 +134,7 @@ never trigger it.
 |---|---|---|
 | `cua_ready` | client → server | `{screen: {width, height}}` — sent by the desktop client when capture is available; cleared on disconnect/share end |
 | `cua_step` | server → client | `{request_id, action, display_hint}` — one action to execute; `display_hint` is a short human-readable label for the overlay |
-| `cua_step_result` | client → server | `{request_id, screenshot?: data_url, image: {width, height}, screen: {width, height}, error?}` |
+| `cua_step_result` | client → server | `{request_id, screenshot?: data_url, screen: {width, height}, error?}` — the backend derives image dimensions from the decoded screenshot |
 | `cua_state` | server → client | `{running: bool, step, max_steps, task}` — drives Chat banner and HUD |
 | `cua_abort` | client → server | `{}` — stop button / global shortcut |
 
@@ -145,13 +150,13 @@ New Rust command `input_execute(action)` using `enigo`:
 - Implements click/double/right-click/drag/scroll at logical coordinates,
   `type` (text entry), `hotkey` (modifier combos).
 - Requires the macOS **Accessibility** permission; the command returns a
-  typed error when the permission is missing and the frontend shows a
-  one-time setup callout (mirrors the Screen Recording permission flow).
-- Frontend `cua-executor.service.ts` handles `cua_step`: draws a brief
-  overlay highlight at the target point (so the user sees what is about to
-  be clicked), invokes `input_execute`, waits `CUA_SETTLE_MS`, captures a
-  fresh frame through the existing `screen-capture.service.ts` path, and
-  replies with `cua_step_result`.
+  typed error when the permission is missing, which flows into the run
+  summary so Shore can tell the user how to grant it.
+- Frontend `cua-executor.service.ts` handles `cua_step`: invokes
+  `input_execute`, waits `CUA_SETTLE_MS`, captures a fresh frame through the
+  existing `screen-capture.service.ts` path, and replies with
+  `cua_step_result`. The Chat banner shows the current step and action label
+  while a run is active.
 - Global shortcut `Cmd+Shift+Escape` (registered only while a run is
   active) sends `cua_abort`.
 - v1 controls the **primary display only** — the same display the native
@@ -184,9 +189,9 @@ refuses — same gating philosophy as HUD terminal approval.
   v1 (the explicit task + visible overlay + abort switch are the controls).
 - Admin-only, desktop-only, one run at a time, hard `CUA_MAX_STEPS` cap,
   per-step timeout, global-shortcut and UI abort.
-- The sub-agent context excludes memory/profile, so `type` can never emit
-  stored secrets. `finished`/`call_user` return control to Shore; `call_user`
-  surfaces the model's question to the user verbatim.
+- The sub-agent context excludes memory/profile, so typed text can never
+  emit stored secrets. `computer.terminate` returns control to Shore; its
+  `answer` payload is surfaced to the user verbatim.
 - Screenshots remain ephemeral (never persisted), as today.
 - Audit log of every action for post-hoc review.
 
@@ -234,4 +239,7 @@ refuses — same gating philosophy as HUD terminal approval.
 - Proactive suggestions ("I noticed you might want…").
 - Pause-on-user-input detection (taking the mouse back mid-run pauses
   nothing in v1; use the abort shortcut).
+- On-screen highlight at the target point before each click — a DOM overlay
+  cannot draw outside the app window; a HUD-window target dot is the future
+  path.
 - HUD-initiated per-action approval UI.

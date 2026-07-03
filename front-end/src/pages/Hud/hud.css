@@ -58,14 +58,15 @@ html.hud-transparent .radix-themes {
   background: rgba(10, 15, 20, 0.55);
   color: #cfe9f7;
   font: 12px/1.4 system-ui, sans-serif;
-  opacity: 0.35;
+  opacity: var(--hud-passive-opacity, 0.35);
+  scale: var(--hud-widget-scale, 1);
   transition: opacity 200ms ease;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .hud-active .hud-widget {
-  opacity: 0.9;
+  opacity: var(--hud-widget-opacity, 0.9);
   pointer-events: auto;
   cursor: pointer;
 }
@@ -81,10 +82,32 @@ html.hud-transparent .radix-themes {
   outline-offset: 2px;
 }
 
-.hud-tl { top: 16px; left: 16px; }
-.hud-tr { top: 16px; right: 16px; }
-.hud-bl { bottom: 16px; left: 16px; }
-.hud-br { bottom: 16px; right: 16px; }
+.hud-tl {
+  top: var(--hud-agent-y, 6%);
+  left: var(--hud-agent-x, 12%);
+  transform: translate(-50%, -50%);
+}
+.hud-tr {
+  top: var(--hud-task-y, 6%);
+  left: var(--hud-task-x, 88%);
+  transform: translate(-50%, -50%);
+}
+.hud-bl {
+  top: var(--hud-answer-y, 94%);
+  left: var(--hud-answer-x, 12%);
+  transform: translate(-50%, -50%);
+}
+.hud-br {
+  top: var(--hud-connection-y, 94%);
+  left: var(--hud-connection-x, 88%);
+  transform: translate(-50%, -50%);
+}
+
+.hud-customizing .hud-widget {
+  cursor: move;
+  border-color: rgba(250, 204, 21, 0.72);
+  box-shadow: 0 0 0 2px rgba(250, 204, 21, 0.14);
+}
 
 .hud-dot {
   display: inline-block;
@@ -247,6 +270,34 @@ html.hud-transparent .radix-themes {
 .hud-connection-popover {
   right: 16px;
   bottom: 56px;
+}
+
+.hud-customize-popover {
+  top: 52px;
+  left: 50%;
+  z-index: 24;
+  width: min(430px, calc(100vw - 48px));
+  transform: translateX(-50%);
+}
+
+.hud-preference-control {
+  display: grid;
+  grid-template-columns: 64px 1fr 44px;
+  align-items: center;
+  gap: 8px;
+  color: #d9f2ff;
+  font: 12px/1.4 system-ui, sans-serif;
+}
+
+.hud-preference-control output {
+  color: #8fb4c8;
+  text-align: right;
+}
+
+.hud-customize-hint {
+  margin: 0;
+  color: #8fb4c8;
+  font: 11px/1.4 system-ui, sans-serif;
 }
 
 .hud-popover-header {

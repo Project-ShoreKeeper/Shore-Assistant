@@ -19,6 +19,7 @@ interface HudCommandBarProps {
     onResult?: (result: HudActionResult) => void,
   ) => string;
   onPromptSent: () => void;
+  onCustomize: () => void;
 }
 
 export default function HudCommandBar({
@@ -31,6 +32,7 @@ export default function HudCommandBar({
   setPaletteOpen,
   sendAction,
   onPromptSent,
+  onCustomize,
 }: HudCommandBarProps) {
   const [draft, setDraft] = useState("");
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -165,6 +167,17 @@ export default function HudCommandBar({
               })}
             >
               Open chat
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              disabled={hasPending}
+              onClick={() => {
+                setPaletteOpen(false);
+                onCustomize();
+              }}
+            >
+              Customize HUD
             </button>
           </div>
         )}

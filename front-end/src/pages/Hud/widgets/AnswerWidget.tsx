@@ -59,6 +59,7 @@ export default function AnswerWidget({
       <button
         type="button"
         className="hud-widget hud-bl"
+        data-hud-widget="answer"
         aria-expanded={expanded}
         onClick={() => {
           if (active) onToggle();

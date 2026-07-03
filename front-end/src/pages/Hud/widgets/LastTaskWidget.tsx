@@ -29,6 +29,7 @@ export default function LastTaskWidget({
       <button
         type="button"
         className="hud-widget hud-tr"
+        data-hud-widget="task"
         aria-expanded={expanded}
         onClick={() => {
           if (active && task) onToggle();

@@ -43,6 +43,7 @@ export default function ConnectionWidget({
       <button
         type="button"
         className="hud-widget hud-br"
+        data-hud-widget="connection"
         aria-expanded={expanded}
         onClick={() => {
           if (active) onToggle();

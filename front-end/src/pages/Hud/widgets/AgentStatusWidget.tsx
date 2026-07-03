@@ -39,6 +39,7 @@ export default function AgentStatusWidget({
       <button
         type="button"
         className="hud-widget hud-tl"
+        data-hud-widget="agent"
         aria-expanded={expanded}
         onClick={() => {
           if (active) onToggle();

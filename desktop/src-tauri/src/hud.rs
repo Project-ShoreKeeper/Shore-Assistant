@@ -25,16 +25,53 @@ fn apply_mode(app: &AppHandle, active: bool) -> Result<(), String> {
     let Some(hud) = app.get_webview_window(HUD_LABEL) else {
         return Err("HUD window is not open.".to_string());
     };
+    if active {
+        hud.set_focusable(true)
+            .map_err(|e| format!("Failed to make HUD focusable: {e}"))?;
+        if let Err(error) = hud.set_ignore_cursor_events(false) {
+            if let Err(rollback_error) = hud.set_focusable(false) {
+                eprintln!("[HUD] Failed to roll back focusable state: {rollback_error}");
+            }
+            return Err(format!("Failed to enable HUD interaction: {error}"));
+        }
+        if let Err(error) = hud.set_focus() {
+            if let Err(rollback_error) = hud.set_ignore_cursor_events(true) {
+                eprintln!("[HUD] CRITICAL: failed to restore click-through: {rollback_error}");
+            }
+            if let Err(rollback_error) = hud.set_focusable(false) {
+                eprintln!("[HUD] Failed to roll back focusable state: {rollback_error}");
+            }
+            return Err(format!("Failed to focus HUD: {error}"));
+        }
+    } else {
+        hud.set_ignore_cursor_events(true)
+            .map_err(|e| format!("Failed to restore HUD click-through: {e}"))?;
+        if let Err(error) = hud.set_focusable(false) {
+            eprintln!("[HUD] Failed to make passive HUD non-focusable: {error}");
+        }
+    }
+
     app.state::<HudState>()
         .active
         .store(active, Ordering::SeqCst);
-    hud.set_ignore_cursor_events(!active)
-        .map_err(|e| format!("Failed to toggle click-through: {e}"))?;
-    let _ = hud.set_focusable(active);
-    if active {
-        let _ = hud.set_focus();
+    if let Err(error) = app.emit_to(
+        HUD_LABEL,
+        "hud://mode",
+        serde_json::json!({ "active": active }),
+    ) {
+        if active {
+            app.state::<HudState>()
+                .active
+                .store(false, Ordering::SeqCst);
+            if let Err(rollback_error) = hud.set_ignore_cursor_events(true) {
+                eprintln!("[HUD] CRITICAL: failed to restore click-through: {rollback_error}");
+            }
+            if let Err(rollback_error) = hud.set_focusable(false) {
+                eprintln!("[HUD] Failed to roll back focusable state: {rollback_error}");
+            }
+        }
+        return Err(format!("Failed to publish HUD mode: {error}"));
     }
-    let _ = app.emit("hud://mode", serde_json::json!({ "active": active }));
     Ok(())
 }
 
@@ -83,13 +120,22 @@ pub async fn hud_show(app: AppHandle) -> Result<Option<String>, String> {
     app.state::<HudState>()
         .active
         .store(false, Ordering::SeqCst);
+    if let Err(error) = app.emit_to(
+        HUD_LABEL,
+        "hud://mode",
+        serde_json::json!({ "active": false }),
+    ) {
+        eprintln!("[HUD] Failed to publish initial passive mode: {error}");
+    }
 
     let hotkey_warning = app
         .global_shortcut()
         .on_shortcut(HUD_SHORTCUT, |app, _shortcut, event| {
             if event.state() == ShortcutState::Pressed {
                 let next = !app.state::<HudState>().active.load(Ordering::SeqCst);
-                let _ = apply_mode(app, next);
+                if let Err(error) = apply_mode(app, next) {
+                    eprintln!("[HUD] Hotkey mode change failed: {error}");
+                }
             }
         })
         .err()

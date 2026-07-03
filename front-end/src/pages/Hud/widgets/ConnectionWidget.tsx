@@ -24,9 +24,13 @@ export default function ConnectionWidget({
         ? "hud-dot-orange"
         : "hud-dot-red";
   return (
-    <div className="hud-widget hud-br" onClick={onClick}>
+    <button
+      type="button"
+      className="hud-widget hud-br"
+      onClick={onClick}
+    >
       <span className={`hud-dot ${dot}`} />
       {label}
-    </div>
+    </button>
   );
 }

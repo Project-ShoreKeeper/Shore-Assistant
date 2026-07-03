@@ -18,10 +18,12 @@ export function useHudState(): {
   state: HudStatePayload | null;
   active: boolean;
   linked: boolean;
+  modeRevision: number;
 } {
   const [state, setState] = useState<HudStatePayload | null>(null);
   const [active, setActive] = useState(false);
   const [linked, setLinked] = useState(false);
+  const [modeRevision, setModeRevision] = useState(0);
   const lastSeenRef = useRef(0);
 
   useEffect(() => {
@@ -37,6 +39,7 @@ export function useHudState(): {
       });
       const un2 = await listen<{ active: boolean }>(HUD_MODE_EVENT, (e) => {
         setActive(e.payload.active);
+        setModeRevision((revision) => revision + 1);
       });
       if (disposed) {
         un1();
@@ -58,5 +61,5 @@ export function useHudState(): {
     };
   }, []);
 
-  return { state, active, linked };
+  return { state, active, linked, modeRevision };
 }

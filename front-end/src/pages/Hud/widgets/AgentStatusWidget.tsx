@@ -19,9 +19,13 @@ export default function AgentStatusWidget({
   onClick: () => void;
 }) {
   return (
-    <div className="hud-widget hud-tl" onClick={onClick}>
+    <button
+      type="button"
+      className="hud-widget hud-tl"
+      onClick={onClick}
+    >
       <span className={`hud-dot ${DOT[status]}`} />
       {LABEL[status]}
-    </div>
+    </button>
   );
 }

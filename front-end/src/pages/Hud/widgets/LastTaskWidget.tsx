@@ -13,8 +13,12 @@ export default function LastTaskWidget({
   onClick: () => void;
 }) {
   return (
-    <div className="hud-widget hud-tr" onClick={onClick}>
+    <button
+      type="button"
+      className="hud-widget hud-tr"
+      onClick={onClick}
+    >
       {task ? `Last task: ${task.label} · ${relative(task.ts)}` : "No tasks yet"}
-    </div>
+    </button>
   );
 }

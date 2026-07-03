@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useReducer,
+  useRef,
   useState,
 } from "react";
 
@@ -21,6 +22,9 @@ const ACTION_TIMEOUT_MS = 5_000;
 export function useHudActions() {
   const [pending, dispatchPending] = useReducer(reduceHudPending, {});
   const [lastResult, setLastResult] = useState<HudActionResult | null>(null);
+  const callbacksRef = useRef(
+    new Map<string, (result: HudActionResult) => void>(),
+  );
 
   useEffect(() => {
     if (!isTauri()) return;
@@ -36,6 +40,8 @@ export function useHudActions() {
             requestId: event.payload.requestId,
           });
           setLastResult(event.payload);
+          callbacksRef.current.get(event.payload.requestId)?.(event.payload);
+          callbacksRef.current.delete(event.payload.requestId);
         },
       );
       if (disposed) cleanup();
@@ -58,12 +64,20 @@ export function useHudActions() {
       if (timedOut.length === 0) return;
 
       const [requestId] = timedOut[timedOut.length - 1];
-      setLastResult({
+      const result: HudActionResult = {
         requestId,
         ok: false,
         error: "timeout",
         message: "The main app did not answer this HUD action.",
-      });
+      };
+      setLastResult(result);
+      for (const [expiredRequestId] of timedOut) {
+        callbacksRef.current.get(expiredRequestId)?.({
+          ...result,
+          requestId: expiredRequestId,
+        });
+        callbacksRef.current.delete(expiredRequestId);
+      }
       dispatchPending({
         type: "expired",
         now,
@@ -73,15 +87,20 @@ export function useHudActions() {
     return () => window.clearInterval(interval);
   }, [pending]);
 
-  const sendAction = useCallback((request: HudActionRequest): string => {
+  const sendAction = useCallback((
+    request: HudActionRequest,
+    onResult?: (result: HudActionResult) => void,
+  ): string => {
     const requestId = createHudRequestId();
     if (!isTauri()) {
-      setLastResult({
+      const result: HudActionResult = {
         requestId,
         ok: false,
         error: "unavailable",
         message: "HUD actions are available only in the desktop app.",
-      });
+      };
+      setLastResult(result);
+      onResult?.(result);
       return requestId;
     }
 
@@ -97,6 +116,7 @@ export function useHudActions() {
       now: Date.now(),
     });
     setLastResult(null);
+    if (onResult) callbacksRef.current.set(requestId, onResult);
     emitHudAction(action);
     return requestId;
   }, []);

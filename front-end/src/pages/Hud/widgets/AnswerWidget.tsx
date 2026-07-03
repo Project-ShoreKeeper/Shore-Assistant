@@ -7,8 +7,12 @@ export default function AnswerWidget({
 }) {
   if (!answer) return null;
   return (
-    <div className="hud-widget hud-bl" onClick={onClick}>
+    <button
+      type="button"
+      className="hud-widget hud-bl"
+      onClick={onClick}
+    >
       Answer: {answer}
-    </div>
+    </button>
   );
 }

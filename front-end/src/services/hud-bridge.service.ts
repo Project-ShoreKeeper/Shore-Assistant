@@ -164,7 +164,9 @@ export function publishHudState(payload: HudStatePayload): void {
     lastEmitAt = Date.now();
     void import("@tauri-apps/api/event").then(({ emitTo }) =>
       emitTo("hud", HUD_STATE_EVENT, payload),
-    );
+    ).catch((error) => {
+      console.warn("[HUD] Could not publish state:", error);
+    });
   };
   const elapsed = Date.now() - lastEmitAt;
   if (elapsed >= EMIT_THROTTLE_MS) {
@@ -172,7 +174,16 @@ export function publishHudState(payload: HudStatePayload): void {
     return;
   }
   if (trailingTimer) clearTimeout(trailingTimer);
-  trailingTimer = setTimeout(send, EMIT_THROTTLE_MS - elapsed);
+  trailingTimer = setTimeout(() => {
+    trailingTimer = null;
+    send();
+  }, EMIT_THROTTLE_MS - elapsed);
+}
+
+export function cancelPendingHudStatePublish(): void {
+  if (!trailingTimer) return;
+  clearTimeout(trailingTimer);
+  trailingTimer = null;
 }
 
 // ── HUD-window side helpers ──────────────────────────────────────────────
@@ -181,26 +192,34 @@ export function emitHudReady(): void {
   if (!isTauri()) return;
   void import("@tauri-apps/api/event").then(({ emitTo }) =>
     emitTo("main", HUD_READY_EVENT),
-  );
+  ).catch((error) => {
+    console.warn("[HUD] Could not announce ready state:", error);
+  });
 }
 
 export function emitHudFocusMain(): void {
   if (!isTauri()) return;
   void import("@tauri-apps/api/event").then(({ emitTo }) =>
     emitTo("main", HUD_FOCUS_MAIN_EVENT),
-  );
+  ).catch((error) => {
+    console.warn("[HUD] Could not request main-window focus:", error);
+  });
 }
 
 export function emitHudAction(action: HudAction): void {
   if (!isTauri()) return;
   void import("@tauri-apps/api/event").then(({ emitTo }) =>
     emitTo("main", HUD_ACTION_EVENT, action),
-  );
+  ).catch((error) => {
+    console.warn("[HUD] Could not send action:", error);
+  });
 }
 
 export function emitHudActionResult(result: HudActionResult): void {
   if (!isTauri()) return;
   void import("@tauri-apps/api/event").then(({ emitTo }) =>
     emitTo("hud", HUD_ACTION_RESULT_EVENT, result),
-  );
+  ).catch((error) => {
+    console.warn("[HUD] Could not publish action result:", error);
+  });
 }

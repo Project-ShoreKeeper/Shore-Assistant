@@ -11,6 +11,7 @@ import {
   HUD_ACTION_EVENT,
   HUD_FOCUS_MAIN_EVENT,
   HUD_READY_EVENT,
+  cancelPendingHudStatePublish,
   deriveHudState,
   emitHudActionResult,
   publishHudState,
@@ -33,6 +34,7 @@ export type HudActionExecutor = (
 export function useHudBridge(
   input: HudBridgeInput,
   executeAction?: HudActionExecutor,
+  enabled = true,
 ): void {
   const inputRef = useRef(input);
   const executorRef = useRef(executeAction);
@@ -42,12 +44,12 @@ export function useHudBridge(
   // Push on every relevant state change (throttled inside publishHudState).
   const snapshot = JSON.stringify(deriveHudState(input));
   useEffect(() => {
-    if (!isTauri()) return;
+    if (!enabled || !isTauri()) return;
     publishHudState(deriveHudState(inputRef.current));
-  }, [snapshot]);
+  }, [enabled, snapshot]);
 
   useEffect(() => {
-    if (!isTauri()) return;
+    if (!enabled || !isTauri()) return;
     const unlisteners: Array<() => void> = [];
     let disposed = false;
 
@@ -99,6 +101,7 @@ export function useHudBridge(
       disposed = true;
       unlisteners.forEach((fn) => fn());
       clearInterval(heartbeat);
+      cancelPendingHudStatePublish();
     };
-  }, []);
+  }, [enabled]);
 }

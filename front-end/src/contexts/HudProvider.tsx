@@ -92,6 +92,7 @@ export function HudProvider({ children }: { children: React.ReactNode }) {
       messages,
     },
     executeAction,
+    enabled,
   );
 
   const setEnabled = useCallback(async (nextEnabled: boolean) => {

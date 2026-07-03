@@ -67,6 +67,16 @@ describe("validateHudAction", () => {
     });
     expect(parsed.ok).toBe(false);
   });
+
+  it("accepts a bounded message target for main-window focus", () => {
+    const parsed = validateHudAction({
+      requestId: "request-1",
+      version: 1,
+      action: "focus_main",
+      payload: { destination: "chat", messageId: "message-1" },
+    });
+    expect(parsed.ok).toBe(true);
+  });
 });
 
 describe("HudActionDeduplicator", () => {

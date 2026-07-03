@@ -118,6 +118,8 @@ function PageChat() {
     enabled: hudEnabled,
     error: hudError,
     setEnabled: setHudEnabled,
+    navigationTarget: hudNavigationTarget,
+    clearNavigationTarget: clearHudNavigationTarget,
   } = useHud();
 
   const [inputText, setInputText] = useState("");
@@ -155,6 +157,38 @@ function PageChat() {
   };
 
   const terminal = useTerminal();
+
+  useEffect(() => {
+    if (!hudNavigationTarget) return;
+    const timer = window.setTimeout(() => {
+      if (hudNavigationTarget.destination === "settings" && rightCollapsed) {
+        toggleRight();
+      }
+      if (hudNavigationTarget.destination === "terminal") {
+        setTerminalOpen(true);
+      }
+      if (hudNavigationTarget.messageId) {
+        const message = document.querySelector<HTMLElement>(
+          `[data-message-id="${hudNavigationTarget.messageId}"]`,
+        );
+        message?.scrollIntoView({ behavior: "smooth", block: "center" });
+        message?.classList.add("hud-message-target");
+        if (message) {
+          window.setTimeout(
+            () => message.classList.remove("hud-message-target"),
+            1_600,
+          );
+        }
+      }
+      clearHudNavigationTarget(hudNavigationTarget.requestId);
+    }, 50);
+    return () => window.clearTimeout(timer);
+  }, [
+    clearHudNavigationTarget,
+    hudNavigationTarget,
+    rightCollapsed,
+    toggleRight,
+  ]);
 
   // Track whether user is near the bottom of the chat. Auto-scroll only when
   // they are — so scrolling up to read tool output / thinking isn't fought by
@@ -282,6 +316,7 @@ function PageChat() {
     return (
       <Flex
         key={msg.id}
+        data-message-id={msg.id}
         justify={isUser ? "end" : "start"}
         mb="4"
         gap="2"

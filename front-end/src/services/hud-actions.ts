@@ -32,7 +32,10 @@ export type HudAction =
       requestId: string;
       version: 1;
       action: "focus_main";
-      payload: { destination: "chat" | "settings" | "terminal" };
+      payload: {
+        destination: "chat" | "settings" | "terminal";
+        messageId?: string;
+      };
     }
   | {
       requestId: string;
@@ -151,9 +154,13 @@ export function validateHudAction(value: unknown): HudActionValidation {
       if (
         !hasOnlyKeys(value, ["requestId", "version", "action", "payload"])
         || !isRecord(value.payload)
-        || !hasOnlyKeys(value.payload, ["destination"])
+        || !hasOnlyKeys(value.payload, ["destination", "messageId"])
         || !["chat", "settings", "terminal"].includes(
           String(value.payload.destination),
+        )
+        || (
+          value.payload.messageId !== undefined
+          && !validRequestId(value.payload.messageId)
         )
       ) {
         return invalidResult(requestId, "Invalid focus destination.");
@@ -169,6 +176,9 @@ export function validateHudAction(value: unknown): HudActionValidation {
               | "chat"
               | "settings"
               | "terminal",
+            ...(typeof value.payload.messageId === "string"
+              ? { messageId: value.payload.messageId }
+              : {}),
           },
         },
       };

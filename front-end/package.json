@@ -8,7 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test:hud": "vitest run src/services/hud-actions.test.ts"
+    "test:hud": "vitest run src/services/hud-actions.test.ts src/services/hud-bridge.test.ts src/services/chat-websocket.service.test.ts"
   },
   "dependencies": {
     "@huggingface/transformers": "^3.8.1",

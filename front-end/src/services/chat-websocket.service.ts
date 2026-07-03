@@ -210,6 +210,7 @@ export class ChatWebSocketService {
   private maxRetries = 3;
   private reconnectTimeoutId: ReturnType<typeof setTimeout> | null = null;
   private intentionToClose = false;
+  private lastCloseCode: number | null = null;
 
   private eventListeners: Partial<
     Record<keyof ChatWSEvents, ChatWSEventCallback<keyof ChatWSEvents>[]>
@@ -250,30 +251,43 @@ export class ChatWebSocketService {
       // Browser WebSocket does not support custom Authorization headers.
       // Send the opaque token as a subprotocol credential; the server
       // selects only the non-secret "bearer" protocol in its response.
-      this.socket = accessToken
+      const socket = accessToken
         ? new WebSocket(this.url, ["bearer", accessToken])
         : new WebSocket(this.url);
-      this.socket.binaryType = "arraybuffer";
+      this.socket = socket;
+      socket.binaryType = "arraybuffer";
 
-      this.socket.onopen = this.handleOpen.bind(this);
-      this.socket.onclose = this.handleClose.bind(this);
-      this.socket.onerror = this.handleError.bind(this);
-      this.socket.onmessage = this.handleMessage.bind(this);
-    } catch {
+      socket.onopen = () => this.handleOpen(socket);
+      socket.onclose = (event) => this.handleClose(socket, event);
+      socket.onerror = (event) => this.handleError(socket, event);
+      socket.onmessage = (event) => this.handleMessage(socket, event);
+    } catch (error) {
+      this.socket = null;
+      console.error("[Chat WS] Could not create WebSocket:", error);
       this.updateStatus("ERROR");
     }
   }
 
   public disconnect(): void {
     this.intentionToClose = true;
-    if (this.reconnectTimeoutId) {
-      clearTimeout(this.reconnectTimeoutId);
-    }
-    if (this.socket) {
-      this.updateStatus("CLOSING");
-      this.socket.close();
-      this.socket = null;
-    }
+    this.clearReconnectTimer();
+    this.disposeSocket();
+    this.updateStatus("CLOSED");
+  }
+
+  public reconnect(): boolean {
+    if (this.lastCloseCode === 4401) return false;
+    this.intentionToClose = false;
+    this.retryCount = 0;
+    this.clearReconnectTimer();
+    this.disposeSocket();
+    this.updateStatus("CLOSED");
+    this.connect();
+    return this.status === "CONNECTING" || this.status === "OPEN";
+  }
+
+  public getLastCloseCode(): number | null {
+    return this.lastCloseCode;
   }
 
   // ─── Send methods ───
@@ -411,14 +425,18 @@ export class ChatWebSocketService {
 
   // ─── Internal handlers ───
 
-  private handleOpen(): void {
+  private handleOpen(socket: WebSocket): void {
+    if (this.socket !== socket) return;
     this.retryCount = 0;
+    this.lastCloseCode = null;
     this.updateStatus("OPEN");
     this.emit("open", undefined as unknown as void);
   }
 
-  private handleClose(event: CloseEvent): void {
+  private handleClose(socket: WebSocket, event: CloseEvent): void {
+    if (this.socket !== socket) return;
     this.socket = null;
+    this.lastCloseCode = event.code;
     this.updateStatus("CLOSED");
     this.emit("close", { code: event.code, reason: event.reason });
 
@@ -436,16 +454,21 @@ export class ChatWebSocketService {
       console.log(
         `[Chat WS] Reconnecting ${this.retryCount}/${this.maxRetries} in ${timeout}ms...`,
       );
-      this.reconnectTimeoutId = setTimeout(() => this.connect(), timeout);
+      this.reconnectTimeoutId = setTimeout(() => {
+        this.reconnectTimeoutId = null;
+        this.connect();
+      }, timeout);
     }
   }
 
-  private handleError(event: Event): void {
+  private handleError(socket: WebSocket, event: Event): void {
+    if (this.socket !== socket) return;
     this.updateStatus("ERROR");
     this.emit("error", event);
   }
 
-  private handleMessage(event: MessageEvent): void {
+  private handleMessage(socket: WebSocket, event: MessageEvent): void {
+    if (this.socket !== socket) return;
     if (typeof event.data === "string") {
       try {
         const parsed = JSON.parse(event.data);
@@ -472,6 +495,24 @@ export class ChatWebSocketService {
 
   private isReady(): boolean {
     return !!this.socket && this.socket.readyState === WebSocket.OPEN;
+  }
+
+  private clearReconnectTimer(): void {
+    if (!this.reconnectTimeoutId) return;
+    clearTimeout(this.reconnectTimeoutId);
+    this.reconnectTimeoutId = null;
+  }
+
+  private disposeSocket(): void {
+    const socket = this.socket;
+    if (!socket) return;
+    this.socket = null;
+    this.updateStatus("CLOSING");
+    socket.onopen = null;
+    socket.onclose = null;
+    socket.onerror = null;
+    socket.onmessage = null;
+    socket.close();
   }
 }
 

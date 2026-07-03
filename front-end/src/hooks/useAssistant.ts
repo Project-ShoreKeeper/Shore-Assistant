@@ -9,7 +9,10 @@ import {
   type PersistedImage,
 } from "../services/chat-websocket.service";
 import { float32ToWav } from "../utils/audio.util";
-import { fetchBlobUrl } from "../services/http.service";
+import {
+  fetchBlobUrl,
+  notifyUnauthorized,
+} from "../services/http.service";
 import {
   captureFrameDataUrl,
   captureThumbnailDataUrl,
@@ -81,6 +84,8 @@ export interface UseAssistantReturn {
   // Connection
   wsStatus: WebSocketStatus;
   isConnected: boolean;
+  lastCloseCode: number | null;
+  reconnectChat: () => AssistantControlResult;
 
   messages: ChatMessage[];
   isAssistantThinking: boolean;
@@ -123,6 +128,7 @@ export function useAssistant(): UseAssistantReturn {
 
   // WebSocket state
   const [wsStatus, setWsStatus] = useState<WebSocketStatus>("CLOSED");
+  const [lastCloseCode, setLastCloseCode] = useState<number | null>(null);
   const [language, setLanguage] = useState(STT_DEFAULT_LANGUAGE);
   const languageRef = useRef(STT_DEFAULT_LANGUAGE);
   const [thinkingEnabled, setThinkingEnabled] = useState(false);
@@ -230,10 +236,15 @@ export function useAssistant(): UseAssistantReturn {
     const handleStatusChange = (status: WebSocketStatus) => setWsStatus(status);
 
     const handleOpen = () => {
+      setLastCloseCode(null);
       ws.sendConfig({
         language: languageRef.current,
         thinking: thinkingEnabledRef.current,
       });
+    };
+    const handleClose = ({ code }: { code: number }) => {
+      setLastCloseCode(code);
+      if (code === 4401) notifyUnauthorized();
     };
 
     const handleMessage = (msg: ChatServerMessage) => {
@@ -719,6 +730,7 @@ export function useAssistant(): UseAssistantReturn {
 
     ws.on("statusChange", handleStatusChange);
     ws.on("open", handleOpen);
+    ws.on("close", handleClose);
     ws.on("message", handleMessage);
     ws.on("binaryMessage", handleBinaryMessage);
 
@@ -727,6 +739,7 @@ export function useAssistant(): UseAssistantReturn {
     return () => {
       ws.off("statusChange", handleStatusChange);
       ws.off("open", handleOpen);
+      ws.off("close", handleClose);
       ws.off("message", handleMessage);
       ws.off("binaryMessage", handleBinaryMessage);
       stopCopilotFrameLoop();
@@ -907,6 +920,25 @@ export function useAssistant(): UseAssistantReturn {
     [],
   );
 
+  const reconnectChat = useCallback((): AssistantControlResult => {
+    if (lastCloseCode === 4401) {
+      notifyUnauthorized();
+      return {
+        ok: false,
+        error: "unavailable",
+        message: "Session expired. Sign in again.",
+      };
+    }
+    if (!wsRef.current?.reconnect()) {
+      return {
+        ok: false,
+        error: "unavailable",
+        message: "Could not start reconnect.",
+      };
+    }
+    return { ok: true, message: "Reconnecting…" };
+  }, [lastCloseCode]);
+
   const cancelGeneration = useCallback((): AssistantControlResult => {
     if (!isAssistantThinking) {
       return {
@@ -1014,6 +1046,8 @@ export function useAssistant(): UseAssistantReturn {
 
     wsStatus,
     isConnected: wsStatus === "OPEN",
+    lastCloseCode,
+    reconnectChat,
 
     messages,
     isAssistantThinking,

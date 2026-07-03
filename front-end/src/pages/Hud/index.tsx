@@ -28,7 +28,7 @@ export default function PageHud() {
     setPalette({ open, modeRevision });
   }, [modeRevision]);
   const [panel, setPanel] = useState<{
-    name: "agent" | null;
+    name: "agent" | "task" | "answer" | "connection" | null;
     modeRevision: number;
   }>({ name: null, modeRevision: 0 });
   const openPanel = panel.modeRevision === modeRevision ? panel.name : null;
@@ -54,13 +54,20 @@ export default function PageHud() {
     dismissTopLayer,
   });
 
-  const focusMain = () => {
-    if (active && !hasPending) {
-      sendAction({
-        action: "focus_main",
-        payload: { destination: "chat" },
-      });
-    }
+  const capabilities = state?.capabilities ?? {
+    sendPrompt: false,
+    cancelGeneration: false,
+    stopCopilot: false,
+    retryConnection: false,
+    terminalConfirm: false,
+  };
+  const togglePanel = (
+    name: "agent" | "task" | "answer" | "connection",
+  ) => {
+    setPanel({
+      name: openPanel === name ? null : name,
+      modeRevision,
+    });
   };
 
   return (
@@ -69,13 +76,7 @@ export default function PageHud() {
       <HudCommandBar
         active={active}
         linked={linked}
-        capabilities={state?.capabilities ?? {
-          sendPrompt: false,
-          cancelGeneration: false,
-          stopCopilot: false,
-          retryConnection: false,
-          terminalConfirm: false,
-        }}
+        capabilities={capabilities}
         hasPending={hasPending}
         lastResult={lastResult}
         paletteOpen={paletteOpen}
@@ -87,26 +88,36 @@ export default function PageHud() {
         status={state?.agent ?? "idle"}
         active={active}
         expanded={openPanel === "agent"}
-        capabilities={state?.capabilities ?? {
-          sendPrompt: false,
-          cancelGeneration: false,
-          stopCopilot: false,
-          retryConnection: false,
-          terminalConfirm: false,
-        }}
+        capabilities={capabilities}
         hasPending={hasPending}
-        onToggle={() => setPanel({
-          name: openPanel === "agent" ? null : "agent",
-          modeRevision,
-        })}
+        onToggle={() => togglePanel("agent")}
         sendAction={sendAction}
       />
-      <LastTaskWidget task={state?.lastTask ?? null} onClick={focusMain} />
-      <AnswerWidget answer={state?.answer ?? null} onClick={focusMain} />
+      <LastTaskWidget
+        task={state?.lastTask ?? null}
+        active={active}
+        expanded={openPanel === "task"}
+        hasPending={hasPending}
+        onToggle={() => togglePanel("task")}
+        sendAction={sendAction}
+      />
+      <AnswerWidget
+        answer={state?.answer ?? null}
+        active={active}
+        expanded={openPanel === "answer"}
+        hasPending={hasPending}
+        onToggle={() => togglePanel("answer")}
+        sendAction={sendAction}
+      />
       <ConnectionWidget
         connection={state?.connection ?? "offline"}
         linked={linked}
-        onClick={focusMain}
+        active={active}
+        expanded={openPanel === "connection"}
+        capabilities={capabilities}
+        hasPending={hasPending}
+        onToggle={() => togglePanel("connection")}
+        sendAction={sendAction}
       />
     </div>
   );

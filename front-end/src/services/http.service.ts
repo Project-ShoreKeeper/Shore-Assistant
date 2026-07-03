@@ -72,6 +72,10 @@ export function onUnauthorized(fn: UnauthorizedListener): () => void {
   return () => _onUnauthorized.delete(fn);
 }
 
+export function notifyUnauthorized(): void {
+  _onUnauthorized.forEach((fn) => fn());
+}
+
 function _isWrite(method?: string): boolean {
   const m = (method || "GET").toUpperCase();
   return m === "POST" || m === "PUT" || m === "PATCH" || m === "DELETE";
@@ -102,7 +106,7 @@ export async function apiFetch<T>(
   });
 
   if (res.status === 401) {
-    _onUnauthorized.forEach((fn) => fn());
+    notifyUnauthorized();
   }
 
   if (!res.ok) {
@@ -140,7 +144,7 @@ export async function fetchBlobUrl(path: string): Promise<string | null> {
       headers,
     });
     if (res.status === 401) {
-      _onUnauthorized.forEach((fn) => fn());
+      notifyUnauthorized();
     }
     if (!res.ok) {
       return null;

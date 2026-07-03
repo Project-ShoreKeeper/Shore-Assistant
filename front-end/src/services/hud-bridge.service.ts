@@ -28,12 +28,26 @@ export const HUD_FOCUS_MAIN_EVENT = "hud://focus-main";
 export type HudAgentStatus = "thinking" | "monitoring" | "idle";
 export type HudConnection = "active" | "reconnecting" | "offline";
 
+export interface HudTask {
+  messageId: string;
+  actionId: string;
+  tool: string;
+  status: "running" | "completed" | "error";
+  summary: string;
+  ts: number;
+}
+
+export interface HudAnswer {
+  messageId: string;
+  text: string;
+}
+
 export interface HudStatePayload {
   agent: HudAgentStatus;
   /** Last agent tool action, or null if none this session. */
-  lastTask: { label: string; ts: number } | null;
-  /** Tail of the latest assistant answer, or null. */
-  answer: string | null;
+  lastTask: HudTask | null;
+  /** Bounded latest assistant answer, or null. */
+  answer: HudAnswer | null;
   connection: HudConnection;
   capabilities: {
     sendPrompt: boolean;
@@ -47,17 +61,25 @@ export interface HudStatePayload {
 /** Duck-typed subset of ChatMessage — avoids importing the hook's types. */
 export interface HudBridgeInput {
   wsStatus: WebSocketStatus;
+  lastCloseCode?: number | null;
   copilotActive: boolean;
   isAssistantThinking: boolean;
   messages: Array<{
+    id: string;
     role: "user" | "assistant";
     text: string;
-    agentActions?: Array<{ tool?: string; detail: string; timestamp: Date }>;
+    agentActions?: Array<{
+      id: string;
+      tool?: string;
+      detail: string;
+      status: "running" | "completed" | "error";
+      timestamp: Date;
+    }>;
   }>;
 }
 
-const ANSWER_TAIL_CHARS = 240;
-const TASK_LABEL_CHARS = 60;
+const ANSWER_PREVIEW_CHARS = 4_000;
+const TASK_TOOL_CHARS = 60;
 const EMIT_THROTTLE_MS = 250;
 
 export function deriveHudState(input: HudBridgeInput): HudStatePayload {
@@ -72,19 +94,36 @@ export function deriveHudState(input: HudBridgeInput): HudStatePayload {
     const actions = input.messages[i].agentActions;
     if (actions && actions.length > 0) {
       const a = actions[actions.length - 1];
+      const tool = (a.tool || "Tool").slice(0, TASK_TOOL_CHARS);
+      const statusLabel = a.status === "running"
+        ? "is running"
+        : a.status === "error"
+          ? "failed"
+          : "completed";
       lastTask = {
-        label: (a.tool || a.detail).slice(0, TASK_LABEL_CHARS),
+        messageId: input.messages[i].id,
+        actionId: a.id,
+        tool,
+        status: a.status,
+        // Raw args, detail and result are intentionally excluded. They may
+        // contain commands, signed URLs, tokens, file contents or image data.
+        summary: `${tool} ${statusLabel}`.slice(0, 240),
         ts: a.timestamp.getTime(),
       };
     }
   }
 
-  let answer: string | null = null;
+  let answer: HudAnswer | null = null;
   for (let i = input.messages.length - 1; i >= 0 && answer === null; i--) {
     const message = input.messages[i];
     if (message.role !== "assistant") continue;
-    const text = message.text.trim().replace(/\s+/g, " ");
-    if (text) answer = text.slice(-ANSWER_TAIL_CHARS);
+    const text = message.text.trim();
+    if (text) {
+      answer = {
+        messageId: message.id,
+        text: text.slice(0, ANSWER_PREVIEW_CHARS),
+      };
+    }
   }
 
   const connection: HudConnection =
@@ -105,7 +144,9 @@ export function deriveHudState(input: HudBridgeInput): HudStatePayload {
         input.wsStatus === "OPEN" && input.isAssistantThinking,
       stopCopilot: input.wsStatus === "OPEN" && input.copilotActive,
       retryConnection:
-        input.wsStatus !== "OPEN" && input.wsStatus !== "CONNECTING",
+        input.lastCloseCode !== 4401
+        && input.wsStatus !== "OPEN"
+        && input.wsStatus !== "CONNECTING",
       terminalConfirm: false,
     },
   };

@@ -21,3 +21,17 @@
     touch-action: pan-y !important;
   }
 }
+@keyframes hud-message-highlight {
+  0%,
+  100% {
+    background: transparent;
+  }
+  30% {
+    background: color-mix(in srgb, var(--cyan-5) 35%, transparent);
+  }
+}
+
+.hud-message-target {
+  border-radius: 12px;
+  animation: hud-message-highlight 1.6s ease-out;
+}

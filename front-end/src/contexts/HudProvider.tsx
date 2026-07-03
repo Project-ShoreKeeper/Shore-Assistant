@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 
 import { useAssistantContext } from "@Shore/contexts/AssistantContext";
 import { HudContext } from "@Shore/contexts/hud-context";
+import type { HudNavigationTarget } from "@Shore/contexts/hud-context";
 import { useHudBridge } from "@Shore/hooks/useHudBridge";
 import type {
   HudAction,
@@ -12,20 +13,25 @@ import type {
 import { isTauri } from "@Shore/utils/tauri.util";
 
 const HUD_ENABLED_KEY = "shore.hud.enabled";
+let pendingUnmountHide = 0;
 
 export function HudProvider({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
   const {
     wsStatus,
+    lastCloseCode,
     copilotActive,
     isAssistantThinking,
     messages,
     sendTextMessage,
     cancelGeneration,
     stopCopilot,
+    reconnectChat,
   } = useAssistantContext();
   const [enabled, setEnabledState] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [navigationTarget, setNavigationTarget] =
+    useState<HudNavigationTarget | null>(null);
 
   const executeAction = useCallback(async (
     action: HudAction,
@@ -45,6 +51,13 @@ export function HudProvider({ children }: { children: React.ReactNode }) {
             message: "Main-window focus is available only on desktop.",
           };
         }
+        setNavigationTarget({
+          requestId: action.requestId,
+          destination: action.payload.destination,
+          ...(action.payload.messageId
+            ? { messageId: action.payload.messageId }
+            : {}),
+        });
         await invoke("hud_set_mode", { active: false });
         navigate("/chat");
         const { getCurrentWindow } = await import("@tauri-apps/api/window");
@@ -54,11 +67,7 @@ export function HudProvider({ children }: { children: React.ReactNode }) {
         return { ok: true, message: "Opened the main app." };
       }
       case "retry_connection":
-        return {
-          ok: false,
-          error: "unavailable",
-          message: "Manual reconnect is not available yet.",
-        };
+        return reconnectChat();
       case "terminal_confirm":
         return {
           ok: false,
@@ -69,12 +78,19 @@ export function HudProvider({ children }: { children: React.ReactNode }) {
   }, [
     cancelGeneration,
     navigate,
+    reconnectChat,
     sendTextMessage,
     stopCopilot,
   ]);
 
   useHudBridge(
-    { wsStatus, copilotActive, isAssistantThinking, messages },
+    {
+      wsStatus,
+      lastCloseCode,
+      copilotActive,
+      isAssistantThinking,
+      messages,
+    },
     executeAction,
   );
 
@@ -114,8 +130,34 @@ export function HudProvider({ children }: { children: React.ReactNode }) {
     return () => window.clearTimeout(timer);
   }, [setEnabled]);
 
+  useEffect(() => {
+    window.clearTimeout(pendingUnmountHide);
+    pendingUnmountHide = 0;
+    return () => {
+      // Delay cleanup so React StrictMode's development remount can cancel it.
+      // A real route/auth unmount hides stale conversation data immediately.
+      pendingUnmountHide = window.setTimeout(() => {
+        if (isTauri()) void invoke("hud_hide");
+      }, 100);
+    };
+  }, []);
+
+  const clearNavigationTarget = useCallback((requestId: string) => {
+    setNavigationTarget((current) =>
+      current?.requestId === requestId ? null : current
+    );
+  }, []);
+
   return (
-    <HudContext.Provider value={{ enabled, error, setEnabled }}>
+    <HudContext.Provider
+      value={{
+        enabled,
+        error,
+        setEnabled,
+        navigationTarget,
+        clearNavigationTarget,
+      }}
+    >
       {children}
     </HudContext.Provider>
   );

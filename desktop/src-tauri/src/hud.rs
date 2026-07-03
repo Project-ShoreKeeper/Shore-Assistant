@@ -1,6 +1,7 @@
 //! HUD overlay window: transparent, always-on-top, click-through cover of
-//! the primary monitor. Created on demand by `hud_show` (so the webview
-//! costs nothing while the HUD is off) and destroyed by `hud_hide`.
+//! the primary monitor's usable work area (excluding the macOS menu bar
+//! and Dock). Created on demand by `hud_show` (so the webview costs nothing
+//! while the HUD is off) and destroyed by `hud_hide`.
 //!
 //! Two modes, tracked in [`HudState`]: passive (cursor events ignored,
 //! window not focusable) and active (interactive). The global shortcut
@@ -24,7 +25,9 @@ fn apply_mode(app: &AppHandle, active: bool) -> Result<(), String> {
     let Some(hud) = app.get_webview_window(HUD_LABEL) else {
         return Err("HUD window is not open.".to_string());
     };
-    app.state::<HudState>().active.store(active, Ordering::SeqCst);
+    app.state::<HudState>()
+        .active
+        .store(active, Ordering::SeqCst);
     hud.set_ignore_cursor_events(!active)
         .map_err(|e| format!("Failed to toggle click-through: {e}"))?;
     let _ = hud.set_focusable(active);
@@ -50,8 +53,12 @@ pub async fn hud_show(app: AppHandle) -> Result<Option<String>, String> {
         .map_err(|e| format!("Monitor query failed: {e}"))?
         .ok_or_else(|| "No primary monitor found.".to_string())?;
     let scale = monitor.scale_factor();
-    let size = monitor.size().to_logical::<f64>(scale);
-    let pos = monitor.position().to_logical::<f64>(scale);
+    // Use the OS-visible work area instead of the monitor's full bounds.
+    // On macOS this keeps the top HUD widgets below the menu bar/notch and
+    // the bottom widgets above the Dock without hardcoding either inset.
+    let work_area = monitor.work_area();
+    let size = work_area.size.to_logical::<f64>(scale);
+    let pos = work_area.position.to_logical::<f64>(scale);
 
     let hud = WebviewWindowBuilder::new(&app, HUD_LABEL, WebviewUrl::App("/hud".into()))
         .transparent(true)
@@ -73,7 +80,9 @@ pub async fn hud_show(app: AppHandle) -> Result<Option<String>, String> {
         return Err(format!("Failed to enable click-through: {e}"));
     }
 
-    app.state::<HudState>().active.store(false, Ordering::SeqCst);
+    app.state::<HudState>()
+        .active
+        .store(false, Ordering::SeqCst);
 
     let hotkey_warning = app
         .global_shortcut()
@@ -91,9 +100,12 @@ pub async fn hud_show(app: AppHandle) -> Result<Option<String>, String> {
 #[tauri::command]
 pub async fn hud_hide(app: AppHandle) -> Result<(), String> {
     let _ = app.global_shortcut().unregister(HUD_SHORTCUT);
-    app.state::<HudState>().active.store(false, Ordering::SeqCst);
+    app.state::<HudState>()
+        .active
+        .store(false, Ordering::SeqCst);
     if let Some(hud) = app.get_webview_window(HUD_LABEL) {
-        hud.close().map_err(|e| format!("Failed to close HUD window: {e}"))?;
+        hud.close()
+            .map_err(|e| format!("Failed to close HUD window: {e}"))?;
     }
     Ok(())
 }

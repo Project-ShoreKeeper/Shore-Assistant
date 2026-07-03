@@ -3,10 +3,11 @@
 **Date:** 2026-07-03
 **Status:** Draft (pending user review)
 **Scope:** A second, fully transparent, always-on-top Tauri window that covers the
-primary monitor and renders an ambient HUD: a soft glowing ring around the screen
-edges plus four low-opacity corner widgets (agent status, last task, thought
-process, connection). Click-through by default; a global hotkey (`Cmd+Shift+Space`)
-switches between **passive** (observe-only) and **active** (interactive) modes.
+primary monitor's usable work area (excluding the macOS menu bar/notch and Dock)
+and renders an ambient HUD: a soft glowing ring around the work-area edges plus
+four low-opacity corner widgets (agent status, last task, thought process,
+connection). Click-through by default; a global hotkey (`Cmd+Shift+Space`) switches
+between **passive** (observe-only) and **active** (interactive) modes.
 **Out of scope (Phase 1):** Windows/Linux support, multi-monitor coverage, voice
 invocation from the HUD, overlaying apps in native macOS fullscreen Spaces, a
 standalone HUD process with its own backend connection.
@@ -77,7 +78,8 @@ front-end/src/
   window on demand: `WebviewWindowBuilder::new(app, "hud", App("/hud"))` with
   `transparent(true)`, `decorations(false)`, `always_on_top(true)`,
   `skip_taskbar(true)`, `visible_on_all_workspaces(true)`, `focusable(false)` in
-  passive mode, position/size taken from the primary monitor, and
+  passive mode, position/size taken from the primary monitor's `work_area()` so
+  widgets stay below the macOS menu bar/notch and above the Dock, and
   `set_ignore_cursor_events(true)` immediately after creation. `hud_hide` closes it.
   Building at runtime (vs a static entry in `tauri.conf.json`) avoids paying the
   webview cost when the HUD is off.

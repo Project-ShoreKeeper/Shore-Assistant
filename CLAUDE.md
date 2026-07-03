@@ -24,13 +24,14 @@ FastAPI Backend (Python) — orchestrator, no local AI/ML deps
   ├── /api/services — GET list + POST {name}/{start,stop} for registered services (admin + CSRF on writes)
   ├── ai_client (gRPC) — STT.Transcribe / TTS.Synthesize (server-streaming PCM) / Embed.Encode / Health.Get → shore-ai-service; Start/Stop/Status → shore-ai-supervisor
   ├── LLM Agent   (llama.cpp llama-server, OpenAI-compatible /v1/chat/completions, native tool calling, bounded multi-round loop)
+  ├── Computer use (EvoCUA-8B sub-agent via a second llama-server on port 8081; task-driven, no proactive screen monitoring)
   ├── Tool Retriever (embedding cosine similarity via shore-ai-service Embed, all-MiniLM-L6-v2)
   ├── Cloud sub-agents (ask_claude / ask_gemini / ask_openai — escalate a task to Claude / Gemini / GPT)
-  ├── Tools        (system_time, read_file, list_directory, clear_memory, search_web, web_scrape, capture_screen, analyze_screen, set_reminder, set_scheduled_task, cancel_task, list_tasks, ask_claude/ask_gemini/ask_openai, run_command + PTY tools, start_background_service + list/stop/logs + dynamic n8n workflow tools)
+  ├── Tools        (system_time, read_file, list_directory, clear_memory, search_web, web_scrape, capture_screen, analyze_screen, computer_use, set_reminder, set_scheduled_task, cancel_task, list_tasks, ask_claude/ask_gemini/ask_openai, run_command + PTY tools, start_background_service + list/stop/logs + dynamic n8n workflow tools)
   ├── Scheduler    (APScheduler — one-shot reminders + recurring tasks, persisted to JSON)
   ├── Notifications (proactive push via ConnectionManager → agent pipeline → TTS; sources: scheduler, n8n webhooks)
   ├── Memory       (Hybrid: Redis short-term + Postgres profile + Qdrant episodic; circuit-broken per layer; LOCOMO worker auto-extracts via a LOCAL LLM on 30s idle; nightly canonicalizer dedupes entity tags)
-  ├── Vision       (mss screen capture → primary multimodal model via /v1/chat/completions)
+  ├── Vision       (client screen capture → primary multimodal model via /v1/chat/completions)
   └── n8n          (two-way integration: dynamic workflow tools + inbound webhook notifications)
 
 shore-ai-service (Docker container, GPU, gRPC)
@@ -60,7 +61,7 @@ Shore-Assistant/
 │       ├── core/
 │       │   ├── config.py               # Pydantic settings (llama-server, shore-ai gRPC, cloud, terminal, auth, memory)
 │       │   ├── runtime_flags.py        # Mutable runtime overrides for WORKER_ENABLED / CANONICALIZER_ENABLED (toggled by service control)
-│       │   ├── auth.py                 # User / Session types + Redis-backed SessionStore + current_user_id ContextVar
+│       │   ├── auth.py                 # User / Session types + Redis-backed SessionStore + current_user_id/current_user_role ContextVars
 │       │   └── allowlist.py            # Parse AUTH_ALLOWED_EMAILS + resolve_role (first email = admin)
 │       ├── api/
 │       │   ├── deps.py                 # FastAPI Depends: current_user, csrf_check, require_admin
@@ -83,6 +84,7 @@ Shore-Assistant/
 │       │   ├── tools_terminal.txt      # PTY/session rules (loaded only when terminal tools retrieved)
 │       │   ├── tools_background.txt    # Background service rules (loaded only when background tools retrieved)
 │       │   ├── tools_n8n.txt           # n8n workflow rules (loaded only when an n8n_ tool is retrieved)
+│       │   ├── computer_use.txt         # EvoCUA GUI-agent system prompt and constrained action format
 │       │   ├── locomo_extractor.txt    # System prompt for the LOCOMO extraction worker
 │       │   └── user.txt                # Optional user context appended to persona
 │       ├── services/
@@ -126,6 +128,7 @@ Shore-Assistant/
 │       │   ├── node_pty_client.py      # WS client to shore-pty-service (reconnect/heartbeat)
 │       │   ├── terminal_whitelist.py   # Command allowlist for run_command / PTY tools
 │       │   ├── background_service.py   # Long-running background service registry + log capture
+│       │   ├── cua/                     # EvoCUA client, safe action parser/projection, run loop + audit log
 │       │   ├── n8n_service.py          # n8n workflow discovery, dynamic tool creation, webhook trigger
 │       │   └── n8n_workflow_service.py # n8n workflow authoring (n8nac) backing the n8n_* authoring tools
 │       ├── tools/
@@ -136,6 +139,7 @@ Shore-Assistant/
 │       │   ├── scheduler_tools.py      # set_reminder, set_scheduled_task, cancel_task, list_tasks
 │       │   ├── cloud_tools.py          # ask_claude, ask_gemini, ask_openai
 │       │   ├── terminal_tools.py       # run_command + open/send/read/list/close_terminal
+│       │   ├── computer_use_tool.py     # Admin/desktop-only GUI task delegation to EvoCUA
 │       │   ├── background_tools.py     # start/list/stop/get_logs background_service
 │       │   └── n8n_workflow_tools.py   # n8n_search_nodes / get_node_schema / search_templates / create / build_complex / manage
 │       └── utils/audio_utils.py        # PCM/float32 conversion
@@ -250,7 +254,7 @@ docker compose -f docker-compose.n8n.yml up -d
 - **TTS sanitization**: Strips code blocks, math expressions (`$...$`, `$$...$$`), JSON, URLs, markdown before synthesis.
 - **Notification tools disabled**: When notification prompts (scheduler/n8n) run through the agent, tools are not injected (`no_tools=True`) to prevent re-triggering reminders in a loop.
 - **Math rendering**: Chat uses remark-math + rehype-katex for inline (`$...$`) and block (`$$...$$`) LaTeX formulas.
-- **Screen capture is client-side**: `capture_screen`/`analyze_screen` and the Screen Co-pilot both capture the browser's screen via `getDisplayMedia`, never the backend host's display (which may be headless). `app/services/screenshot_bridge.py` bridges tool/copilot code to the connected client over `/ws/chat`: it broadcasts `request_screenshot {request_id, max_size}` and awaits a `Future` that the WS receive loop resolves on the matching `screenshot_response {request_id, data_url | error}`. Callers of `screenshot_bridge.request()` must run in a task separate from the receive loop (same constraint as `terminal_service`'s confirm flow) or the response can never be delivered. Frontend capture lives in `front-end/src/services/screen-capture.service.ts`, which caches a single shared `MediaStream` across on-demand tool captures and the co-pilot frame loop so the browser's share picker doesn't reprompt mid-session.
+- **Screen capture is client-side**: `capture_screen`/`analyze_screen` and computer-use steps capture the user's primary display in the client, never the backend host's display (which may be headless). Browser capture uses `getDisplayMedia`; Tauri uses the native `capture_screen_png` command. `app/services/screenshot_bridge.py` bridges on-demand tool captures over `/ws/chat` with `request_screenshot` / `screenshot_response`. Callers must run in a task separate from the receive loop or the response cannot be delivered. The Screen access toggle owns the capture session; proactive thumbnail pushing was removed.
 - **n8n integration**: Two-way — Shore discovers active n8n webhook workflows via REST API at startup and registers them as dynamic tools; n8n can push notifications to Shore via `POST /api/n8n/webhook`. Opt-in via `N8N_ENABLED=True`.
 - **Conversation memory**: Three layers behind `MemoryFacade.assemble_context()`. Short-term (per-user Redis LIST, 15 turns, AOF). Profile (Postgres JSONB single-row + append-only audit log). Episodic (Qdrant `shore_episodic` collection with payload-indexed `entity_tags`/`created_at`/`valence`). Per-layer 500 ms circuit breaker; chat degrades to short-term only if Postgres / Qdrant are down.
 - **Memory injection into system prompt**: `chat_ws` calls `memory_facade.assemble_context(user_text, user_id)` per turn and threads the `ContextBundle` into `agent_service.run`, which passes it to `build_system_prompt`. The prompt appends `[Profile]` (compact JSON, capped at `MEMORY_PROFILE_MAX_BYTES`, pruned by per-key `updated_at`) and `[Relevant memories]` (top-K bullet list by cosine similarity — fact + tags). Notifications (`no_tools=True`) drop the bundle to keep proactive nudges free of identity content.
@@ -258,8 +262,8 @@ docker compose -f docker-compose.n8n.yml up -d
 - **Auth (Google OAuth + Redis sessions)**: Master switch `AUTH_ENABLED` (default False — legacy synthetic-admin mode preserves pre-auth behavior). When enabled: `/api/auth/login` → Google consent → `/api/auth/callback` checks email against `AUTH_ALLOWED_EMAILS` (comma-separated, first email = admin role), then creates a session in Redis under `shore:session:<sid>` with sliding TTL. The hosted web app receives the sid in an HttpOnly cookie and uses CSRF protection on writes. The Tauri app receives it from the one-time `/api/auth/exchange` handoff and sends it as an `Authorization: Bearer` token; browser WebSocket connections carry it in the `bearer` subprotocol. `/api/auth/logout` deletes the Redis key. Invalid WS credentials close with code 4401. **Short-term memory becomes per-user** (`shore:short_term:<user_id>:messages`); Profile and Episodic stay global. **LOCOMO worker only extracts from admin turns** — non-admin allowlisted users can chat without their words reaching Luna's shared identity profile. Public-no-login routes when auth is on: `/health`, `/api/chronicles`.
 - **LOCOMO worker**: a **local LLM** (served at `WORKER_LOCAL_LLM_URL`, default the same llama-server) with `response_format=json_schema(WorkerOutput)` runs after `WORKER_IDLE_DELAY_SECONDS` of chat idle. Debounced via `WorkerService.on_turn_completed()` (cancel-on-new-turn). Safety valve fires immediately at `WORKER_MAX_UNPROCESSED_MESSAGES`. Dual-locked via `asyncio.Lock` + Redis `SETNX shore:worker:lock`. Disabled via `WORKER_ENABLED=False`; the Dashboard toggle flips `runtime_flags.WORKER_ENABLED`. Notifications skip the trigger. NOTE: if `WORKER_ENABLED=False` at startup the worker's deps are never wired, so toggling it on at runtime is a no-op until restart.
 - **Canonicalizer**: Internal APScheduler job (registered via `scheduler_service.add_system_job`, invisible to `list_tasks`). Cron `0 4 * * *` by default. Greedy single-pass clustering on entity tags at cosine ≥0.85; rewrites Qdrant point payloads in place.
-- **Screen Co-pilot**: A toggleable, client-driven, **action-first** mode. Each connection starts inactive; only an explicit client `copilot_start` activates its session and prompts the browser's `getDisplayMedia` share picker. The frontend then pushes a small thumbnail every `COPILOT_CAPTURE_INTERVAL_SECONDS` via `copilot_frame`. `CopilotService.handle_frame()` runs the same pure diff/cooldown gate as before (`norm_abs_diff` + `should_trigger`) — the OS-level idle probe is gone (browsers can't see system-wide input), so the idle gate always degrades open. On trigger it pulls one full-resolution frame through `screenshot_bridge` and feeds it to the vision model via `run_copilot_pipeline`. The agent takes a concrete action; safe commands auto-run and risky ones confirm via the existing `WhitelistGuard` (`allow`/`confirm`/`block`). Output is buffered into one `copilot_message` (silent on the `__NOOP__` sentinel). Screenshots are ephemeral (never persisted). Disconnect, client stop, or ending the OS-level share returns the session to inactive.
-- **HUD overlay (desktop only)**: The Settings toggle creates a transparent, always-on-top Tauri window (`hud`, route `/hud`) over the primary monitor's macOS work area. Passive mode is click-through; global `Cmd+Shift+Space` activates and focuses a quick-prompt bar, `Esc` unwinds popovers then returns passive, and a 10 s idle guard always restores click-through. The four widgets expose agent controls, safe task metadata, latest-answer copy/read/open, and connection retry/settings; `Cmd+K` opens commands/customization (drag, keyboard move, opacity, scale). The main window remains the sole auth/API/`/ws/chat` owner and exchanges bounded, versioned `hud://state` / `hud://action` / ACK events with the HUD using `emitTo`; `/hud` mounts outside `AuthProvider`. Co-pilot start focuses main Settings because `getDisplayMedia` requires a gesture there. Terminal approval is intentionally disabled until backend terminal role enforcement and per-user isolation are fixed. See `docs/superpowers/specs/2026-07-03-hud-overlay-design.md` and `docs/superpowers/manual/hud-interactions-macos.md`.
+- **Computer use (EvoCUA)**: Task-driven only; there is no proactive co-pilot pipeline. The `computer_use` tool delegates one concrete GUI task to EvoCUA-8B on port 8081, then loops screenshot → constrained PyAutoGUI action → native Tauri execution → fresh screenshot. It is admin-only, desktop-only, single-run, capped by `CUA_MAX_STEPS`, and writes one JSONL audit record per action to `CUA_AUDIT_LOG`; screenshots are never persisted. The sub-agent receives only its task, bounded screenshot/action history, and the dedicated GUI system prompt—never Shore memory or profile context. `⌘⇧Esc`, the Chat banner, and the HUD stop action send `cua_abort`.
+- **HUD overlay (desktop only)**: The Settings toggle creates a transparent, always-on-top Tauri window (`hud`, route `/hud`) over the primary monitor's macOS work area. Passive mode is click-through; global `Cmd+Shift+Space` activates and focuses a quick-prompt bar, `Esc` unwinds popovers then returns passive, and a 10 s idle guard always restores click-through. The four widgets expose agent controls, safe task metadata, latest-answer copy/read/open, and connection retry/settings; `Cmd+K` opens commands/customization (drag, keyboard move, opacity, scale). The main window remains the sole auth/API/`/ws/chat` owner and exchanges bounded, versioned `hud://state` / `hud://action` / ACK events with the HUD using `emitTo`; `/hud` mounts outside `AuthProvider`. Screen access is enabled in main Settings because browser capture requires a user gesture there; HUD stop aborts an active computer-use run. Terminal approval is intentionally disabled until backend terminal role enforcement and per-user isolation are fixed. See `docs/superpowers/specs/2026-07-03-hud-overlay-design.md` and `docs/superpowers/manual/hud-interactions-macos.md`.
 - **Service control (Dashboard buttons)**: `back-end/config/services.yaml` (gitignored; example at `services.example.yaml`) registers controllable services across four kinds. `process` → `subprocess.Popen` with PID file under `data/pids/<name>.pid` (verified by `create_time`; optional `pre_stop_cmd`; SIGTERM/CTRL_BREAK → grace → snapshot-based descendant tree SIGKILL). `docker` → `docker compose -f <file> {up -d|start|stop|ps} <service>`. `internal` → `runtime_flags` toggle for `locomo_worker` / `canonicalizer`. `remote` → `shore-ai-supervisor` Start/Stop/Status for the `shore-ai` container. ServiceManager uses a `transitioning` set as a synchronization gate (atomic without `await`) so two concurrent requests on the same name can never both pass. Endpoints: `GET /api/services` (any logged-in user), `POST /api/services/{name}/{start,stop}` returns 202 with admin + CSRF guards. `/api/dashboard` rows include a `control` field merged by `correlates_with` (services/databases) or `display_name` (workers). Frontend `useDashboardPoll` accelerates to 1 s while any service is transitioning, returning to 5 s once stable; Stop shows a Radix confirm dialog, Start does not.
 
 ## Configuration
@@ -335,12 +339,15 @@ All backend config via environment variables or `.env` file in `back-end/`:
 | NODE_PTY_RECONNECT_MAX_MS | 30000 | Max reconnect backoff (milliseconds) |
 | NODE_PTY_PING_INTERVAL_SECONDS | 30 | Heartbeat ping interval |
 | NODE_PTY_PING_TIMEOUT_SECONDS | 5 | Pong deadline before treating connection as disconnected |
-| **Screen Co-pilot** | | |
-| COPILOT_CAPTURE_INTERVAL_SECONDS | 4 | Client frame-push interval (sent to the client in `copilot_state`) |
-| COPILOT_IDLE_THRESHOLD_SECONDS | 3 | Minimum hands-off idle before analyzing (no-op: client pushes carry no idle signal, gate always skipped) |
-| COPILOT_CHANGE_THRESHOLD | 0.06 | Normalized thumbnail diff treated as "changed" |
-| COPILOT_COOLDOWN_SECONDS | 45 | Minimum gap between triggers |
+| **Screen capture / computer use** | | |
 | COPILOT_MAX_IMAGE_SIZE | 1280 | Longest edge the client should target when capturing a full frame |
+| EVOCUA_BASE_URL | http://localhost:8081 | EvoCUA llama-server URL |
+| EVOCUA_TIMEOUT | 60.0 | Per-completion EvoCUA timeout (seconds) |
+| CUA_MAX_STEPS | 15 | Hard action cap per computer-use run |
+| CUA_STEP_TIMEOUT_SECONDS | 30.0 | Execute-and-recapture round-trip deadline |
+| CUA_SETTLE_MS | 800 | Client wait after input before capturing the next frame |
+| CUA_HISTORY_MAX_TURNS | 4 | Screenshot/action turns retained in EvoCUA context |
+| CUA_AUDIT_LOG | data/cua_audit.log | JSONL action audit path |
 | **Terminal** | | |
 | TERMINAL_DEFAULT_CWD | D:\Jupiter | Default working directory for terminal sessions |
 | TERMINAL_DEFAULT_SHELL | powershell | Default shell |
@@ -397,7 +404,8 @@ All backend config via environment variables or `.env` file in `back-end/`:
 - [x] HUD overlay mode (desktop) — transparent click-through ambient HUD + global hotkey
 - [x] Interactive HUD controls — prompt, agent/answer/task/connection actions + layout preferences
 - [ ] HUD terminal approval — blocked on backend admin enforcement and per-user terminal isolation
-- [x] Client-side screen capture — `getDisplayMedia` in browser + `screenshot_bridge` request/response over `/ws/chat`, used by `capture_screen`/`analyze_screen` and Screen Co-pilot
+- [x] Client-side screen capture — `getDisplayMedia` in browser / native Tauri capture + `screenshot_bridge` request/response over `/ws/chat`
+- [x] Computer use via EvoCUA sub-agent — task-driven mouse/keyboard execution with admin/desktop guards, bounded steps, abort, and audit log
 - [x] Memory backend Phase 1 — Redis short-term + Docker stack
 - [x] Memory backend Phase 2 — Profile (Postgres) + Episodic (Qdrant) + read-path integration + debug API + /health probes + frontend banner
 - [x] Memory backend Phase 3 — LOCOMO worker + canonicalizer (auto-extract facts from chat history)

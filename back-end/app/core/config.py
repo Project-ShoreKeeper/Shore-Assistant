@@ -198,6 +198,15 @@ class Settings(BaseSettings):
     COPILOT_COOLDOWN_SECONDS: float = 45.0  # min gap between triggers
     COPILOT_MAX_IMAGE_SIZE: int = 1280  # longest edge the client should target when capturing a full frame
 
+    # --- Computer use (EvoCUA sub-agent) ---
+    EVOCUA_BASE_URL: str = "http://localhost:8081"  # second llama-server (EvoCUA-8B + mmproj)
+    EVOCUA_TIMEOUT: float = 60.0  # per-completion timeout (seconds)
+    CUA_MAX_STEPS: int = 15  # hard cap on actions per run
+    CUA_STEP_TIMEOUT_SECONDS: float = 30.0  # one execute+capture round-trip deadline
+    CUA_SETTLE_MS: int = 800  # client wait after an action before recapture
+    CUA_HISTORY_MAX_TURNS: int = 4  # screenshot/action turns kept in EvoCUA context
+    CUA_AUDIT_LOG: str = "data/cua_audit.log"
+
     class Config:
         env_file = ".env"
         extra = "ignore"

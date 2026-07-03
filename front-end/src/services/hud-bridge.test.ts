@@ -8,7 +8,7 @@ describe("deriveHudState", () => {
     const state = deriveHudState({
       wsStatus: "OPEN",
       lastCloseCode: null,
-      copilotActive: false,
+      cuaRunning: false,
       isAssistantThinking: false,
       messages: [{
         id: "message-1",
@@ -43,11 +43,33 @@ describe("deriveHudState", () => {
     const state = deriveHudState({
       wsStatus: "CLOSED",
       lastCloseCode: 4401,
-      copilotActive: false,
+      cuaRunning: false,
       isAssistantThinking: false,
       messages: [],
     });
 
     expect(state.capabilities.retryConnection).toBe(false);
+  });
+
+  it("monitors and enables stop only during a computer-use run", () => {
+    const running = deriveHudState({
+      wsStatus: "OPEN",
+      lastCloseCode: null,
+      cuaRunning: true,
+      isAssistantThinking: false,
+      messages: [],
+    });
+    expect(running.agent).toBe("monitoring");
+    expect(running.capabilities.stopCopilot).toBe(true);
+
+    const idle = deriveHudState({
+      wsStatus: "OPEN",
+      lastCloseCode: null,
+      cuaRunning: false,
+      isAssistantThinking: false,
+      messages: [],
+    });
+    expect(idle.agent).toBe("idle");
+    expect(idle.capabilities.stopCopilot).toBe(false);
   });
 });

@@ -106,8 +106,6 @@ export interface NotificationMessage {
 export interface CopilotStateMessage {
   type: "copilot_state";
   active: boolean;
-  interval_seconds?: number;
-  max_image_size?: number;
 }
 
 export interface RequestScreenshotMessage {
@@ -379,11 +377,6 @@ export class ChatWebSocketService {
       console.error("[Chat WS] Failed to stop Co-pilot:", error);
       return false;
     }
-  }
-
-  public sendCopilotFrame(thumbnail: string): void {
-    if (!this.isReady()) return;
-    this.socket!.send(JSON.stringify({ type: "copilot_frame", thumbnail }));
   }
 
   public sendCuaReady(screen: { width: number; height: number }): void {

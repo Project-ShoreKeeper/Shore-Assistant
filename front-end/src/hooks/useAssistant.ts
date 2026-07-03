@@ -15,7 +15,6 @@ import {
 } from "../services/http.service";
 import {
   captureFrameDataUrl,
-  captureThumbnailDataUrl,
   onScreenShareEnded,
   requestScreenShare,
   stopScreenStream,
@@ -653,10 +652,7 @@ export function useAssistant(): UseAssistantReturn {
           setCopilotActive(msg.active);
           if (msg.active) {
             setCopilotError(null);
-            startCopilotFrameLoop(msg.interval_seconds || 4);
             void announceCuaReady((screen) => ws.sendCuaReady(screen));
-          } else {
-            stopCopilotFrameLoop();
           }
           break;
         }
@@ -729,35 +725,7 @@ export function useAssistant(): UseAssistantReturn {
       }
     };
 
-    // Co-pilot frame loop: while active, push a small thumbnail to the
-    // backend every interval_seconds so it can decide (diff/cooldown) when
-    // to pull a full-resolution frame via a request_screenshot round trip.
-    let copilotFrameInterval: ReturnType<typeof setInterval> | null = null;
-
-    function stopCopilotFrameLoop() {
-      if (copilotFrameInterval) {
-        clearInterval(copilotFrameInterval);
-        copilotFrameInterval = null;
-      }
-    }
-
-    function startCopilotFrameLoop(intervalSeconds: number) {
-      stopCopilotFrameLoop();
-      copilotFrameInterval = setInterval(async () => {
-        try {
-          const thumb = await captureThumbnailDataUrl(64);
-          ws.sendCopilotFrame(thumb);
-        } catch {
-          // Screen share ended or unavailable — stop pushing frames.
-          stopCopilotFrameLoop();
-          ws.sendCopilotStop();
-          setCopilotActive(false);
-        }
-      }, Math.max(1, intervalSeconds) * 1000);
-    }
-
     const unsubScreenShareEnded = onScreenShareEnded(() => {
-      stopCopilotFrameLoop();
       ws.sendCopilotStop();
       setCopilotActive(false);
     });
@@ -776,7 +744,6 @@ export function useAssistant(): UseAssistantReturn {
       ws.off("close", handleClose);
       ws.off("message", handleMessage);
       ws.off("binaryMessage", handleBinaryMessage);
-      stopCopilotFrameLoop();
       unsubScreenShareEnded();
       // Do not disconnect the singleton — it's shared with useTerminal
       wsRef.current = null;

@@ -480,9 +480,12 @@ export default function SettingsPanel({
           <Switch size="1" checked={thinkingEnabled} onCheckedChange={onThinkingEnabledChange} />
         </Flex>
         <Flex justify="between" align="center" mt="2">
-          <Text size="2" color="gray">Co-pilot</Text>
+          <Text size="2" color="gray">Screen access</Text>
           <Switch size="1" checked={copilotEnabled} onCheckedChange={onCopilotEnabledChange} />
         </Flex>
+        <Text size="1" color="gray" mt="1" style={{ display: "block" }}>
+          Shore uses this for screenshots and computer-use tasks.
+        </Text>
         {copilotError && (
           <Text size="1" color="red" mt="1" style={{ display: "block" }}>
             {copilotError}

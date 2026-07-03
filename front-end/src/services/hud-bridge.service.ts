@@ -62,7 +62,7 @@ export interface HudStatePayload {
 export interface HudBridgeInput {
   wsStatus: WebSocketStatus;
   lastCloseCode?: number | null;
-  copilotActive: boolean;
+  cuaRunning: boolean;
   isAssistantThinking: boolean;
   messages: Array<{
     id: string;
@@ -85,7 +85,7 @@ const EMIT_THROTTLE_MS = 250;
 export function deriveHudState(input: HudBridgeInput): HudStatePayload {
   const agent: HudAgentStatus = input.isAssistantThinking
     ? "thinking"
-    : input.copilotActive
+    : input.cuaRunning
       ? "monitoring"
       : "idle";
 
@@ -142,7 +142,7 @@ export function deriveHudState(input: HudBridgeInput): HudStatePayload {
       sendPrompt: input.wsStatus === "OPEN",
       cancelGeneration:
         input.wsStatus === "OPEN" && input.isAssistantThinking,
-      stopCopilot: input.wsStatus === "OPEN" && input.copilotActive,
+      stopCopilot: input.wsStatus === "OPEN" && input.cuaRunning,
       retryConnection:
         input.lastCloseCode !== 4401
         && input.wsStatus !== "OPEN"

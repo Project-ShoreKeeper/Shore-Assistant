@@ -1,11 +1,11 @@
 /**
  * Client-side screen capture via getDisplayMedia. The backend host has no
  * guaranteed display of its own, so screenshots for analyze_screen /
- * capture_screen and the Screen Co-pilot watch loop are captured here and
- * relayed to the backend over the chat WebSocket.
+ * capture_screen, analyze_screen, and computer-use tasks are captured here
+ * and relayed to the backend over the chat WebSocket.
  *
  * A single shared MediaStream is reused across callers (on-demand tool
- * captures and the co-pilot frame loop) so the user isn't re-prompted by the
+ * captures and computer-use steps) so the user isn't re-prompted by the
  * browser's share picker on every request within a session.
  *
  * Inside the Tauri desktop app, WKWebView (macOS) does not implement
@@ -145,22 +145,11 @@ export async function captureFrameDataUrl(
   return grabCanvas(maxSize).toDataURL("image/jpeg", quality);
 }
 
-/** Small JPEG frame for cheap change-detection diffing, as a data: URL. */
-export async function captureThumbnailDataUrl(size = 64): Promise<string> {
-  if (isTauri) {
-    const canvas = await grabTauriCanvas(size);
-    tauriActive = true;
-    return canvas.toDataURL("image/jpeg", 0.6);
-  }
-  await ensureScreenStream();
-  return grabCanvas(size).toDataURL("image/jpeg", 0.6);
-}
-
-/** Explicitly request screen-share permission (e.g. before starting Co-pilot). */
+/** Explicitly request screen-share permission before enabling Screen access. */
 export async function requestScreenShare(): Promise<void> {
   if (isTauri) {
     // One test capture triggers the macOS Screen Recording (TCC) prompt and
-    // validates that native capture works before the co-pilot loop starts.
+    // validates that native capture works before Screen access is announced.
     await invokeTauriCapture();
     tauriActive = true;
     return;

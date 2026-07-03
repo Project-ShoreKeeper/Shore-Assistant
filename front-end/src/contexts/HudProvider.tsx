@@ -20,12 +20,12 @@ export function HudProvider({ children }: { children: React.ReactNode }) {
   const {
     wsStatus,
     lastCloseCode,
-    copilotActive,
+    cuaRunning,
     isAssistantThinking,
     messages,
     sendTextMessage,
     cancelGeneration,
-    stopCopilot,
+    abortComputerUse,
     reconnectChat,
   } = useAssistantContext();
   const [enabled, setEnabledState] = useState(false);
@@ -42,7 +42,11 @@ export function HudProvider({ children }: { children: React.ReactNode }) {
       case "cancel_generation":
         return cancelGeneration();
       case "stop_copilot":
-        return stopCopilot();
+        abortComputerUse();
+        return {
+          ok: true,
+          message: "Aborting the computer-use run.",
+        };
       case "focus_main": {
         if (!isTauri()) {
           return {
@@ -90,14 +94,14 @@ export function HudProvider({ children }: { children: React.ReactNode }) {
     navigate,
     reconnectChat,
     sendTextMessage,
-    stopCopilot,
+    abortComputerUse,
   ]);
 
   useHudBridge(
     {
       wsStatus,
       lastCloseCode,
-      copilotActive,
+      cuaRunning,
       isAssistantThinking,
       messages,
     },

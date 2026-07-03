@@ -12,6 +12,7 @@ from app.tools.terminal_tools import (
     list_terminals,
     close_terminal,
 )
+from app.tools.computer_use_tool import computer_use
 from app.tools.background_tools import (
     start_background_service,
     list_background_services,
@@ -57,6 +58,7 @@ ALL_TOOLS = [
     read_terminal,
     list_terminals,
     close_terminal,
+    computer_use,
     start_background_service,
     list_background_services,
     stop_background_service,

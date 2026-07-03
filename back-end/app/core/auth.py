@@ -23,6 +23,13 @@ from redis.asyncio import Redis
 # "legacy" id so legacy/AUTH_DISABLED paths keep working without changes.
 current_user_id: ContextVar[str] = ContextVar("current_user_id", default="legacy")
 
+# Role of the user owning the current request/WS turn. Default "admin"
+# preserves legacy synthetic-admin behavior when AUTH_ENABLED=False.
+current_user_role: ContextVar[str] = ContextVar(
+    "current_user_role",
+    default="admin",
+)
+
 
 Role = Literal["admin", "user"]
 

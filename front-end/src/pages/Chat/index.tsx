@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Flex,
   Box,
@@ -13,6 +13,9 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
+import { invoke } from "@tauri-apps/api/core";
+import { isTauri } from "@Shore/utils/tauri.util";
+import { useHudBridge } from "@Shore/hooks/useHudBridge";
 import { useAssistantContext as useAssistant, } from "@Shore/contexts/AssistantContext";
 import type { ChatMessage } from "../../hooks/useAssistant";
 import type { ImageAttachment } from "../../services/chat-websocket.service";
@@ -112,6 +115,38 @@ function PageChat() {
     cancelGeneration,
     clearMessages,
   } = useAssistant();
+
+  useHudBridge({ wsStatus, copilotActive, isAssistantThinking, messages });
+
+  const [hudEnabled, setHudEnabled] = useState(false);
+  const [hudError, setHudError] = useState<string | null>(null);
+
+  const toggleHud = useCallback(async (enabled: boolean) => {
+    if (!isTauri()) return;
+    setHudError(null);
+    try {
+      if (enabled) {
+        // Ok(Some(warning)) = window shown but hotkey failed → passive-only.
+        const warning = await invoke<string | null>("hud_show");
+        if (warning) setHudError(warning);
+      } else {
+        await invoke("hud_hide");
+      }
+      setHudEnabled(enabled);
+      window.localStorage.setItem("shore.hud.enabled", enabled ? "1" : "0");
+    } catch (e) {
+      setHudEnabled(false);
+      setHudError(e instanceof Error ? e.message : String(e));
+    }
+  }, []);
+
+  // Restore the HUD if it was on last session.
+  useEffect(() => {
+    if (isTauri() && window.localStorage.getItem("shore.hud.enabled") === "1") {
+      void toggleHud(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const [inputText, setInputText] = useState("");
   const [expandedThinking, setExpandedThinking] = useState<Set<string>>(new Set());
@@ -759,6 +794,9 @@ function PageChat() {
         copilotEnabled={copilotActive}
         copilotError={copilotError}
         onCopilotEnabledChange={toggleCopilot}
+        hudEnabled={hudEnabled}
+        hudError={hudError}
+        onHudEnabledChange={(v: boolean) => void toggleHud(v)}
         onClearMessages={clearMessages}
         messageCount={messages.length}
         collapsed={rightCollapsed}

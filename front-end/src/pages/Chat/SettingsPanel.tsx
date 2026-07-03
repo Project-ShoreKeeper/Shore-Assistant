@@ -19,6 +19,7 @@ import type {
 } from "../../hooks/useAssistant";
 import { STT_LANGUAGES } from "../../constants/stt.constant";
 import { BACKEND_URL } from "../../constants/backend.constant";
+import { isTauri } from "../../utils/tauri.util";
 
 const EXPANDED_WIDTH = 320;
 const COLLAPSED_WIDTH = 48;
@@ -39,6 +40,9 @@ export interface SettingsPanelProps {
   copilotEnabled?: boolean;
   copilotError?: string | null;
   onCopilotEnabledChange?: (enabled: boolean) => void;
+  hudEnabled?: boolean;
+  hudError?: string | null;
+  onHudEnabledChange?: (enabled: boolean) => void;
   onClearMessages?: () => void;
   messageCount?: number;
   collapsed: boolean;
@@ -186,6 +190,9 @@ export default function SettingsPanel({
   copilotEnabled = false,
   copilotError,
   onCopilotEnabledChange,
+  hudEnabled = false,
+  hudError,
+  onHudEnabledChange,
   onClearMessages,
   messageCount = 0,
   collapsed,
@@ -480,6 +487,19 @@ export default function SettingsPanel({
           <Text size="1" color="red" mt="1" style={{ display: "block" }}>
             {copilotError}
           </Text>
+        )}
+        {isTauri() && (
+          <>
+            <Flex align="center" justify="between" mt="2">
+              <Text size="2" color="gray">HUD overlay</Text>
+              <Switch size="1" checked={hudEnabled} onCheckedChange={onHudEnabledChange} />
+            </Flex>
+            {hudError && (
+              <Text size="1" color="red" mt="1" style={{ display: "block" }}>
+                {hudError}
+              </Text>
+            )}
+          </>
         )}
       </Box>
 

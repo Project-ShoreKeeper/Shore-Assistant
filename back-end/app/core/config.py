@@ -44,9 +44,12 @@ class Settings(BaseSettings):
     WORKER_IDLE_DELAY_SECONDS: float = 30.0
     WORKER_MAX_UNPROCESSED_MESSAGES: int = 20
     WORKER_LOCAL_LLM_URL: str = "http://localhost:8080/v1"
-    WORKER_LOCAL_TIMEOUT: float = 60.0
+    # Per-attempt deadline. The request is non-streaming, so the entire
+    # grammar-constrained generation must finish inside it — too low and every
+    # extraction burns a full timeout on attempt 1, then silently retries.
+    WORKER_LOCAL_TIMEOUT: float = 180.0
     WORKER_LOCK_KEY: str = "shore:worker:lock"
-    WORKER_LOCK_TTL_SECONDS: int = 120  # must exceed WORKER_LOCAL_TIMEOUT * 3 attempts + margin
+    WORKER_LOCK_TTL_SECONDS: int = 600  # must exceed WORKER_LOCAL_TIMEOUT * 3 attempts + margin
     WORKER_LAST_TS_KEY: str = "shore:worker:last_extracted_ts"
 
     CANONICALIZER_ENABLED: bool = True
@@ -189,7 +192,6 @@ class Settings(BaseSettings):
     # ── Screen Co-pilot ──
     # Screen capture is client-side (browser getDisplayMedia, relayed over
     # /ws/chat) -- the backend host has no guaranteed display of its own.
-    COPILOT_ENABLED: bool = False  # master switch; feature unavailable unless True
     COPILOT_CAPTURE_INTERVAL_SECONDS: float = 4.0  # client frame-push interval (sent to the client in copilot_state)
     COPILOT_IDLE_THRESHOLD_SECONDS: float = 3.0  # min hands-off idle before analyzing (no-op: client pushes carry no idle signal, gate always skipped)
     COPILOT_CHANGE_THRESHOLD: float = 0.06  # normalized thumbnail diff treated as "changed"

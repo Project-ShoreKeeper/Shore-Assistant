@@ -151,8 +151,6 @@ class CopilotService:
         self._is_busy_cb = None
 
     async def start_session(self) -> bool:
-        if not settings.COPILOT_ENABLED:
-            return False
         self._active = True
         self._last_thumb = None
         self._last_action_ts = 0.0

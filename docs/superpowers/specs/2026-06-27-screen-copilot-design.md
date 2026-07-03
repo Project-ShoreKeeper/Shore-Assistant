@@ -38,8 +38,8 @@ Key properties:
   sentinel lets the model stay silent when there is nothing useful to do.
 
 The user (not the LLM) drives the on/off via a UI toggle (chat header or
-`SettingsPanel`). Off by default; requires `COPILOT_ENABLED=True` and an explicit
-session.
+`SettingsPanel`). Each connection is inactive by default and starts only after
+an explicit client request.
 
 ## Architecture
 
@@ -217,7 +217,6 @@ Added to `core/config.py` and the `.env` table in `CLAUDE.md`:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| COPILOT_ENABLED | False | Master switch; feature unavailable unless True |
 | COPILOT_CAPTURE_INTERVAL_SECONDS | 4 | Watch-loop tick interval |
 | COPILOT_IDLE_THRESHOLD_SECONDS | 3 | Minimum "hands-off" idle before analyzing |
 | COPILOT_CHANGE_THRESHOLD | 0.06 | Normalized thumbnail diff treated as "changed" |
@@ -236,7 +235,7 @@ Added to `core/config.py` and the `.env` table in `CLAUDE.md`:
 
 ## Privacy
 
-- Off by default (`COPILOT_ENABLED=True` + an explicit session).
+- Inactive by default; only an explicit client request starts a session.
 - Vision runs **locally** on llama-server; no screen data leaves the host.
 - Screenshots are ephemeral: never written to disk, short-term memory, Profile,
   Episodic, or the LOCOMO worker.

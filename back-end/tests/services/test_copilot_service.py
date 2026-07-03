@@ -76,7 +76,6 @@ import time
 import numpy as np
 import pytest
 
-from app.core.config import settings
 from app.services.copilot_service import CopilotService
 
 
@@ -157,18 +156,14 @@ async def test_handle_frame_skips_when_within_cooldown():
     assert fired == []
 
 
-@pytest.mark.asyncio
-async def test_start_session_disabled_returns_false(monkeypatch):
-    monkeypatch.setattr(settings, "COPILOT_ENABLED", False)
+def test_session_is_inactive_until_client_starts():
     svc = _make_service()
     svc.attach(trigger_cb=_noop, is_busy_cb=lambda: False)
-    assert await svc.start_session() is False
     assert svc.active is False
 
 
 @pytest.mark.asyncio
-async def test_start_then_stop_session(monkeypatch):
-    monkeypatch.setattr(settings, "COPILOT_ENABLED", True)
+async def test_client_start_then_stop_session():
     svc = _make_service()
     svc.attach(trigger_cb=_noop, is_busy_cb=lambda: False)
     assert await svc.start_session() is True

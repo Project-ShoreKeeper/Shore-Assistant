@@ -1,6 +1,7 @@
 """LOCOMO extractor — Local Gemma 4 API with JSON Schema/Grammar structured output."""
 import asyncio
 import json
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -75,11 +76,17 @@ class LocomoExtractor:
 
         last_error: Optional[BaseException] = None
         for attempt in range(_MAX_ATTEMPTS):
+            started = time.monotonic()
             try:
                 response = await client.post(endpoint, json=payload)
                 response.raise_for_status()
                 data = response.json()
                 content = data["choices"][0]["message"]["content"]
+                print(
+                    f"[Extractor] attempt {attempt + 1}/{_MAX_ATTEMPTS} ok "
+                    f"in {time.monotonic() - started:.1f}s "
+                    f"(usage={data.get('usage')})"
+                )
                 return WorkerOutput.model_validate_json(content)
             except asyncio.CancelledError:
                 # IMPORTANT: If the task is cancelled (e.g. new user turn), abort immediately.
@@ -87,6 +94,10 @@ class LocomoExtractor:
                 # signaling the llama-server to abort inference to prevent compute contention.
                 raise
             except Exception as e:
+                print(
+                    f"[Extractor] attempt {attempt + 1}/{_MAX_ATTEMPTS} failed "
+                    f"after {time.monotonic() - started:.1f}s: {e!r}"
+                )
                 last_error = e
                 if attempt == _MAX_ATTEMPTS - 1:
                     raise

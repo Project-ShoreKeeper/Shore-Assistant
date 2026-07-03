@@ -18,7 +18,6 @@ from app.services.memory import memory_facade, worker_service
 from app.services.image_store import image_store
 from app.services.connection_manager import connection_manager
 from app.services.notification_service import notification_service
-from app.services.copilot_service import copilot_service, summarize_copilot_run
 from app.services.cua.service import computer_use_service
 from app.services.screenshot_bridge import screenshot_bridge
 from app.core.config import settings
@@ -147,6 +146,7 @@ async def websocket_chat(websocket: WebSocket):
 
     # Per-connection state
     session_id = str(uuid.uuid4())[:8]
+    screen_access_active = False
 
 
     # Register send functions for proactive notifications
@@ -451,71 +451,6 @@ async def websocket_chat(websocket: WebSocket):
 
     notification_service.set_agent_callback(run_notification)
 
-    async def run_copilot_pipeline(framing: str, screenshot: dict):
-        """Run one co-pilot turn: feed the screenshot to the agent with tools,
-        buffer the output, and emit a single copilot_message (or stay silent on
-        __NOOP__). Ephemeral: the framing/screenshot never touch history/memory.
-        Confirm dialogs for risky commands are broadcast live by terminal_service.
-        """
-        # Transient history: prior turns + the framing as the current user turn.
-        # agent_service.run builds its own message list, so the real
-        # conversation_history is never mutated.
-        temp_history = list(conversation_history) + [
-            {"role": "user", "content": framing}
-        ]
-        live_msg = _build_live_message(framing, [screenshot])
-
-        events: list[dict] = []
-        try:
-            async for event in agent_service.run(
-                framing, temp_history,
-                memory_bundle=None,
-                thinking=False,
-                no_tools=False,
-                live_user_message=live_msg,
-            ):
-                events.append(event)
-        except Exception as e:
-            print(f"[Copilot] pipeline error: {e!r}")
-            return
-
-        result = summarize_copilot_run(events)
-        if result is None:
-            return  # __NOOP__ / nothing useful — stay silent
-
-        await send_json_safe({
-            "type": "copilot_message",
-            "text": result["text"],
-            "agent_actions": result["agent_actions"],
-            "timestamp": time.time(),
-        })
-
-        if result["text"].strip():
-            conversation_history.append(
-                {"role": "assistant", "content": result["text"]}
-            )
-            await memory_facade.append_assistant(
-                content=result["text"],
-                user_id=ws_user_id,
-                extras={
-                    "is_copilot": True,
-                    "agent_actions": result["agent_actions"] or None,
-                },
-            )
-
-    async def _start_copilot(framing: str, screenshot: dict):
-        nonlocal agent_task
-        if agent_task and not agent_task.done():
-            return  # busy — a user/copilot turn is already running; skip
-        agent_task = asyncio.create_task(
-            run_copilot_pipeline(framing, screenshot)
-        )
-
-    copilot_service.attach(
-        trigger_cb=_start_copilot,
-        is_busy_cb=lambda: bool(agent_task and not agent_task.done()),
-    )
-
     # Drain any notifications that fired while disconnected
     await notification_service.drain_pending()
 
@@ -556,28 +491,19 @@ async def websocket_chat(websocket: WebSocket):
                             agent_task.cancel()
 
                     elif msg_type == "copilot_start":
-                        started = await copilot_service.start_session()
+                        screen_access_active = True
                         await send_json_safe({
                             "type": "copilot_state",
-                            "active": started,
-                            "interval_seconds": settings.COPILOT_CAPTURE_INTERVAL_SECONDS,
-                            "max_image_size": settings.COPILOT_MAX_IMAGE_SIZE,
+                            "active": screen_access_active,
                         })
 
                     elif msg_type == "copilot_stop":
-                        await copilot_service.stop_session()
+                        screen_access_active = False
+                        computer_use_service.set_ready(None)
                         await send_json_safe({
                             "type": "copilot_state",
-                            "active": False,
+                            "active": screen_access_active,
                         })
-
-                    elif msg_type == "copilot_frame":
-                        # Runs in its own task: if it decides to trigger, it awaits
-                        # screenshot_bridge, whose response can only be delivered by
-                        # this very receive loop -- inline awaiting would deadlock.
-                        asyncio.create_task(
-                            copilot_service.handle_frame(data.get("thumbnail", ""))
-                        )
 
                     elif msg_type == "cua_ready":
                         computer_use_service.set_ready(data.get("screen"))
@@ -769,7 +695,6 @@ async def websocket_chat(websocket: WebSocket):
                 await agent_task
             except (asyncio.CancelledError, Exception):
                 pass
-        copilot_service.detach()
         computer_use_service.detach()
         # Only unregister if we're still the active connection
         if connection_manager._send_json is my_send_json:

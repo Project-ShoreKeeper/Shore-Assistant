@@ -189,13 +189,9 @@ class Settings(BaseSettings):
     NODE_PTY_PING_INTERVAL_SECONDS: int = 30
     NODE_PTY_PING_TIMEOUT_SECONDS: int = 5
 
-    # ── Screen Co-pilot ──
+    # ── Client screen capture ──
     # Screen capture is client-side (browser getDisplayMedia, relayed over
     # /ws/chat) -- the backend host has no guaranteed display of its own.
-    COPILOT_CAPTURE_INTERVAL_SECONDS: float = 4.0  # client frame-push interval (sent to the client in copilot_state)
-    COPILOT_IDLE_THRESHOLD_SECONDS: float = 3.0  # min hands-off idle before analyzing (no-op: client pushes carry no idle signal, gate always skipped)
-    COPILOT_CHANGE_THRESHOLD: float = 0.06  # normalized thumbnail diff treated as "changed"
-    COPILOT_COOLDOWN_SECONDS: float = 45.0  # min gap between triggers
     COPILOT_MAX_IMAGE_SIZE: int = 1280  # longest edge the client should target when capturing a full frame
 
     # --- Computer use (EvoCUA sub-agent) ---

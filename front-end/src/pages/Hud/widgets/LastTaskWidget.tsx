@@ -16,6 +16,7 @@ export default function LastTaskWidget({
   hasPending,
   onToggle,
   sendAction,
+  measureRef,
 }: {
   task: HudTask | null;
   active: boolean;
@@ -23,10 +24,12 @@ export default function LastTaskWidget({
   hasPending: boolean;
   onToggle: () => void;
   sendAction: (action: HudActionRequest) => string;
+  measureRef: (element: HTMLElement | null) => void;
 }) {
   return (
     <>
       <button
+        ref={measureRef}
         type="button"
         className="hud-widget hud-tr"
         data-hud-widget="task"

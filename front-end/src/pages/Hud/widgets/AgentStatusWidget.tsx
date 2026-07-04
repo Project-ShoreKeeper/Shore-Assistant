@@ -21,6 +21,7 @@ export default function AgentStatusWidget({
   hasPending,
   onToggle,
   sendAction,
+  measureRef,
 }: {
   status: HudAgentStatus;
   active: boolean;
@@ -29,6 +30,7 @@ export default function AgentStatusWidget({
   hasPending: boolean;
   onToggle: () => void;
   sendAction: (action: HudActionRequest) => string;
+  measureRef: (element: HTMLElement | null) => void;
 }) {
   const run = (action: HudActionRequest) => {
     if (!hasPending) sendAction(action);
@@ -37,6 +39,7 @@ export default function AgentStatusWidget({
   return (
     <>
       <button
+        ref={measureRef}
         type="button"
         className="hud-widget hud-tl"
         data-hud-widget="agent"

@@ -11,6 +11,7 @@ export default function AnswerWidget({
   hasPending,
   onToggle,
   sendAction,
+  measureRef,
 }: {
   answer: HudAnswer | null;
   active: boolean;
@@ -18,6 +19,7 @@ export default function AnswerWidget({
   hasPending: boolean;
   onToggle: () => void;
   sendAction: (action: HudActionRequest) => string;
+  measureRef: (element: HTMLElement | null) => void;
 }) {
   const [feedback, setFeedback] = useState("");
   const [speaking, setSpeaking] = useState(false);
@@ -57,6 +59,7 @@ export default function AnswerWidget({
   return (
     <>
       <button
+        ref={measureRef}
         type="button"
         className="hud-widget hud-bl"
         data-hud-widget="answer"

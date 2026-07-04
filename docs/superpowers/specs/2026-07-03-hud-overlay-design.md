@@ -143,8 +143,11 @@ Customize mode is available from the command palette.
 - Arrow keys move a focused widget by 1%; Shift+arrow moves by 5%.
 - Opacity range: 20–100%.
 - Scale range: 75–150%.
-- Positions are clamped using each rendered widget's dimensions and are
-  rechecked after resize/scale changes.
+- Stored positions are the user's intent (corner defaults or a dragged
+  center); the on-screen position is resolved on every render from each
+  widget's measured dimensions, so late-mounting widgets (the answer widget)
+  and content-size changes keep the 16 px edge margin without ever writing
+  the derived value back into preferences.
 - Reset restores defaults.
 - Preferences use the versioned key `shore.hud.preferences.v1`; malformed or
   incompatible data falls back safely.

@@ -6,11 +6,14 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
+  type Dispatch,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
+  type SetStateAction,
 } from "react";
 import { useHudState } from "./useHudState";
 import { useHudActions } from "./useHudActions";
@@ -30,10 +33,32 @@ import {
   type HudPreferencesV1,
   type HudWidgetId,
 } from "./hud-preferences";
+import {
+  clampHudAxis,
+  hudMarginPct,
+  resolveHudPositions,
+  type HudViewport,
+  type HudWidgetHalfSizes,
+} from "./hud-layout";
 import "./hud.css";
 
 type HudRootStyle = CSSProperties & Record<`--hud-${string}`, string>;
-const HUD_WIDGET_MARGIN_PX = 16;
+const HUD_WIDGET_IDS: readonly HudWidgetId[] = [
+  "agent",
+  "task",
+  "answer",
+  "connection",
+];
+
+/** Unscaled layout half-sizes in pixels; 0 while a widget is unmounted. */
+type HudWidgetHalfSizesPx = Record<HudWidgetId, { x: number; y: number }>;
+
+const ZERO_HALF_SIZES_PX: HudWidgetHalfSizesPx = {
+  agent: { x: 0, y: 0 },
+  task: { x: 0, y: 0 },
+  answer: { x: 0, y: 0 },
+  connection: { x: 0, y: 0 },
+};
 
 function hudWidgetFromTarget(target: EventTarget | null): HTMLElement | null {
   return target instanceof Element
@@ -51,15 +76,41 @@ function hudWidgetId(element: HTMLElement): HudWidgetId | null {
     : null;
 }
 
-function clampWidgetAxis(
-  value: number,
-  halfSizePct: number,
-  viewportSize: number,
-): number {
-  const marginPct = HUD_WIDGET_MARGIN_PX / viewportSize * 100;
-  const min = Math.min(50, halfSizePct + marginPct);
-  const max = Math.max(50, 100 - halfSizePct - marginPct);
-  return Math.min(max, Math.max(min, value));
+/**
+ * One callback ref per widget: measures pre-paint on mount, follows content
+ * size changes through a ResizeObserver, and resets to 0 on unmount. Sizes
+ * come from offsetWidth/offsetHeight (transform-free), so the render-time
+ * resolver can apply the preference scale itself without re-measuring.
+ */
+function createWidgetMeasureRefs(
+  setHalfSizes: Dispatch<SetStateAction<HudWidgetHalfSizesPx>>,
+): Record<HudWidgetId, (element: HTMLElement | null) => void> {
+  const observers = new Map<HudWidgetId, ResizeObserver>();
+  const refs = {} as Record<HudWidgetId, (element: HTMLElement | null) => void>;
+  for (const widget of HUD_WIDGET_IDS) {
+    refs[widget] = (element) => {
+      observers.get(widget)?.disconnect();
+      observers.delete(widget);
+      const apply = (x: number, y: number) => {
+        setHalfSizes((current) =>
+          current[widget].x === x && current[widget].y === y
+            ? current
+            : { ...current, [widget]: { x, y } }
+        );
+      };
+      if (!element) {
+        apply(0, 0);
+        return;
+      }
+      const measure = () =>
+        apply(element.offsetWidth / 2, element.offsetHeight / 2);
+      measure();
+      const observer = new ResizeObserver(measure);
+      observer.observe(element);
+      observers.set(widget, observer);
+    };
+  }
+  return refs;
 }
 
 export default function PageHud() {
@@ -85,6 +136,16 @@ export default function PageHud() {
     active && customizeModeRevision === modeRevision;
   const [preferences, setPreferences] =
     useState<HudPreferencesV1>(loadHudPreferences);
+  const [halfSizesPx, setHalfSizesPx] =
+    useState<HudWidgetHalfSizesPx>(ZERO_HALF_SIZES_PX);
+  const [viewport, setViewport] = useState<HudViewport>(() => ({
+    width: window.innerWidth,
+    height: window.innerHeight,
+  }));
+  const measureRefs = useMemo(
+    () => createWidgetMeasureRefs(setHalfSizesPx),
+    [],
+  );
   const dragRef = useRef<{
     widget: HudWidgetId;
     pointerId: number;
@@ -106,44 +167,11 @@ export default function PageHud() {
   }, [preferences]);
 
   useEffect(() => {
-    const keepWidgetsInBounds = () => {
-      setPreferences((current) => {
-        let changed = false;
-        const positions = { ...current.positions };
-        for (const widget of Object.keys(positions) as HudWidgetId[]) {
-          const element = document.querySelector<HTMLElement>(
-            `[data-hud-widget="${widget}"]`,
-          );
-          if (!element) continue;
-          const rect = element.getBoundingClientRect();
-          const halfXPct = rect.width / 2 / window.innerWidth * 100;
-          const halfYPct = rect.height / 2 / window.innerHeight * 100;
-          const position = positions[widget];
-          const xPct = clampWidgetAxis(
-            position.xPct,
-            halfXPct,
-            window.innerWidth,
-          );
-          const yPct = clampWidgetAxis(
-            position.yPct,
-            halfYPct,
-            window.innerHeight,
-          );
-          if (xPct !== position.xPct || yPct !== position.yPct) {
-            positions[widget] = { xPct, yPct };
-            changed = true;
-          }
-        }
-        return changed ? { ...current, positions } : current;
-      });
-    };
-    const frame = window.requestAnimationFrame(keepWidgetsInBounds);
-    window.addEventListener("resize", keepWidgetsInBounds);
-    return () => {
-      window.cancelAnimationFrame(frame);
-      window.removeEventListener("resize", keepWidgetsInBounds);
-    };
-  }, [preferences.scale]);
+    const onResize = () =>
+      setViewport({ width: window.innerWidth, height: window.innerHeight });
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
 
   const dismissTopLayer = useCallback(() => {
     if (paletteOpen) {
@@ -198,8 +226,8 @@ export default function PageHud() {
       positions: {
         ...current.positions,
         [widget]: {
-          xPct: clampWidgetAxis(xPct, halfXPct, window.innerWidth),
-          yPct: clampWidgetAxis(yPct, halfYPct, window.innerHeight),
+          xPct: clampHudAxis(xPct, halfXPct, hudMarginPct(window.innerWidth)),
+          yPct: clampHudAxis(yPct, halfYPct, hudMarginPct(window.innerHeight)),
         },
       },
     }));
@@ -273,18 +301,32 @@ export default function PageHud() {
       halfYPct,
     );
   };
+  const halfSizes = {} as HudWidgetHalfSizes;
+  for (const widget of HUD_WIDGET_IDS) {
+    halfSizes[widget] = {
+      xPct: halfSizesPx[widget].x * preferences.scale
+        / viewport.width * 100,
+      yPct: halfSizesPx[widget].y * preferences.scale
+        / viewport.height * 100,
+    };
+  }
+  const positions = resolveHudPositions(
+    preferences.positions,
+    halfSizes,
+    viewport,
+  );
   const rootStyle: HudRootStyle = {
     "--hud-widget-opacity": String(preferences.opacity),
     "--hud-passive-opacity": String(preferences.opacity * 0.4),
     "--hud-widget-scale": String(preferences.scale),
-    "--hud-agent-x": `${preferences.positions.agent.xPct}%`,
-    "--hud-agent-y": `${preferences.positions.agent.yPct}%`,
-    "--hud-task-x": `${preferences.positions.task.xPct}%`,
-    "--hud-task-y": `${preferences.positions.task.yPct}%`,
-    "--hud-answer-x": `${preferences.positions.answer.xPct}%`,
-    "--hud-answer-y": `${preferences.positions.answer.yPct}%`,
-    "--hud-connection-x": `${preferences.positions.connection.xPct}%`,
-    "--hud-connection-y": `${preferences.positions.connection.yPct}%`,
+    "--hud-agent-x": `${positions.agent.xPct}%`,
+    "--hud-agent-y": `${positions.agent.yPct}%`,
+    "--hud-task-x": `${positions.task.xPct}%`,
+    "--hud-task-y": `${positions.task.yPct}%`,
+    "--hud-answer-x": `${positions.answer.xPct}%`,
+    "--hud-answer-y": `${positions.answer.yPct}%`,
+    "--hud-connection-x": `${positions.connection.xPct}%`,
+    "--hud-connection-y": `${positions.connection.yPct}%`,
   };
 
   return (
@@ -339,6 +381,7 @@ export default function PageHud() {
         hasPending={hasPending}
         onToggle={() => togglePanel("agent")}
         sendAction={sendAction}
+        measureRef={measureRefs.agent}
       />
       <LastTaskWidget
         task={state?.lastTask ?? null}
@@ -347,6 +390,7 @@ export default function PageHud() {
         hasPending={hasPending}
         onToggle={() => togglePanel("task")}
         sendAction={sendAction}
+        measureRef={measureRefs.task}
       />
       <AnswerWidget
         answer={state?.answer ?? null}
@@ -355,6 +399,7 @@ export default function PageHud() {
         hasPending={hasPending}
         onToggle={() => togglePanel("answer")}
         sendAction={sendAction}
+        measureRef={measureRefs.answer}
       />
       <ConnectionWidget
         connection={state?.connection ?? "offline"}
@@ -365,6 +410,7 @@ export default function PageHud() {
         hasPending={hasPending}
         onToggle={() => togglePanel("connection")}
         sendAction={sendAction}
+        measureRef={measureRefs.connection}
       />
     </div>
   );

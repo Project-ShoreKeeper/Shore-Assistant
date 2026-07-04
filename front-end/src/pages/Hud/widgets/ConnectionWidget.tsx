@@ -14,6 +14,7 @@ export default function ConnectionWidget({
   hasPending,
   onToggle,
   sendAction,
+  measureRef,
 }: {
   connection: HudConnection;
   linked: boolean;
@@ -23,6 +24,7 @@ export default function ConnectionWidget({
   hasPending: boolean;
   onToggle: () => void;
   sendAction: (action: HudActionRequest) => string;
+  measureRef: (element: HTMLElement | null) => void;
 }) {
   const label = !linked
     ? "No link to app"
@@ -41,6 +43,7 @@ export default function ConnectionWidget({
   return (
     <>
       <button
+        ref={measureRef}
         type="button"
         className="hud-widget hud-br"
         data-hud-widget="connection"

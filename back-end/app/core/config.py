@@ -201,6 +201,7 @@ class Settings(BaseSettings):
     CUA_MAX_STEPS: int = 15  # hard cap on actions per run
     CUA_STEP_TIMEOUT_SECONDS: float = 30.0  # one execute+capture round-trip deadline
     CUA_SETTLE_MS: int = 800  # client wait after an action before recapture
+    CUA_CAPTURE_MAX_SIZE: int = 3000  # longest-edge px for CUA frames (Retina needs more detail than the 1280 co-pilot default)
     CUA_HISTORY_MAX_TURNS: int = 4  # screenshot/action turns kept in EvoCUA context
     CUA_AUDIT_LOG: str = "data/cua_audit.log"
 

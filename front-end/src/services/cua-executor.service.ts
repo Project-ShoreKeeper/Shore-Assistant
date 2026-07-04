@@ -13,9 +13,10 @@ export interface CuaStepMessage {
   action: { func: string } & Record<string, unknown>;
   display_hint: string;
   settle_ms?: number;
+  capture_max_size?: number;
 }
 
-const CAPTURE_MAX_SIZE = 1280;
+const CAPTURE_MAX_SIZE = 3000;
 const DEFAULT_SETTLE_MS = 800;
 
 function screenSize() {
@@ -53,7 +54,8 @@ export async function executeCuaStep(
     if (settleMs > 0) {
       await new Promise((resolve) => setTimeout(resolve, settleMs));
     }
-    const screenshot = await captureFrameDataUrl(CAPTURE_MAX_SIZE);
+    const maxSize = message.capture_max_size ?? CAPTURE_MAX_SIZE;
+    const screenshot = await captureFrameDataUrl(maxSize);
     reply({ screenshot, screen: screenSize() });
   } catch (cause) {
     reply({

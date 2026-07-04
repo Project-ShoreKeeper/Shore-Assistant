@@ -346,6 +346,7 @@ All backend config via environment variables or `.env` file in `back-end/`:
 | CUA_MAX_STEPS | 15 | Hard action cap per computer-use run |
 | CUA_STEP_TIMEOUT_SECONDS | 30.0 | Execute-and-recapture round-trip deadline |
 | CUA_SETTLE_MS | 800 | Client wait after input before capturing the next frame |
+| CUA_CAPTURE_MAX_SIZE | 3000 | Longest-edge px for CUA frames (Retina needs more detail than the 1280 co-pilot default; higher = better grounding but more vision tokens/slower) |
 | CUA_HISTORY_MAX_TURNS | 4 | Screenshot/action turns retained in EvoCUA context |
 | CUA_AUDIT_LOG | data/cua_audit.log | JSONL action audit path |
 | **Terminal** | | |

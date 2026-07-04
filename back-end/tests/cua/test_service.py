@@ -32,7 +32,7 @@ class FakeClient:
 def make_service(responses, tmp_path):
     svc = ComputerUseService(
         client=FakeClient(responses),
-        request_screenshot=lambda: _ret(TINY),
+        request_screenshot=lambda *a, **k: _ret(TINY),
         audit_path=str(tmp_path / "audit.log"),
     )
     sent = []

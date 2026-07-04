@@ -31,6 +31,17 @@ _INSTRUCTION_TEMPLATE = (
 _WAIT_SECONDS = 20
 
 
+def _extract_thought(response: str) -> str:
+    """Pull the `## Thought:` section from an EvoCUA response for diagnostics."""
+    marker = "## Thought:"
+    start = response.find(marker)
+    if start == -1:
+        return ""
+    rest = response[start + len(marker):]
+    end = rest.find("## Action:")
+    return (rest if end == -1 else rest[:end]).strip()
+
+
 class ComputerUseService:
     def __init__(self, *, client=None, request_screenshot=None, audit_path=None):
         self._client = client or cua_client
@@ -127,7 +138,7 @@ class ComputerUseService:
         self._aborted = False
         executed: list[str] = []
         try:
-            frame = await self._request_screenshot()
+            frame = await self._request_screenshot(settings.CUA_CAPTURE_MAX_SIZE)
             history: collections.deque[dict] = collections.deque(
                 maxlen=settings.CUA_HISTORY_MAX_TURNS
             )
@@ -166,10 +177,11 @@ class ComputerUseService:
                     )
 
                 history.append({"response": response, "image_url": image_url})
+                thought = _extract_thought(response)
                 for command in commands:
                     if self._aborted:
                         return self._summary(executed, "aborted by the user")
-                    self._audit(task, command)
+                    self._audit(task, command, intent=hint, thought=thought)
                     if command.func == "terminate":
                         outcome = f"finished with status={command.status}"
                         if command.answer:
@@ -179,7 +191,7 @@ class ComputerUseService:
                     if command.func == "wait":
                         executed.append("wait")
                         await asyncio.sleep(_WAIT_SECONDS)
-                        frame = await self._request_screenshot()
+                        frame = await self._request_screenshot(settings.CUA_CAPTURE_MAX_SIZE)
                         continue
                     frame = await self._dispatch(command, hint)
                     executed.append(hint or command.func)
@@ -208,6 +220,7 @@ class ComputerUseService:
                 "action": {"func": command.func, **command.args},
                 "display_hint": hint,
                 "settle_ms": settings.CUA_SETTLE_MS,
+                "capture_max_size": settings.CUA_CAPTURE_MAX_SIZE,
             }
         )
         try:
@@ -278,7 +291,14 @@ class ComputerUseService:
             except Exception:
                 pass
 
-    def _audit(self, task: str, command) -> None:
+    def _audit(
+        self,
+        task: str,
+        command,
+        *,
+        intent: str = "",
+        thought: str = "",
+    ) -> None:
         try:
             path = Path(self._audit_path)
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -292,6 +312,11 @@ class ComputerUseService:
                             "args": command.args,
                             "status": command.status,
                             "answer": command.answer,
+                            # Model's own stated target/reasoning for this
+                            # action — the decisive evidence when a run gets
+                            # stuck (what it *thinks* it is clicking).
+                            "intent": intent,
+                            "thought": thought[:500],
                         }
                     )
                     + "\n"

@@ -34,7 +34,7 @@ class ScreenshotBridge:
             fut.set_result(data_url)
         return True
 
-    async def request(self) -> str:
+    async def request(self, max_size: int | None = None) -> str:
         """Ask the connected client for a fresh screenshot. Returns a data: URL."""
         if not self.broadcast:
             raise ScreenshotUnavailable("No client connected to capture a screenshot.")
@@ -44,7 +44,7 @@ class ScreenshotBridge:
         await self.broadcast({
             "type": "request_screenshot",
             "request_id": request_id,
-            "max_size": settings.COPILOT_MAX_IMAGE_SIZE,
+            "max_size": max_size or settings.COPILOT_MAX_IMAGE_SIZE,
         })
         try:
             return await asyncio.wait_for(fut, timeout=self.timeout_seconds)

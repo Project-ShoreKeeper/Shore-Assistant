@@ -44,8 +44,8 @@ _PARAMS: dict[str, list[str]] = {
     "middleClick": ["x", "y"],
     "moveTo": ["x", "y"],
     "dragTo": ["x", "y"],
-    "scroll": ["clicks"],
-    "hscroll": ["clicks"],
+    "scroll": ["clicks", "x", "y"],
+    "hscroll": ["clicks", "x", "y"],
     "write": ["message"],
     "press": ["keys"],
     "hotkey": [],  # varargs
@@ -204,7 +204,17 @@ def code_to_commands(
         elif func in ("scroll", "hscroll"):
             clicks = int(kwargs.get("clicks", 0))
             key = "dy" if func == "scroll" else "dx"
-            commands.append(CuaCommand(func=func, args={key: clicks}))
+            args = {key: clicks}
+            if "x" in kwargs and "y" in kwargs:
+                x, y = _project(
+                    float(kwargs["x"]),
+                    float(kwargs["y"]),
+                    model_size,
+                    screen_size,
+                )
+                args["x"] = x
+                args["y"] = y
+            commands.append(CuaCommand(func=func, args=args))
         elif func == "write":
             commands.append(
                 CuaCommand(

@@ -28,7 +28,9 @@ def test_stop_revokes_computer_use_readiness():
     source = _src()
     stop_branch = source.split('msg_type == "copilot_stop"', 1)[1]
     stop_branch = stop_branch.split("elif msg_type", 1)[0]
-    assert "computer_use_service.set_ready(None)" in stop_branch
+    assert "computer_use_service.set_ready(" in stop_branch
+    assert "None," in stop_branch
+    assert "owner=send_json_safe" in stop_branch
 
 
 def test_proactive_frame_pipeline_is_removed():

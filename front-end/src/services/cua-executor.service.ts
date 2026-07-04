@@ -12,6 +12,7 @@ export interface CuaStepMessage {
   request_id: string;
   action: { func: string } & Record<string, unknown>;
   display_hint: string;
+  settle_ms?: number;
 }
 
 const CAPTURE_MAX_SIZE = 1280;
@@ -31,14 +32,24 @@ export async function announceCuaReady(
 export async function executeCuaStep(
   message: CuaStepMessage,
   sendResult: (payload: object) => void,
-  settleMs = DEFAULT_SETTLE_MS,
+  settleOverrideMs?: number,
 ): Promise<void> {
   const reply = (extra: object) =>
     sendResult({ request_id: message.request_id, ...extra });
 
+  if (!isTauri() || !isScreenSharing()) {
+    reply({
+      error: "Screen sharing is not active on the desktop client.",
+      screen: screenSize(),
+    });
+    return;
+  }
+
   try {
     const { invoke } = await import("@tauri-apps/api/core");
     await invoke("input_execute", { action: message.action });
+    const settleMs =
+      settleOverrideMs ?? message.settle_ms ?? DEFAULT_SETTLE_MS;
     if (settleMs > 0) {
       await new Promise((resolve) => setTimeout(resolve, settleMs));
     }

@@ -82,6 +82,25 @@ def test_write_press_hotkey_scroll():
     assert cmds[3].args == {"dy": -3}
 
 
+def test_scroll_keeps_projected_target():
+    cmds = code_to_commands(
+        "pyautogui.scroll(-3, x=0.5, y=0.5)",
+        model_size=(1024, 640),
+        screen_size=(1440, 900),
+    )
+    assert cmds[0].func == "scroll"
+    assert cmds[0].args == {"dy": -3, "x": 720, "y": 450}
+
+
+def test_scroll_without_target_has_no_coords():
+    cmds = code_to_commands(
+        "pyautogui.scroll(-3)",
+        model_size=(1024, 640),
+        screen_size=(1440, 900),
+    )
+    assert cmds[0].args == {"dy": -3}
+
+
 def test_terminate_and_wait():
     cmds = code_to_commands(
         'computer.terminate(status="failure", answer="Dialog blocked")',

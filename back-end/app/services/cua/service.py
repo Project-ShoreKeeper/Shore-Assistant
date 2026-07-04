@@ -5,11 +5,13 @@ from the WebSocket receive loop so step results can resolve its futures.
 """
 
 import asyncio
+import collections
 import json
 import time
 import uuid
 from pathlib import Path
 
+from app.core.auth import current_user_role
 from app.core.config import settings
 from app.services.cua.actions import (
     CuaParseError,
@@ -41,20 +43,38 @@ class ComputerUseService:
         self._pending: dict[str, asyncio.Future] = {}
         self._system_prompt: str | None = None
 
-    def attach(self, broadcast) -> None:
+    def attach(self, broadcast) -> bool:
+        """Adopt a connection unless another connection owns an active run."""
+        if (
+            self._running
+            and self.broadcast is not None
+            and broadcast is not self.broadcast
+        ):
+            return False
         self.broadcast = broadcast
+        return True
 
-    def detach(self) -> None:
+    def _owned_by(self, owner) -> bool:
+        return owner is None or owner is self.broadcast
+
+    def detach(self, owner=None) -> None:
+        if not self._owned_by(owner):
+            return
         self.broadcast = None
         self._screen = None
         self._aborted = True
+        self._fail_pending("Client disconnected.")
+
+    def set_ready(self, screen: dict | None, owner=None) -> None:
+        if not self._owned_by(owner):
+            return
+        self._screen = screen if screen and screen.get("width") else None
+
+    def _fail_pending(self, reason: str) -> None:
         for future in self._pending.values():
             if not future.done():
-                future.set_exception(RuntimeError("Client disconnected."))
+                future.set_exception(RuntimeError(reason))
         self._pending.clear()
-
-    def set_ready(self, screen: dict | None) -> None:
-        self._screen = screen if screen and screen.get("width") else None
 
     @property
     def ready(self) -> bool:
@@ -64,8 +84,11 @@ class ComputerUseService:
     def running(self) -> bool:
         return self._running
 
-    def abort(self) -> None:
+    def abort(self, owner=None) -> None:
+        if not self._owned_by(owner):
+            return
         self._aborted = True
+        self._fail_pending("aborted by the user")
 
     def resolve_step(
         self,
@@ -74,11 +97,14 @@ class ComputerUseService:
         screenshot=None,
         screen=None,
         error=None,
+        owner=None,
     ) -> bool:
+        if not self._owned_by(owner):
+            return False
         future = self._pending.pop(request_id, None)
         if not future or future.done():
             return False
-        if screen:
+        if screen and self._screen is not None:
             self.set_ready(screen)
         if error:
             future.set_exception(RuntimeError(error))
@@ -87,6 +113,8 @@ class ComputerUseService:
         return True
 
     async def run(self, task: str, max_steps: int) -> str:
+        if current_user_role.get() != "admin":
+            return "Computer use is restricted to the admin user."
         if not self.ready:
             return (
                 "Computer use requires the desktop app with screen sharing "
@@ -100,12 +128,17 @@ class ComputerUseService:
         executed: list[str] = []
         try:
             frame = await self._request_screenshot()
-            history: list[dict] = []
+            history: collections.deque[dict] = collections.deque(
+                maxlen=settings.CUA_HISTORY_MAX_TURNS
+            )
             for step in range(1, max_steps + 1):
                 if self._aborted:
                     return self._summary(executed, "aborted by the user")
 
-                image_url, model_width, model_height = process_screenshot(frame)
+                image_url, model_width, model_height = await asyncio.to_thread(
+                    process_screenshot,
+                    frame,
+                )
                 screen = (self._screen["width"], self._screen["height"])
                 messages = self._build_messages(task, history, image_url)
                 await self._state(True, step, max_steps, task)
@@ -156,6 +189,8 @@ class ComputerUseService:
                 "stopped: step limit reached before the task finished",
             )
         except Exception as exc:
+            if self._aborted:
+                return self._summary(executed, "aborted by the user")
             return self._summary(executed, f"stopped on error: {exc}")
         finally:
             self._running = False
@@ -172,6 +207,7 @@ class ComputerUseService:
                 "request_id": request_id,
                 "action": {"func": command.func, **command.args},
                 "display_hint": hint,
+                "settle_ms": settings.CUA_SETTLE_MS,
             }
         )
         try:
@@ -188,13 +224,13 @@ class ComputerUseService:
     def _build_messages(
         self,
         task: str,
-        history: list[dict],
+        history: collections.deque[dict],
         image_url: str,
     ) -> list[dict]:
         if self._system_prompt is None:
             self._system_prompt = _PROMPT_PATH.read_text(encoding="utf-8")
         messages = [{"role": "system", "content": self._system_prompt}]
-        kept = history[-settings.CUA_HISTORY_MAX_TURNS :]
+        kept = list(history)
         for index, turn in enumerate(kept):
             content = [
                 {"type": "image_url", "image_url": {"url": turn["image_url"]}}

@@ -103,15 +103,21 @@ fn run(action: InputAction) -> Result<(), String> {
                 .button(Button::Left, Direction::Release)
                 .map_err(input_error)?;
         }
-        "scroll" => {
-            enigo
-                .scroll(-action.dy.unwrap_or(0), Axis::Vertical)
-                .map_err(input_error)?;
-        }
-        "hscroll" => {
-            enigo
-                .scroll(action.dx.unwrap_or(0), Axis::Horizontal)
-                .map_err(input_error)?;
+        "scroll" | "hscroll" => {
+            if let (Some(x), Some(y)) = (action.x, action.y) {
+                enigo
+                    .move_mouse(x, y, Coordinate::Abs)
+                    .map_err(input_error)?;
+            }
+            if action.func == "scroll" {
+                enigo
+                    .scroll(-action.dy.unwrap_or(0), Axis::Vertical)
+                    .map_err(input_error)?;
+            } else {
+                enigo
+                    .scroll(action.dx.unwrap_or(0), Axis::Horizontal)
+                    .map_err(input_error)?;
+            }
         }
         "write" => {
             enigo

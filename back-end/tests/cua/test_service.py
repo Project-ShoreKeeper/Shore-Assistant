@@ -1,5 +1,9 @@
+import asyncio
+
 import pytest
 
+from app.core.auth import current_user_role
+from app.core.config import settings
 from app.services.cua.client import CuaUnavailable
 from app.services.cua.service import ComputerUseService
 
@@ -121,3 +125,79 @@ async def test_audit_log_written(tmp_path):
     await svc.run("press ok", max_steps=5)
     content = (tmp_path / "audit.log").read_text()
     assert '"func": "click"' in content
+
+
+@pytest.mark.asyncio
+async def test_attach_refused_while_running(tmp_path):
+    svc, _ = make_service([CLICK, DONE], tmp_path)
+    original = svc.broadcast
+
+    async def intruder(msg):
+        pass
+
+    original_resolve = svc.resolve_step
+
+    def resolve_and_intrude(request_id, **kwargs):
+        assert svc.attach(intruder) is False
+        assert svc.broadcast is original
+        return original_resolve(request_id, **kwargs)
+
+    svc.resolve_step = resolve_and_intrude
+
+    await svc.run("task", max_steps=5)
+    assert svc.attach(intruder) is True
+
+
+@pytest.mark.asyncio
+async def test_detach_wrong_owner_is_noop(tmp_path):
+    svc, _ = make_service([DONE], tmp_path)
+
+    async def other(msg):
+        pass
+
+    svc.detach(owner=other)
+    assert svc.broadcast is not None and svc.ready
+
+
+@pytest.mark.asyncio
+async def test_abort_fails_pending_future_immediately(tmp_path):
+    svc, sent = make_service([CLICK, DONE], tmp_path)
+
+    async def broadcast_no_reply(msg):
+        sent.append(msg)
+        if msg.get("type") == "cua_step":
+            svc.abort()
+
+    svc.attach(broadcast_no_reply)
+
+    summary = await asyncio.wait_for(svc.run("task", max_steps=5), timeout=5)
+    assert "aborted" in summary.lower()
+
+
+@pytest.mark.asyncio
+async def test_resolve_step_does_not_rearm_cleared_screen(tmp_path):
+    svc, _ = make_service([DONE], tmp_path)
+    svc.set_ready(None)
+    future = asyncio.get_running_loop().create_future()
+    svc._pending["r1"] = future
+    svc.resolve_step("r1", screenshot=TINY, screen=SCREEN)
+    assert not svc.ready
+
+
+@pytest.mark.asyncio
+async def test_run_refuses_non_admin(tmp_path):
+    svc, _ = make_service([DONE], tmp_path)
+    token = current_user_role.set("user")
+    try:
+        summary = await svc.run("task", max_steps=5)
+    finally:
+        current_user_role.reset(token)
+    assert "admin" in summary.lower()
+
+
+@pytest.mark.asyncio
+async def test_cua_step_carries_settle_ms(tmp_path):
+    svc, sent = make_service([CLICK, DONE], tmp_path)
+    await svc.run("task", max_steps=5)
+    step = next(message for message in sent if message["type"] == "cua_step")
+    assert step["settle_ms"] == settings.CUA_SETTLE_MS

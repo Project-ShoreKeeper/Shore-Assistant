@@ -4,6 +4,7 @@
  */
 import { CHAT_WS_URL } from "../constants/stt.constant";
 import { getAccessToken } from "./http.service";
+import type { CuaStepMessage } from "./cua-executor.service";
 
 export type WebSocketStatus =
   | "CONNECTING"
@@ -114,19 +115,7 @@ export interface RequestScreenshotMessage {
   max_size?: number;
 }
 
-export interface CopilotMessage {
-  type: "copilot_message";
-  text: string;
-  agent_actions?: PersistedAgentAction[];
-  timestamp: number;
-}
-
-export interface CuaStepMessage {
-  type: "cua_step";
-  request_id: string;
-  action: { func: string } & Record<string, unknown>;
-  display_hint: string;
-}
+export type CuaStepServerMessage = CuaStepMessage & { type: "cua_step" };
 
 export interface CuaStateMessage {
   type: "cua_state";
@@ -194,8 +183,7 @@ export type ChatServerMessage =
   | NotificationMessage
   | MemoryWorkerMessage
   | CopilotStateMessage
-  | CopilotMessage
-  | CuaStepMessage
+  | CuaStepServerMessage
   | CuaStateMessage
   | RequestScreenshotMessage
   | HistoryMessage;

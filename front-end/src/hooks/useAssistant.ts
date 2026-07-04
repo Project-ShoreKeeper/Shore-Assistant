@@ -15,6 +15,7 @@ import {
 } from "../services/http.service";
 import {
   captureFrameDataUrl,
+  isScreenSharing,
   onScreenShareEnded,
   requestScreenShare,
   stopScreenStream,
@@ -43,7 +44,6 @@ export interface ChatMessage {
   audioUrl?: string;
   isStreaming?: boolean;
   isNotification?: boolean;
-  isCopilot?: boolean;
   taskId?: string;
   timestamp: Date;
   agentActions?: AgentAction[];
@@ -144,6 +144,7 @@ export function useAssistant(): UseAssistantReturn {
   const [thinkingEnabled, setThinkingEnabled] = useState(false);
   const thinkingEnabledRef = useRef(false);
   const [copilotActive, setCopilotActive] = useState(false);
+  const copilotActiveRef = useRef(false);
   const [copilotError, setCopilotError] = useState<string | null>(null);
   const [cuaRunning, setCuaRunning] = useState(false);
   const [cuaTask, setCuaTask] = useState<string | null>(null);
@@ -186,6 +187,10 @@ export function useAssistant(): UseAssistantReturn {
   useEffect(() => {
     thinkingEnabledRef.current = thinkingEnabled;
   }, [thinkingEnabled]);
+
+  useEffect(() => {
+    copilotActiveRef.current = copilotActive;
+  }, [copilotActive]);
 
   // ── Initialize VAD ──
   useEffect(() => {
@@ -258,9 +263,19 @@ export function useAssistant(): UseAssistantReturn {
         language: languageRef.current,
         thinking: thinkingEnabledRef.current,
       });
+      if (copilotActiveRef.current) {
+        if (isScreenSharing()) {
+          ws.sendCopilotStart();
+        } else {
+          setCopilotActive(false);
+        }
+      }
     };
     const handleClose = ({ code }: { code: number }) => {
       setLastCloseCode(code);
+      setCuaRunning(false);
+      setCuaTask(null);
+      setCuaStep(0);
       if (code === 4401) notifyUnauthorized();
     };
 
@@ -688,33 +703,6 @@ export function useAssistant(): UseAssistantReturn {
           break;
         }
 
-        case "copilot_message": {
-          const rand = () => Math.random().toString(36).slice(2, 7);
-          const actions: AgentAction[] = (msg.agent_actions || []).map((a) => ({
-            id: `cop-act-${a.timestamp}-${rand()}`,
-            action: a.action,
-            detail: "",
-            tool: a.tool,
-            args: a.args,
-            result: a.result ?? undefined,
-            status: a.status,
-            timestamp: new Date((a.timestamp || Date.now() / 1000) * 1000),
-          }));
-          const id = Date.now().toString(36) + rand();
-          setMessages((prev) => [
-            ...prev,
-            {
-              id,
-              role: "assistant",
-              text: msg.text,
-              isStreaming: false,
-              isCopilot: true,
-              timestamp: new Date(),
-              agentActions: actions.length > 0 ? actions : undefined,
-            },
-          ]);
-          break;
-        }
       }
     };
 
@@ -726,6 +714,7 @@ export function useAssistant(): UseAssistantReturn {
     };
 
     const unsubScreenShareEnded = onScreenShareEnded(() => {
+      ws.sendCuaAbort();
       ws.sendCopilotStop();
       setCopilotActive(false);
     });
@@ -752,27 +741,27 @@ export function useAssistant(): UseAssistantReturn {
 
   useEffect(() => {
     if (!isTauri() || !cuaRunning) return;
+    const shortcutName = "CommandOrControl+Shift+Escape";
     let disposed = false;
-    void import("@tauri-apps/plugin-global-shortcut")
-      .then(async (shortcut) => {
-        await shortcut.register(
-          "CommandOrControl+Shift+Escape",
-          () => abortComputerUse(),
-        );
+    let unregister: (() => void) | null = null;
+    void (async () => {
+      try {
+        const shortcut = await import("@tauri-apps/plugin-global-shortcut");
+        await shortcut.register(shortcutName, () => abortComputerUse());
+        unregister = () => {
+          void shortcut.unregister(shortcutName).catch(() => {});
+        };
         if (disposed) {
-          await shortcut.unregister("CommandOrControl+Shift+Escape");
+          unregister();
+          unregister = null;
         }
-      })
-      .catch((error) => {
+      } catch (error) {
         console.warn("[CUA] shortcut registration failed:", error);
-      });
+      }
+    })();
     return () => {
       disposed = true;
-      void import("@tauri-apps/plugin-global-shortcut")
-        .then((shortcut) =>
-          shortcut.unregister("CommandOrControl+Shift+Escape"),
-        )
-        .catch(() => {});
+      unregister?.();
     };
   }, [cuaRunning, abortComputerUse]);
 
@@ -1021,6 +1010,7 @@ export function useAssistant(): UseAssistantReturn {
         message: "Co-pilot is not active.",
       };
     }
+    wsRef.current?.sendCuaAbort();
     if (!wsRef.current?.sendCopilotStop()) {
       return {
         ok: false,

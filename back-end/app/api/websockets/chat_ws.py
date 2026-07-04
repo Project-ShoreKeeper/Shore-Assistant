@@ -28,6 +28,24 @@ import time
 _ALLOWED_IMAGE_MIME_RE = re.compile(r"^data:image/(png|jpeg|webp);base64,")
 
 
+def _validate_screenshot_data_url(
+    data_url: str | None,
+    error: str | None,
+) -> tuple[str | None, str | None]:
+    """Apply the shared MIME and size gate to a client screenshot."""
+    if data_url and not error:
+        if not _ALLOWED_IMAGE_MIME_RE.match(data_url):
+            return None, "Unsupported screenshot format."
+        try:
+            payload = data_url.split(",", 1)[1]
+            size = len(_b64.b64decode(payload, validate=False))
+        except Exception:
+            return None, "Malformed screenshot data."
+        if size > settings.MAX_IMAGE_BYTES:
+            return None, "Screenshot too large."
+    return data_url, error
+
+
 def _validate_images(images) -> str | None:
     """Return None if images is acceptable, else an error string for the client."""
     if not settings.MULTIMODAL_ENABLED:
@@ -499,41 +517,43 @@ async def websocket_chat(websocket: WebSocket):
 
                     elif msg_type == "copilot_stop":
                         screen_access_active = False
-                        computer_use_service.set_ready(None)
+                        computer_use_service.abort(owner=send_json_safe)
+                        computer_use_service.set_ready(
+                            None,
+                            owner=send_json_safe,
+                        )
                         await send_json_safe({
                             "type": "copilot_state",
                             "active": screen_access_active,
                         })
 
                     elif msg_type == "cua_ready":
-                        computer_use_service.set_ready(data.get("screen"))
+                        computer_use_service.set_ready(
+                            data.get("screen"),
+                            owner=send_json_safe,
+                        )
 
                     elif msg_type == "cua_step_result":
+                        screenshot, error = _validate_screenshot_data_url(
+                            data.get("screenshot"),
+                            data.get("error"),
+                        )
                         computer_use_service.resolve_step(
                             data.get("request_id", ""),
-                            screenshot=data.get("screenshot"),
+                            screenshot=screenshot,
                             screen=data.get("screen"),
-                            error=data.get("error"),
+                            error=error,
+                            owner=send_json_safe,
                         )
 
                     elif msg_type == "cua_abort":
-                        computer_use_service.abort()
+                        computer_use_service.abort(owner=send_json_safe)
 
                     elif msg_type == "screenshot_response":
-                        data_url = data.get("data_url")
-                        error = data.get("error")
-                        if data_url and not error:
-                            if not _ALLOWED_IMAGE_MIME_RE.match(data_url):
-                                error, data_url = "Unsupported screenshot format.", None
-                            else:
-                                try:
-                                    payload = data_url.split(",", 1)[1]
-                                    size = len(_b64.b64decode(payload, validate=False))
-                                except Exception:
-                                    error, data_url = "Malformed screenshot data.", None
-                                else:
-                                    if size > settings.MAX_IMAGE_BYTES:
-                                        error, data_url = "Screenshot too large.", None
+                        data_url, error = _validate_screenshot_data_url(
+                            data.get("data_url"),
+                            data.get("error"),
+                        )
                         screenshot_bridge.resolve(
                             data.get("request_id", ""), data_url, error
                         )
@@ -695,7 +715,7 @@ async def websocket_chat(websocket: WebSocket):
                 await agent_task
             except (asyncio.CancelledError, Exception):
                 pass
-        computer_use_service.detach()
+        computer_use_service.detach(owner=my_send_json)
         # Only unregister if we're still the active connection
         if connection_manager._send_json is my_send_json:
             notification_service.clear_agent_callback()

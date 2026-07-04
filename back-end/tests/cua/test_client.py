@@ -53,3 +53,39 @@ async def test_http_error_raises_unavailable():
     client = CuaClient(transport=_transport(handler))
     with pytest.raises(CuaUnavailable):
         await client.next_step([{"role": "user", "content": []}])
+
+
+@pytest.mark.asyncio
+async def test_api_key_sent_as_bearer(monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "EVOCUA_API_KEY", "secret-key")
+    seen = {}
+
+    def handler(request):
+        seen["auth"] = request.headers.get("authorization")
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": "ok"}}]}
+        )
+
+    client = CuaClient(transport=_transport(handler))
+    await client.next_step([{"role": "user", "content": []}])
+    assert seen["auth"] == "Bearer secret-key"
+
+
+@pytest.mark.asyncio
+async def test_no_api_key_sends_no_auth_header(monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "EVOCUA_API_KEY", "")
+    seen = {}
+
+    def handler(request):
+        seen["auth"] = request.headers.get("authorization")
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": "ok"}}]}
+        )
+
+    client = CuaClient(transport=_transport(handler))
+    await client.next_step([{"role": "user", "content": []}])
+    assert seen["auth"] is None

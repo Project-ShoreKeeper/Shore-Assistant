@@ -196,6 +196,7 @@ class Settings(BaseSettings):
 
     # --- Computer use (EvoCUA sub-agent) ---
     EVOCUA_BASE_URL: str = "http://localhost:8081"  # second llama-server (EvoCUA-8B + mmproj)
+    EVOCUA_API_KEY: str = ""  # sent as `Authorization: Bearer` when set (llama-server --api-key)
     EVOCUA_TIMEOUT: float = 60.0  # per-completion timeout (seconds)
     CUA_MAX_STEPS: int = 15  # hard cap on actions per run
     CUA_STEP_TIMEOUT_SECONDS: float = 30.0  # one execute+capture round-trip deadline

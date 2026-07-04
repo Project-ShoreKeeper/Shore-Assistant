@@ -16,10 +16,16 @@ class CuaClient:
 
     def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
+            headers = (
+                {"Authorization": f"Bearer {settings.EVOCUA_API_KEY}"}
+                if settings.EVOCUA_API_KEY
+                else None
+            )
             self._client = httpx.AsyncClient(
                 base_url=settings.EVOCUA_BASE_URL,
                 timeout=settings.EVOCUA_TIMEOUT,
                 transport=self._transport,
+                headers=headers,
             )
         return self._client
 

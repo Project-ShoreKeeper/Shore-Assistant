@@ -194,17 +194,17 @@ class Settings(BaseSettings):
     # /ws/chat) -- the backend host has no guaranteed display of its own.
     COPILOT_MAX_IMAGE_SIZE: int = 1280  # longest edge the client should target when capturing a full frame
 
-    # --- Computer use (EvoCUA sub-agent) ---
-    EVOCUA_BASE_URL: str = "http://localhost:8081"  # second llama-server (EvoCUA-8B + mmproj)
+    # --- Computer use (CUA sub-agent) ---
+    EVOCUA_BASE_URL: str = "http://localhost:8081"  # second OpenAI-compatible CUA model server
     EVOCUA_API_KEY: str = ""  # sent as `Authorization: Bearer` when set (llama-server --api-key)
     EVOCUA_TIMEOUT: float = 60.0  # per-completion timeout (seconds)
     CUA_MAX_STEPS: int = 15  # hard cap on actions per run
     CUA_STEP_TIMEOUT_SECONDS: float = 30.0  # one execute+capture round-trip deadline
     CUA_SETTLE_MS: int = 800  # client wait after an action before recapture
     CUA_CAPTURE_MAX_SIZE: int = 3000  # longest-edge px for CUA frames (Retina needs more detail than the 1280 co-pilot default)
-    CUA_HISTORY_MAX_TURNS: int = 4  # screenshot/action turns kept in EvoCUA context
+    CUA_HISTORY_MAX_TURNS: int = 4  # screenshot/action turns kept in CUA context
     CUA_AUDIT_LOG: str = "data/cua_audit.log"
-    CUA_MODEL_FORMAT: str = "evocua"  # computer-use model format: evocua | ui_tars
+    CUA_MODEL_FORMAT: str = "evocua"  # computer-use model format: evocua | ui_tars | gui_owl
 
     class Config:
         env_file = ".env"

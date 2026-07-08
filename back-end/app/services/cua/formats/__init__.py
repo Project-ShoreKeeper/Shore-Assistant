@@ -1,8 +1,9 @@
-from app.services.cua.formats import evocua, ui_tars
+from app.services.cua.formats import evocua, gui_owl, ui_tars
 from app.services.cua.formats.base import CuaFormat, ParsedStep
 
 _REGISTRY: dict[str, CuaFormat] = {
     evocua.FORMAT.name: evocua.FORMAT,
+    gui_owl.FORMAT.name: gui_owl.FORMAT,
     ui_tars.FORMAT.name: ui_tars.FORMAT,
 }
 

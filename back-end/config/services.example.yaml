@@ -37,6 +37,17 @@ services:
     pre_stop_cmd: 'wsl pkill -TERM -f "llama-server.*--port 8081"'
     grace_seconds: 10
 
+  # Alternative CUA server for GUI-Owl-1.5. Enable with:
+  #   CUA_MODEL_FORMAT=gui_owl
+  # If your llama.cpp build supports the GGUF quant directly, this keeps the
+  # same OpenAI-compatible /v1/chat/completions contract as EvoCUA/UI-TARS.
+  gui-owl-server:
+    kind: process
+    display_name: "GUI-Owl (computer use)"
+    start_cmd: 'wsl -e bash -lc "cd ~/llama.cpp && ./build/bin/llama-server -hf mradermacher/GUI-Owl-1.5-8B-Think-GGUF:Q4_K_M --jinja --host 0.0.0.0 --port 8081 --ctx-size 32768"'
+    pre_stop_cmd: 'wsl pkill -TERM -f "llama-server.*--port 8081"'
+    grace_seconds: 10
+
   shore-pty-service:
     kind: process
     display_name: shore-pty-service

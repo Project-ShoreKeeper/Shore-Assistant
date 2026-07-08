@@ -341,9 +341,9 @@ All backend config via environment variables or `.env` file in `back-end/`:
 | NODE_PTY_PING_TIMEOUT_SECONDS | 5 | Pong deadline before treating connection as disconnected |
 | **Screen capture / computer use** | | |
 | COPILOT_MAX_IMAGE_SIZE | 1280 | Longest edge the client should target when capturing a full frame |
-| EVOCUA_BASE_URL | http://localhost:8081 | EvoCUA llama-server URL |
+| EVOCUA_BASE_URL | http://localhost:8081 | OpenAI-compatible CUA model server URL |
 | EVOCUA_TIMEOUT | 60.0 | Per-completion EvoCUA timeout (seconds) |
-| CUA_MODEL_FORMAT | evocua | Computer-use model format: `evocua` or `ui_tars` |
+| CUA_MODEL_FORMAT | evocua | Computer-use model format: `evocua`, `ui_tars`, or `gui_owl` |
 | CUA_MAX_STEPS | 15 | Hard action cap per computer-use run |
 | CUA_STEP_TIMEOUT_SECONDS | 30.0 | Execute-and-recapture round-trip deadline |
 | CUA_SETTLE_MS | 800 | Client wait after input before capturing the next frame |
@@ -352,6 +352,8 @@ All backend config via environment variables or `.env` file in `back-end/`:
 | CUA_AUDIT_LOG | data/cua_audit.log | JSONL action audit path |
 
 UI-TARS-1.5 serving note: point `EVOCUA_BASE_URL` at a llama-server running the UI-TARS GGUF, for example `llama-server -m <UI-TARS-1.5-7B GGUF> --mmproj <mmproj> --port 8081`, and set `CUA_MODEL_FORMAT=ui_tars`.
+
+GUI-Owl-1.5 serving note: for a llama.cpp/GGUF smoke test, point `EVOCUA_BASE_URL` at a llama-server running a GUI-Owl-1.5-8B-Think GGUF, for example `llama-server -hf mradermacher/GUI-Owl-1.5-8B-Think-GGUF:Q4_K_M --jinja --host 0.0.0.0 --port 8081 --ctx-size 32768`, and set `CUA_MODEL_FORMAT=gui_owl`. The official GUI-Owl card recommends vLLM for safetensors deployments; keep the OpenAI-compatible base URL on port 8081 if using vLLM instead.
 | **Terminal** | | |
 | TERMINAL_DEFAULT_CWD | D:\Jupiter | Default working directory for terminal sessions |
 | TERMINAL_DEFAULT_SHELL | powershell | Default shell |

@@ -30,6 +30,19 @@ def test_get_format_unknown_raises():
         get_format("bogus")
 
 
+def test_get_format_gui_owl():
+    fmt = get_format("gui_owl")
+    assert fmt.name == "gui_owl"
+    assert fmt.model_label == "gui-owl-1.5-8b-think"
+    assert fmt.prompt_file == "computer_use_gui_owl.txt"
+    assert fmt.resize_factor == 28
+    assert fmt.wait_seconds == 5
+    assert fmt.extra_params == {"temperature": 0.0}
+    assert fmt.instruction_template.format(task="x").startswith(
+        "## User Instruction"
+    )
+
+
 def test_evocua_parse_returns_hint_thought_commands():
     fmt = get_format("evocua")
     step = fmt.parse(EVOCUA_RESPONSE, (1024, 640), (1440, 900))

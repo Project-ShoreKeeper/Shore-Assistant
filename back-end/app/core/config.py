@@ -204,6 +204,7 @@ class Settings(BaseSettings):
     CUA_CAPTURE_MAX_SIZE: int = 3000  # longest-edge px for CUA frames (Retina needs more detail than the 1280 co-pilot default)
     CUA_HISTORY_MAX_TURNS: int = 4  # screenshot/action turns kept in EvoCUA context
     CUA_AUDIT_LOG: str = "data/cua_audit.log"
+    CUA_MODEL_FORMAT: str = "evocua"  # computer-use model format: evocua | ui_tars
 
     class Config:
         env_file = ".env"

@@ -1,3 +1,5 @@
+import json
+
 import httpx
 import pytest
 
@@ -89,3 +91,38 @@ async def test_no_api_key_sends_no_auth_header(monkeypatch):
     client = CuaClient(transport=_transport(handler))
     await client.next_step([{"role": "user", "content": []}])
     assert seen["auth"] is None
+
+
+@pytest.mark.asyncio
+async def test_model_and_extra_params_forwarded():
+    seen = {}
+
+    def handler(request):
+        seen["payload"] = json.loads(request.content)
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": "ok"}}]}
+        )
+
+    client = CuaClient(transport=_transport(handler))
+    await client.next_step(
+        [{"role": "user", "content": []}],
+        model="ui-tars-1.5-7b",
+        extra_params={"frequency_penalty": 1.0},
+    )
+    assert seen["payload"]["model"] == "ui-tars-1.5-7b"
+    assert seen["payload"]["frequency_penalty"] == 1.0
+
+
+@pytest.mark.asyncio
+async def test_default_model_is_evocua():
+    seen = {}
+
+    def handler(request):
+        seen["payload"] = json.loads(request.content)
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": "ok"}}]}
+        )
+
+    client = CuaClient(transport=_transport(handler))
+    await client.next_step([{"role": "user", "content": []}])
+    assert seen["payload"]["model"] == "evocua-8b"

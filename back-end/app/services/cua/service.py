@@ -1,4 +1,4 @@
-"""Task-driven computer-use loop: screenshot -> EvoCUA -> action -> repeat.
+"""Task-driven computer-use loop: screenshot -> CUA model -> action -> repeat.
 
 The service owns one run at a time. ``run`` must execute in a task separate
 from the WebSocket receive loop so step results can resolve its futures.
@@ -13,33 +13,12 @@ from pathlib import Path
 
 from app.core.auth import current_user_role
 from app.core.config import settings
-from app.services.cua.actions import (
-    CuaParseError,
-    code_to_commands,
-    parse_cua_response,
-    process_screenshot,
-)
+from app.services.cua.actions import CuaParseError, process_screenshot
 from app.services.cua.client import CuaUnavailable, cua_client
+from app.services.cua.formats import CuaFormat, get_format
 from app.services.screenshot_bridge import screenshot_bridge
 
-_PROMPT_PATH = Path(__file__).resolve().parents[2] / "prompts" / "computer_use.txt"
-_INSTRUCTION_TEMPLATE = (
-    "# Task Instruction:\n{task}\n\n"
-    "Please generate the next move according to the screenshot, task "
-    "instruction and previous steps (if provided).\n"
-)
-_WAIT_SECONDS = 20
-
-
-def _extract_thought(response: str) -> str:
-    """Pull the `## Thought:` section from an EvoCUA response for diagnostics."""
-    marker = "## Thought:"
-    start = response.find(marker)
-    if start == -1:
-        return ""
-    rest = response[start + len(marker):]
-    end = rest.find("## Action:")
-    return (rest if end == -1 else rest[:end]).strip()
+_PROMPTS_DIR = Path(__file__).resolve().parents[2] / "prompts"
 
 
 class ComputerUseService:
@@ -52,7 +31,7 @@ class ComputerUseService:
         self._running = False
         self._aborted = False
         self._pending: dict[str, asyncio.Future] = {}
-        self._system_prompt: str | None = None
+        self._system_prompts: dict[str, str] = {}
 
     def attach(self, broadcast) -> bool:
         """Adopt a connection unless another connection owns an active run."""
@@ -126,6 +105,10 @@ class ComputerUseService:
     async def run(self, task: str, max_steps: int) -> str:
         if current_user_role.get() != "admin":
             return "Computer use is restricted to the admin user."
+        try:
+            fmt = get_format(settings.CUA_MODEL_FORMAT)
+        except ValueError as exc:
+            return str(exc)
         if not self.ready:
             return (
                 "Computer use requires the desktop app with screen sharing "
@@ -149,23 +132,27 @@ class ComputerUseService:
                 image_url, model_width, model_height = await asyncio.to_thread(
                     process_screenshot,
                     frame,
+                    fmt.resize_factor,
                 )
                 screen = (self._screen["width"], self._screen["height"])
-                messages = self._build_messages(task, history, image_url)
+                messages = self._build_messages(task, history, image_url, fmt)
                 await self._state(True, step, max_steps, task)
 
                 try:
-                    response = await self._client.next_step(messages)
+                    response = await self._client.next_step(
+                        messages,
+                        model=fmt.model_label,
+                        extra_params=fmt.extra_params,
+                    )
                 except CuaUnavailable as exc:
                     return self._summary(
                         executed,
-                        f"EvoCUA is unavailable: {exc}",
+                        f"the computer-use model is unavailable: {exc}",
                     )
 
                 try:
-                    hint, code = parse_cua_response(response)
-                    commands = code_to_commands(
-                        code,
+                    hint, thought, commands = fmt.parse(
+                        response,
                         (model_width, model_height),
                         screen,
                     )
@@ -177,7 +164,6 @@ class ComputerUseService:
                     )
 
                 history.append({"response": response, "image_url": image_url})
-                thought = _extract_thought(response)
                 for command in commands:
                     if self._aborted:
                         return self._summary(executed, "aborted by the user")
@@ -190,7 +176,7 @@ class ComputerUseService:
                         return self._summary(executed, outcome)
                     if command.func == "wait":
                         executed.append("wait")
-                        await asyncio.sleep(_WAIT_SECONDS)
+                        await asyncio.sleep(fmt.wait_seconds)
                         frame = await self._request_screenshot(settings.CUA_CAPTURE_MAX_SIZE)
                         continue
                     frame = await self._dispatch(command, hint)
@@ -239,10 +225,13 @@ class ComputerUseService:
         task: str,
         history: collections.deque[dict],
         image_url: str,
+        fmt: CuaFormat,
     ) -> list[dict]:
-        if self._system_prompt is None:
-            self._system_prompt = _PROMPT_PATH.read_text(encoding="utf-8")
-        messages = [{"role": "system", "content": self._system_prompt}]
+        if fmt.name not in self._system_prompts:
+            self._system_prompts[fmt.name] = (
+                _PROMPTS_DIR / fmt.prompt_file
+            ).read_text(encoding="utf-8")
+        messages = [{"role": "system", "content": self._system_prompts[fmt.name]}]
         kept = list(history)
         for index, turn in enumerate(kept):
             content = [
@@ -253,7 +242,7 @@ class ComputerUseService:
                     0,
                     {
                         "type": "text",
-                        "text": _INSTRUCTION_TEMPLATE.format(task=task),
+                        "text": fmt.instruction_template.format(task=task),
                     },
                 )
             messages.append({"role": "user", "content": content})
@@ -264,7 +253,7 @@ class ComputerUseService:
                 0,
                 {
                     "type": "text",
-                    "text": _INSTRUCTION_TEMPLATE.format(task=task),
+                    "text": fmt.instruction_template.format(task=task),
                 },
             )
         messages.append({"role": "user", "content": tail})

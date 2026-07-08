@@ -1,4 +1,4 @@
-"""HTTP client for the EvoCUA llama-server."""
+"""HTTP client for the computer-use model llama-server."""
 
 import httpx
 
@@ -6,7 +6,7 @@ from app.core.config import settings
 
 
 class CuaUnavailable(Exception):
-    """Raised when the EvoCUA endpoint cannot provide a usable response."""
+    """Raised when the CUA endpoint cannot provide a usable response."""
 
 
 class CuaClient:
@@ -29,23 +29,32 @@ class CuaClient:
             )
         return self._client
 
-    async def next_step(self, messages: list[dict]) -> str:
+    async def next_step(
+        self,
+        messages: list[dict],
+        *,
+        model: str = "evocua-8b",
+        extra_params: dict | None = None,
+    ) -> str:
+        payload: dict = {
+            "model": model,
+            "messages": messages,
+            "temperature": 0.0,
+        }
+        if extra_params:
+            payload.update(extra_params)
         try:
             response = await self._get_client().post(
                 "/v1/chat/completions",
-                json={
-                    "model": "evocua-8b",
-                    "messages": messages,
-                    "temperature": 0.0,
-                },
+                json=payload,
             )
             response.raise_for_status()
             return response.json()["choices"][0]["message"]["content"] or ""
         except httpx.HTTPError as exc:
-            raise CuaUnavailable(f"EvoCUA server error: {exc!r}") from exc
+            raise CuaUnavailable(f"CUA model server error: {exc!r}") from exc
         except (KeyError, IndexError, ValueError) as exc:
             raise CuaUnavailable(
-                f"EvoCUA returned an unexpected payload: {exc!r}"
+                f"CUA model server returned an unexpected payload: {exc!r}"
             ) from exc
 
 

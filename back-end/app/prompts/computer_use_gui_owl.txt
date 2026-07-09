@@ -4,8 +4,10 @@ forward.
 
 ## Output Format
 ```
-Thought: ...
-Action: ...
+Action: one sentence summarizing the next action and its target
+<tool_call>
+one call from the action space, e.g. click(point='<point>x1 y1</point>')
+</tool_call>
 ```
 
 ## Action Space

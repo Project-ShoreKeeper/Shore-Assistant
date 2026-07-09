@@ -35,6 +35,40 @@ def test_parse_think_only_reply_raises():
         parse("<think>still mulling it over</think>", MODEL, SCREEN)
 
 
+TOOL_CALL_REPLY = (
+    "<think>The field is focused, so I should type \"Hello\" to complete the "
+    "task.</think>\n"
+    "Action: Type \"Hello\" into the chat input field.\n"
+    "<tool_call>\n"
+    "type(content='Hello')\n"
+    "</tool_call>"
+)
+
+
+def test_parse_takes_call_from_tool_call_block():
+    step = parse(TOOL_CALL_REPLY, MODEL, SCREEN)
+    assert step.commands == [CuaCommand(func="write", args={"text": "Hello"})]
+    assert step.hint == "type(content='Hello')"
+    assert step.thought == 'Type "Hello" into the chat input field.'
+
+
+def test_parse_tool_call_block_without_close_tag():
+    text = (
+        "<think>plan</think>\n"
+        "Action: Click the OK button.\n"
+        "<tool_call>\n"
+        "click(point='<point>700 434</point>')"
+    )
+    step = parse(text, MODEL, SCREEN)
+    assert step.commands == [CuaCommand(func="click", args={"x": 720, "y": 450})]
+
+
+def test_parse_empty_tool_call_block_raises_helpfully():
+    text = "<think>plan</think>\nAction: Click the OK button.\n<tool_call>"
+    with pytest.raises(CuaParseError, match="tool_call"):
+        parse(text, MODEL, SCREEN)
+
+
 def test_history_text_strips_think_block():
     fmt = get_format("gui_owl")
     assert fmt.history_text(THINK_REPLY) == (

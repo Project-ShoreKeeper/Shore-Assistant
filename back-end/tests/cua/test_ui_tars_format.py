@@ -133,6 +133,16 @@ def test_fenced_action_block_is_unwrapped():
     assert step.commands[0].func == "click"
 
 
+def test_action_mention_inside_thought_is_ignored():
+    text = (
+        "Thought: The next Action: should be a click on the OK button.\n"
+        "Action: click(point='<point>700 434</point>')"
+    )
+    step = parse(text, MODEL, SCREEN)
+    assert step.commands == [CuaCommand(func="click", args={"x": 720, "y": 450})]
+    assert step.thought == "The next Action: should be a click on the OK button."
+
+
 def test_missing_action_raises():
     with pytest.raises(CuaParseError):
         parse("Thought: hmm, there is no action here", MODEL, SCREEN)

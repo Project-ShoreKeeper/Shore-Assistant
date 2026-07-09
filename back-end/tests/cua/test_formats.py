@@ -37,7 +37,7 @@ def test_get_format_gui_owl():
     assert fmt.prompt_file == "computer_use_gui_owl.txt"
     assert fmt.resize_factor == 28
     assert fmt.wait_seconds == 5
-    assert fmt.extra_params == {"temperature": 0.0}
+    assert fmt.extra_params == {}
     assert fmt.instruction_template.format(task="x").startswith(
         "## User Instruction"
     )

@@ -163,7 +163,12 @@ class ComputerUseService:
                         f"{exc}. Raw tail: {response[-200:]}",
                     )
 
-                history.append({"response": response, "image_url": image_url})
+                history.append(
+                    {
+                        "response": fmt.history_text(response),
+                        "image_url": image_url,
+                    }
+                )
                 for command in commands:
                     if self._aborted:
                         return self._summary(executed, "aborted by the user")

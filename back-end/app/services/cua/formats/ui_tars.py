@@ -6,8 +6,12 @@ import re
 from app.services.cua.actions import CuaCommand, CuaParseError, _project
 from app.services.cua.formats.base import CuaFormat, ParsedStep
 
-_THOUGHT_RE = re.compile(r"Thought:\s*(.+?)(?=\nAction:|\Z)", re.DOTALL)
-_ACTION_RE = re.compile(r"Action:\s*(.+)\Z", re.DOTALL)
+# Anchored to line starts so a "Thought:"/"Action:" mention inside the
+# model's prose cannot hijack the section split.
+_THOUGHT_RE = re.compile(
+    r"^[ \t]*Thought:\s*(.+?)(?=\n[ \t]*Action:|\Z)", re.DOTALL | re.MULTILINE
+)
+_ACTION_RE = re.compile(r"^[ \t]*Action:\s*(.+)\Z", re.DOTALL | re.MULTILINE)
 _NUMBER_RE = re.compile(r"-?\d+(?:\.\d+)?")
 _FENCE_RE = re.compile(r"^```[a-zA-Z]*\s*|\s*```$")
 

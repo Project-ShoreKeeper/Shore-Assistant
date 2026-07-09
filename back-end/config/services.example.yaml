@@ -45,7 +45,9 @@ services:
     kind: process
     display_name: "GUI-Owl (computer use)"
     start_cmd: 'wsl -e bash -lc "cd ~/llama.cpp && ./build/bin/llama-server -hf mradermacher/GUI-Owl-1.5-8B-Think-GGUF:Q4_K_M --jinja --host 0.0.0.0 --port 8081 --ctx-size 32768"'
-    pre_stop_cmd: 'wsl pkill -TERM -f "llama-server.*--port 8081"'
+    # Match on the model name, not the port: the sibling CUA server also runs
+    # on 8081, and a port-based pattern would kill it if it is the one running.
+    pre_stop_cmd: 'wsl pkill -TERM -f "llama-server.*GUI-Owl"'
     grace_seconds: 10
 
   shore-pty-service:

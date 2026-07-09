@@ -15,6 +15,10 @@ class ParsedStep(NamedTuple):
 ParseFn = Callable[[str, tuple[int, int], tuple[int, int]], ParsedStep]
 
 
+def _identity(text: str) -> str:
+    return text
+
+
 @dataclass(frozen=True)
 class CuaFormat:
     name: str
@@ -25,3 +29,6 @@ class CuaFormat:
     wait_seconds: int
     extra_params: dict
     parse: ParseFn
+    # Canonicalizes a raw model reply before it is replayed as assistant
+    # history (e.g. dropping a reasoning model's <think> block).
+    history_text: Callable[[str], str] = _identity

@@ -229,6 +229,29 @@ async def test_run_with_ui_tars_format(tmp_path, monkeypatch):
     assert first_user_text["text"].startswith("## User Instruction")
 
 
+GO_CLICK = (
+    "<think>Weighing the options. The obvious Action: press the button.</think>\n"
+    "Thought: I will click OK.\n"
+    "Action: click(point='<point>0.5 0.5</point>')"
+)
+GO_DONE = "Thought: The task is complete.\nAction: finished(content='All set')"
+
+
+@pytest.mark.asyncio
+async def test_run_with_gui_owl_strips_think_from_history(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "CUA_MODEL_FORMAT", "gui_owl")
+    svc, sent = make_service([GO_CLICK, GO_DONE], tmp_path)
+    summary = await svc.run("press ok", max_steps=5)
+    steps = [message for message in sent if message["type"] == "cua_step"]
+    assert len(steps) == 1
+    assert steps[0]["action"] == {"func": "click", "x": 720, "y": 450}
+    assert "All set" in summary and "success" in summary.lower()
+    assistant = svc._client.calls[1]["messages"][2]
+    assert assistant["role"] == "assistant"
+    assert "<think>" not in assistant["content"]
+    assert assistant["content"].startswith("Thought: I will click OK.")
+
+
 @pytest.mark.asyncio
 async def test_run_with_evocua_format_sends_evocua_label(tmp_path):
     svc, _ = make_service([DONE], tmp_path)

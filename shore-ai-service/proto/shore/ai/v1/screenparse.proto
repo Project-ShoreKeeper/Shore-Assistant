@@ -1,0 +1,29 @@
+syntax = "proto3";
+package shore.ai.v1;
+
+service ScreenParse {
+  rpc Parse(ParseRequest) returns (ParseResponse);
+}
+
+message ParseRequest {
+  bytes image = 1;          // encoded PNG or JPEG bytes
+}
+
+message Element {
+  uint32 id           = 1;  // Set-of-Mark index, matches number drawn on image
+  string type         = 2;  // "text" | "icon"
+  string content      = 3;  // OCR text or Florence-2 caption
+  bool   interactable = 4;
+  float  x1 = 5;
+  float  y1 = 6;
+  float  x2 = 7;
+  float  y2 = 8;            // bbox, normalized 0..1
+}
+
+message ParseResponse {
+  repeated Element elements       = 1;
+  bytes            som_image_jpeg = 2;  // annotated Set-of-Mark image
+  uint32           width          = 3;  // parsed image px dims
+  uint32           height         = 4;
+  float            latency_ms     = 5;
+}

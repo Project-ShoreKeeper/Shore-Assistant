@@ -26,6 +26,7 @@ llama-server as the decision model instead of GPT-4V.
 | Decision input | SoM-annotated image + text element list per step *(defaulted — user AFK; recommended option)* |
 | Safety model | **Auto-execute** all actions; JSONL audit log of every action |
 | Definition of done | Unit tests (existing fake-based style) + live E2E task on the real stack |
+| Mouse contention | `DesktopBackend` abstraction from day one. v1 = `LocalDesktopBackend` (host desktop — Shore borrows the real cursor during a session). Phase 2 = `shore-desktop-agent` in a second RDP session so Shore works in parallel without touching the user's mouse. Windows allows one cursor/input queue/foreground per desktop, so same-desktop parallelism is impossible — capture and input must always target the same desktop, hence one interface owning both. |
 
 ## Architecture
 
@@ -34,12 +35,12 @@ User (voice/chat): "open Notepad and type hello"
   └─ agent loop retrieves computer_use tool → starts session (background task)
 
 ComputerUseService loop (backend, one session at a time, max N steps):
-  1. capture native-res screenshot (mss, PNG bytes)
+  1. DesktopBackend.capture() → native-res PNG bytes
   2. gRPC ScreenParse.Parse → elements[] + SoM-annotated JPEG
   3. decision call → llama-server /v1/chat/completions
        (SoM image + goal + action history + element list,
         response_format=json_schema(ComputerUseAction))
-  4. validate + execute action (pyautogui on backend host) → audit log line
+  4. validate + execute action via DesktopBackend → audit log line
   5. push computer_use_step to frontend; settle delay; repeat
   ── until action=done | action=fail | step budget | stop | WS disconnect
 
@@ -114,9 +115,10 @@ connect/disconnect). **One session at a time**; a second `computer_use` call
 while active returns an error string to the agent.
 
 **Session loop** (background `asyncio.Task`):
-1. Capture the full monitor (`COMPUTER_USE_MONITOR_INDEX`) at native
-   resolution as PNG bytes — no downscaling; OmniParser handles sizing and
-   normalized bboxes make coords resolution-independent.
+1. `desktop_backend.capture()` — the full monitor
+   (`COMPUTER_USE_MONITOR_INDEX`) at native resolution as PNG bytes — no
+   downscaling; OmniParser handles sizing and normalized bboxes make coords
+   resolution-independent.
 2. `screenparse_client.parse(...)`.
 3. Build the decision request: system prompt from `prompts/computer_use.txt`
    (goal, rules, output contract) + user content containing the numbered
@@ -125,7 +127,7 @@ while active returns an error string to the agent.
    Sent to llama-server with `response_format=json_schema(ComputerUseAction)`
    — the LOCOMO-extractor pattern (httpx, 3 attempts, cancel-safe).
 4. Validate (`element_id` in range, required fields per action) and execute via
-   `InputController`. Append a JSONL line to the audit log.
+   the `DesktopBackend`. Append a JSONL line to the audit log.
 5. Push `computer_use_step` to the frontend, sleep
    `COMPUTER_USE_SETTLE_SECONDS`, loop.
 
@@ -164,15 +166,40 @@ behaves like a notification (`no_tools=True`, bundle dropped).
 **Auth:** when `AUTH_ENABLED=True`, only the **admin** user can start a
 session — this is full desktop control of Luna's machine.
 
-### 4. Input controller — `app/services/input_controller.py`
+### 4. Desktop backend — `app/services/desktop_backend.py`
 
-- Windows-first, `pyautogui`-based: `click(x, y)`, `double_click`,
-  `right_click`, `type_text` (interval-typed), `hotkey(*keys)`, `scroll`.
-- Coordinate mapping: element bbox center (normalized) × monitor native
-  pixel dims from mss. Calls `SetProcessDPIAware()` once at init so pyautogui
-  and mss agree on physical pixels under display scaling.
+**Why an abstraction:** Windows gives each interactive desktop one cursor, one
+input queue, and one foreground window — a session on the user's desktop
+necessarily borrows the real mouse and focus, and capture sees whatever
+windows the user has on top. True "user works while Shore works" parallelism
+requires Shore to own a *different* desktop (second RDP session or VM). The
+loop must not care which — so capture and input live together behind one
+interface (they must always target the same desktop), mirroring the existing
+`terminal_backend.py` contract convention.
+
+```python
+class DesktopBackend(ABC):
+    async def capture(self) -> CapturedScreen: ...   # png_bytes, width, height
+    async def click(self, x: int, y: int, button: str = "left",
+                    double: bool = False) -> None: ...
+    async def type_text(self, text: str) -> None: ...
+    async def hotkey(self, keys: list[str]) -> None: ...
+    async def scroll(self, x: int, y: int, amount: int) -> None: ...
+```
+
+**v1 — `LocalDesktopBackend`:**
+- Capture: mss on `COMPUTER_USE_MONITOR_INDEX` (native resolution, PNG).
+- Input: `pyautogui` — interval-typed text, `hotkey(*keys)`, scroll at coords.
+  Sync pyautogui calls run via `run_in_executor` to keep the loop async.
+- Coordinate mapping: element bbox center (normalized) × monitor native pixel
+  dims. Calls `SetProcessDPIAware()` once at init so pyautogui and mss agree
+  on physical pixels under display scaling.
+- **Known limitation (accepted for v1):** Shore shares the user's cursor and
+  focus while a session runs — the user pauses briefly. Phase 2 (see Future)
+  removes this.
 - New backend dep: `pyautogui` (pure input injection — no torch, allowed).
-- Injectable into `ComputerUseService` so tests use a recording fake.
+- The backend instance is injectable into `ComputerUseService` so loop tests
+  use a single recording fake for both capture and input.
 
 ### 5. Tools — `app/tools/computer_use_tools.py`
 
@@ -230,11 +257,12 @@ callable → proto mapping, normalized bboxes, `loaded()` flag, executor path.
 
 **Backend unit tests** (existing fake-based style):
 - `test_screenparse_client.py` — graceful-code → `ScreenParseUnavailable`.
-- `test_input_controller.py` — normalized-center → pixel math (injection mocked).
+- `test_desktop_backend.py` — normalized-center → pixel math, DPI-scaled dims
+  (pyautogui/mss mocked).
 - `test_computer_use_service.py` — scripted decision sequences through the loop
-  with fake parser/LLM/input: happy path to `done`, step budget, explicit stop,
-  invalid-action self-correction then failure, audit lines written, single
-  session enforcement, admin gating.
+  with fake parser/LLM/desktop-backend: happy path to `done`, step budget,
+  explicit stop, invalid-action self-correction then failure, audit lines
+  written, single session enforcement, admin gating.
 - Action schema validation cases.
 
 **Early smoke test (before building the loop):** verify llama-server accepts
@@ -257,9 +285,20 @@ steps, real clicks/typing, the audit log, and Shore's spoken completion summary.
   `SetProcessDPIAware` + normalized bboxes, and covered by a unit test.
 - **Auto-execute** means a misidentified element gets clicked with no gate;
   accepted by design (audit log + `COMPUTER_USE_ENABLED` default-off + admin-only).
+- **v1 shares the user's cursor/focus** while a session runs (single input
+  queue per Windows desktop). Accepted for v1; phase 2 gives Shore her own
+  desktop.
 
 ## Future (explicitly out of scope for v1)
 
+- **Phase 2 — `shore-desktop-agent` (parallel desktop for Shore):** a small
+  capture+input WS service (mss + pyautogui + websockets — the
+  `shore-pty-service` pattern) running inside a desktop Shore owns: a second
+  local Windows user's RDP loopback session (or a Hyper-V VM). The backend
+  gets a `RemoteDesktopBackend` (client modeled on `node_pty_client.py`)
+  behind the same `DesktopBackend` interface — no loop changes. Known ops
+  quirks to solve then: RDP session keep-alive, rendering while
+  minimized/disconnected (registry workarounds), agent auto-start in-session.
 - Raw-coordinate click fallback when OmniParser misses an element.
 - Copilot-loop integration (proactive parse+act).
 - Frontend goal-input panel; per-action confirm mode; non-Windows input backends.

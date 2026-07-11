@@ -24,6 +24,7 @@ llama-server as the decision model instead of GPT-4V.
 | Agent surface | Dedicated computer-use **session mode** (like Copilot), not free-floating chat tools |
 | Session entry | Chat/voice via a `computer_use(goal)` tool *(defaulted — user AFK; recommended option)* |
 | Decision input | SoM-annotated image + text element list per step *(defaulted — user AFK; recommended option)* |
+| Parse visibility | Live step viewer in the chat UI: every step streams the SoM-annotated screenshot + element list + chosen action to the frontend *(defaulted — user AFK; recommended option over a native desktop overlay)* |
 | Safety model | **Auto-execute** all actions; JSONL audit log of every action |
 | Definition of done | Unit tests (existing fake-based style) + live E2E task on the real stack |
 | Mouse contention | `DesktopBackend` abstraction from day one. v1 = `LocalDesktopBackend` (host desktop — Shore borrows the real cursor during a session). Phase 2 = `shore-desktop-agent` in a second RDP session so Shore works in parallel without touching the user's mouse. Windows allows one cursor/input queue/foreground per desktop, so same-desktop parallelism is impossible — capture and input must always target the same desktop, hence one interface owning both. |
@@ -218,12 +219,26 @@ class DesktopBackend(ABC):
 
 `schemas/messages.py` additions:
 - `computer_use_state` — `{status: started|running|done|failed|stopped, goal, steps_taken}`
-- `computer_use_step` — `{step, action, element_content, reason, status}`
+- `computer_use_step` — `{step, action, element_id, element_content, reason,
+  status, som_image (base64 JPEG data URL), elements (compact list: id, type,
+  content, interactable)}`
 - Inbound `computer_use_stop` handled in `chat_ws.py`.
 
 Frontend (minimal, chat-entry choice): extend WS types + `useAssistant`
-handlers; render steps in the existing `AgentActionLog` style; show a Stop
-button while a session is active.
+handlers; show a Stop button while a session is active; render a **live step
+viewer** while a session runs — the SoM-annotated screenshot (numbered boxes
+over everything OmniParser detected) with the element list and Shore's chosen
+action + reason beneath it, plus a step history in the existing
+`AgentActionLog` style. The viewer keeps only the last
+few steps' images in memory (they are never persisted client-side). In
+phase 2, when Shore's desktop moves to an RDP session the user can't see,
+this viewer becomes the primary window into what Shore sees and does.
+
+**Debug artifacts (opt-in):** when `COMPUTER_USE_DEBUG_DIR` is set, each step
+also writes the SoM JPEG + the decision JSON to
+`<dir>/<session_id>/step_<n>.{jpg,json}` for post-hoc E2E debugging. Default
+empty = disabled, keeping screenshots ephemeral by default (same privacy
+stance as the Copilot).
 
 ### 7. Config (backend `.env`)
 
@@ -236,6 +251,7 @@ button while a session is active.
 | COMPUTER_USE_DECISION_TIMEOUT | 60.0 | Per-step decision LLM timeout (s) |
 | COMPUTER_USE_HISTORY_STEPS | 6 | History entries included per decision |
 | COMPUTER_USE_AUDIT_LOG | data/computer_use_audit.log | JSONL audit of every action |
+| COMPUTER_USE_DEBUG_DIR | (empty) | When set, save per-step SoM image + decision JSON here (empty = off) |
 | SHORE_AI_SCREENPARSE_TIMEOUT_SECONDS | 30.0 | ScreenParse RPC timeout |
 
 ## Error handling
@@ -271,9 +287,11 @@ is the one load-bearing assumption about llama.cpp. Fallback if unsupported:
 prompt-enforced JSON + tolerant parsing.
 
 **Live E2E (definition of done):** deploy the updated shore-ai-service on the
-GPU box (Health shows `screenparse` loaded), set `COMPUTER_USE_ENABLED=True`,
-then by chat/voice: *"Open Notepad and type hello world"* — observe streamed
-steps, real clicks/typing, the audit log, and Shore's spoken completion summary.
+GPU box (Health shows `screenparse` loaded), set `COMPUTER_USE_ENABLED=True`
+and `COMPUTER_USE_DEBUG_DIR`, then by chat/voice: *"Open Notepad and type
+hello world"* — observe the live step viewer (SoM boxes + element list +
+chosen actions), real clicks/typing, the audit log + saved step artifacts,
+and Shore's spoken completion summary.
 
 ## Risks / notes
 

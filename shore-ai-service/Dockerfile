@@ -20,6 +20,25 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 RUN --mount=type=cache,target=/root/.cache/pip \
     python3.12 -m pip install --break-system-packages -e .[dev]
 
+# ── OmniParser v2 (pinned) + weights ──
+# TODO: pin to a real microsoft/OmniParser master commit at deploy time (verify weights layout icon_detect/model.pt + icon_caption_florence/)
+ARG OMNIPARSER_REF=<PIN_A_COMMIT_SHA>
+RUN git clone https://github.com/microsoft/OmniParser.git /opt/OmniParser \
+    && cd /opt/OmniParser && git checkout ${OMNIPARSER_REF}
+
+RUN --mount=type=cache,target=/root/.cache/huggingface \
+    python3.12 - <<'PY'
+from huggingface_hub import snapshot_download
+snapshot_download(
+    "microsoft/OmniParser-v2.0",
+    local_dir="/opt/OmniParser/weights",
+    allow_patterns=["icon_detect/*", "icon_caption_florence/*"],
+)
+PY
+
+ENV OMNIPARSER_ROOT=/opt/OmniParser
+ENV PYTHONPATH=/opt/OmniParser:${PYTHONPATH}
+
 RUN make PYTHON=python3.12 proto
 
 EXPOSE 9200

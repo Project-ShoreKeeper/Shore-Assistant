@@ -22,6 +22,7 @@ import ConfirmToast from "../../components/Terminal/ConfirmToast";
 import { useTerminal } from "../../hooks/useTerminal";
 import SettingsPanel from "./SettingsPanel";
 import ChatComposer from "./ChatComposer";
+import { ComputerUseViewer } from "./ComputerUseViewer";
 import "./chat-mobile.css";
 import { useCollapsedSidebar } from "../../hooks/useCollapsedSidebar";
 
@@ -105,6 +106,9 @@ function PageChat() {
     setThinkingEnabled,
     copilotActive,
     toggleCopilot,
+    computerUseState,
+    computerUseStep,
+    stopComputerUse,
     startRecording,
     stopRecording,
     sendTextMessage,
@@ -682,6 +686,15 @@ function PageChat() {
             backgroundColor: "var(--color-panel-solid)",
           }}
         >
+          {computerUseState && (
+            <Box p="3" style={{ borderBottom: "1px solid var(--gray-5)" }}>
+              <ComputerUseViewer
+                state={computerUseState}
+                step={computerUseStep}
+                onStop={stopComputerUse}
+              />
+            </Box>
+          )}
           <ChatComposer
             value={inputText}
             onChange={setInputText}

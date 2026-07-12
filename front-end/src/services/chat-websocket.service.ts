@@ -151,6 +151,35 @@ export interface PersistedMessage {
   images?: PersistedImage[];
 }
 
+export interface ComputerUseStateMessage {
+  type: "computer_use_state";
+  status: "started" | "running" | "done" | "failed" | "stopped";
+  goal: string;
+  steps_taken: number;
+  summary?: string;
+  error?: string;
+}
+
+export interface ComputerUseStepElement {
+  id: number;
+  type: string;
+  content: string;
+  interactable: boolean;
+}
+
+export interface ComputerUseStepMessage {
+  type: "computer_use_step";
+  step: number;
+  action: string;
+  element_id?: number | null;
+  element_content: string;
+  reason: string;
+  status: string;
+  error?: string | null;
+  som_image: string; // data URL (may be "")
+  elements: ComputerUseStepElement[];
+}
+
 export interface HistoryMessage {
   type: "history";
   messages: PersistedMessage[];
@@ -172,6 +201,8 @@ export type ChatServerMessage =
   | MemoryWorkerMessage
   | CopilotStateMessage
   | CopilotMessage
+  | ComputerUseStateMessage
+  | ComputerUseStepMessage
   | HistoryMessage;
 
 // ─── Event system ───
@@ -312,6 +343,11 @@ export class ChatWebSocketService {
   public sendCopilotStop(): void {
     if (!this.isReady()) return;
     this.socket!.send(JSON.stringify({ type: "copilot_stop" }));
+  }
+
+  public sendComputerUseStop(): void {
+    if (!this.isReady()) return;
+    this.socket!.send(JSON.stringify({ type: "computer_use_stop" }));
   }
 
   // ─── Event system ───

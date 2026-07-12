@@ -6,6 +6,8 @@ import {
   type WebSocketStatus,
   type ChatServerMessage,
   type ImageAttachment,
+  type ComputerUseStateMessage,
+  type ComputerUseStepMessage,
 } from "../services/chat-websocket.service";
 import { float32ToWav } from "../utils/audio.util";
 import { BACKEND_URL } from "@Shore/constants/backend.constant";
@@ -84,6 +86,11 @@ export interface UseAssistantReturn {
   copilotActive: boolean;
   toggleCopilot: () => void;
 
+  // Computer use
+  computerUseState: ComputerUseStateMessage | null;
+  computerUseStep: ComputerUseStepMessage | null;
+  stopComputerUse: () => void;
+
   // Controls
   startRecording: (deviceId?: string) => void;
   stopRecording: () => void;
@@ -109,6 +116,10 @@ export function useAssistant(): UseAssistantReturn {
   const [thinkingEnabled, setThinkingEnabled] = useState(false);
   const thinkingEnabledRef = useRef(false);
   const [copilotActive, setCopilotActive] = useState(false);
+  const [computerUseState, setComputerUseState] =
+    useState<ComputerUseStateMessage | null>(null);
+  const [computerUseStep, setComputerUseStep] =
+    useState<ComputerUseStepMessage | null>(null);
 
   // Conversation state
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -603,6 +614,20 @@ export function useAssistant(): UseAssistantReturn {
           ]);
           break;
         }
+
+        case "computer_use_state": {
+          setComputerUseState(msg);
+          if (msg.status === "done" || msg.status === "failed" || msg.status === "stopped") {
+            // clear the live step image once the session ends
+            setComputerUseStep(null);
+          }
+          break;
+        }
+
+        case "computer_use_step": {
+          setComputerUseStep(msg);
+          break;
+        }
       }
     };
 
@@ -856,6 +881,10 @@ export function useAssistant(): UseAssistantReturn {
     setThinkingEnabled,
     copilotActive,
     toggleCopilot,
+
+    computerUseState,
+    computerUseStep,
+    stopComputerUse: () => chatWebsocketService.sendComputerUseStop(),
 
     startRecording,
     stopRecording,

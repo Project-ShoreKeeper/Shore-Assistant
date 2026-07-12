@@ -118,3 +118,29 @@ class NotificationMessage(BaseModel):
     task_type: str
     message: str
     timestamp: float
+
+
+class ComputerUseStateMessage(BaseModel):
+    type: Literal["computer_use_state"] = "computer_use_state"
+    status: Literal["started", "running", "done", "failed", "stopped"]
+    goal: str
+    steps_taken: int
+    summary: Optional[str] = None
+    error: Optional[str] = None
+
+
+class ComputerUseStepMessage(BaseModel):
+    type: Literal["computer_use_step"] = "computer_use_step"
+    step: int
+    action: str
+    element_id: Optional[int] = None
+    element_content: str = ""
+    reason: str = ""
+    status: str = ""
+    error: Optional[str] = None
+    som_image: str = ""
+    elements: list = []
+
+
+class ComputerUseStopMessage(BaseModel):
+    type: Literal["computer_use_stop"] = "computer_use_stop"

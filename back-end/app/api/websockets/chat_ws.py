@@ -19,6 +19,8 @@ from app.services.image_store import image_store
 from app.services.connection_manager import connection_manager
 from app.services.notification_service import notification_service
 from app.services.copilot_service import copilot_service, summarize_copilot_run
+from app.services.computer_use_service import computer_use_service
+from app.tools.computer_use_tools import set_session_hooks as _cu_set_hooks, clear_session_hooks as _cu_clear_hooks
 from app.core.config import settings
 import numpy as np
 import json
@@ -68,6 +70,45 @@ def _build_live_message(user_text: str, images: list[dict]) -> dict:
         content.append({"type": "image_url",
                         "image_url": {"url": img["data_url"]}})
     return {"role": "user", "content": content}
+
+
+def _make_computer_use_emitter(send_json_threadsafe, session_id: str):
+    """Build the emit(msg) callback the computer-use loop pushes steps through.
+
+    The loop calls emit() synchronously. send_json_threadsafe may return a
+    coroutine (production `send_json_safe`) or None (a sync test fake); we
+    schedule it only when awaitable so both work. When COMPUTER_USE_DEBUG_DIR
+    is set, computer_use_step messages also persist their SoM JPEG + decision
+    JSON for post-hoc E2E debugging.
+    """
+    import asyncio
+    import inspect
+    import base64 as _b
+    from pathlib import Path
+
+    def emit(msg: dict):
+        result = send_json_threadsafe(msg)
+        if inspect.isawaitable(result):
+            asyncio.get_event_loop().create_task(result)
+
+        debug_dir = settings.COMPUTER_USE_DEBUG_DIR
+        if debug_dir and msg.get("type") == "computer_use_step":
+            try:
+                sdir = Path(debug_dir) / session_id
+                sdir.mkdir(parents=True, exist_ok=True)
+                step = msg.get("step", 0)
+                som = msg.get("som_image", "")
+                if som.startswith("data:image"):
+                    b64 = som.split(",", 1)[1]
+                    (sdir / f"step_{step}.jpg").write_bytes(_b.b64decode(b64))
+                (sdir / f"step_{step}.json").write_text(
+                    json.dumps({k: v for k, v in msg.items() if k != "som_image"}),
+                    encoding="utf-8",
+                )
+            except Exception:
+                pass
+
+    return emit
 
 
 router = APIRouter()
@@ -485,6 +526,9 @@ async def websocket_chat(websocket: WebSocket):
         is_busy_cb=lambda: bool(agent_task and not agent_task.done()),
     )
 
+    _cu_emit = _make_computer_use_emitter(send_json_safe, session_id)
+    _cu_set_hooks(_cu_emit, is_admin=(ws_user_role == "admin"))
+
     # Drain any notifications that fired while disconnected
     await notification_service.drain_pending()
 
@@ -536,6 +580,15 @@ async def websocket_chat(websocket: WebSocket):
                         await send_json_safe({
                             "type": "copilot_state",
                             "active": False,
+                        })
+
+                    elif msg_type == "computer_use_stop":
+                        computer_use_service.stop()
+                        await send_json_safe({
+                            "type": "computer_use_state",
+                            "status": "stopped",
+                            "goal": "",
+                            "steps_taken": 0,
                         })
 
                     elif msg_type == "clear_memory":
@@ -696,6 +749,8 @@ async def websocket_chat(websocket: WebSocket):
             except (asyncio.CancelledError, Exception):
                 pass
         copilot_service.detach()
+        computer_use_service.stop()
+        _cu_clear_hooks()
         # Only unregister if we're still the active connection
         if connection_manager._send_json is my_send_json:
             notification_service.clear_agent_callback()

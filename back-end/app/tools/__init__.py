@@ -27,6 +27,7 @@ from app.tools.n8n_workflow_tools import (
     n8n_manage_workflows,
 )
 from app.tools.cloud_tools import ask_claude, ask_gemini, ask_openai
+from app.tools.computer_use_tools import computer_use, stop_computer_use
 
 # All available tools, registered for use by the agent
 ALL_TOOLS = [
@@ -61,6 +62,8 @@ ALL_TOOLS = [
     list_background_services,
     stop_background_service,
     get_background_service_logs,
+    computer_use,
+    stop_computer_use,
 ]
 
 # Map tool names to tool instances for dispatch

@@ -43,3 +43,71 @@ def validate_action(action: ComputerUseAction, screen: ParsedScreen) -> Optional
     if action.action == "scroll" and action.scroll_amount is None:
         return "action 'scroll' requires scroll_amount"
     return None
+
+
+from pathlib import Path
+
+from app.core.config import settings
+
+_DECIDER_PROMPT_PATH = (
+    Path(__file__).resolve().parents[1] / "prompts" / "computer_use_decider.txt"
+)
+_decider_prompt: Optional[str] = None
+
+
+def load_decider_prompt() -> str:
+    global _decider_prompt
+    if _decider_prompt is None:
+        _decider_prompt = _DECIDER_PROMPT_PATH.read_text(encoding="utf-8")
+    return _decider_prompt
+
+
+def format_elements(screen: ParsedScreen) -> str:
+    """Render the element list the decision model reads."""
+    lines = []
+    for el in screen.elements:
+        cx, cy = el.center()
+        tag = "interactable" if el.interactable else "static"
+        lines.append(
+            f"[{el.id}] {el.type} \"{el.content}\" {tag} center=({cx:.3f},{cy:.3f})"
+        )
+    return "\n".join(lines)
+
+
+def _format_history(history: list[dict], limit: int) -> str:
+    recent = history[-limit:] if limit else history
+    if not recent:
+        return "(no actions yet)"
+    lines = []
+    for i, h in enumerate(recent):
+        lines.append(
+            f"{i+1}. {h.get('action')} — {h.get('reason', '')} -> {h.get('result', '')}"
+        )
+    return "\n".join(lines)
+
+
+def build_decision_messages(
+    goal: str,
+    screen: ParsedScreen,
+    history: list[dict],
+    system_prompt: str,
+    som_image_b64: str,
+    history_limit: int = 6,
+) -> list[dict]:
+    """Build the OpenAI-style messages for one decision call (SoM image + text)."""
+    text = (
+        f"GOAL: {goal}\n\n"
+        f"ELEMENTS:\n{format_elements(screen)}\n\n"
+        f"ACTION HISTORY:\n{_format_history(history, history_limit)}\n\n"
+        f"Choose the next action."
+    )
+    user_content = [{"type": "text", "text": text}]
+    if som_image_b64:
+        user_content.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:image/jpeg;base64,{som_image_b64}"},
+        })
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_content},
+    ]

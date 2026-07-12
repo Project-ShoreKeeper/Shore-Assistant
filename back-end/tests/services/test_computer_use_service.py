@@ -61,3 +61,53 @@ def test_validate_scroll_requires_amount():
     a = ComputerUseAction(action="scroll", reason="x")
     err = validate_action(a, _screen(2))
     assert err is not None and "scroll_amount" in err
+
+
+from app.services.computer_use_service import (
+    format_elements, build_decision_messages,
+)
+
+
+def test_format_elements_lists_id_type_content():
+    out = format_elements(_screen(2))
+    assert "[0]" in out and "[1]" in out
+    assert "el0" in out and "el1" in out
+    assert "icon" in out
+
+
+def test_build_decision_messages_includes_goal_history_image():
+    screen = _screen(2)
+    msgs = build_decision_messages(
+        goal="open notepad",
+        screen=screen,
+        history=[{"action": "click", "reason": "start menu", "result": "ok"}],
+        system_prompt="SYS",
+        som_image_b64="QUJD",  # "ABC"
+    )
+    assert msgs[0]["role"] == "system" and msgs[0]["content"] == "SYS"
+    user = msgs[-1]
+    assert user["role"] == "user"
+    # multimodal content: text block with goal + elements + history, plus image
+    text_blocks = [c for c in user["content"] if c["type"] == "text"]
+    image_blocks = [c for c in user["content"] if c["type"] == "image_url"]
+    assert len(image_blocks) == 1
+    assert image_blocks[0]["image_url"]["url"].startswith("data:image/jpeg;base64,QUJD")
+    joined = " ".join(b["text"] for b in text_blocks)
+    assert "open notepad" in joined
+    assert "start menu" in joined  # history reason present
+    assert "[0]" in joined  # element list present
+
+
+def test_build_decision_messages_truncates_history():
+    screen = _screen(1)
+    history = [{"action": "click", "reason": f"step{i}", "result": "ok"}
+               for i in range(20)]
+    msgs = build_decision_messages(
+        goal="g", screen=screen, history=history,
+        system_prompt="SYS", som_image_b64="", history_limit=3,
+    )
+    joined = " ".join(
+        c["text"] for c in msgs[-1]["content"] if c["type"] == "text"
+    )
+    assert "step19" in joined and "step17" in joined
+    assert "step16" not in joined  # only last 3 kept

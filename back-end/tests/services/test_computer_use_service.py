@@ -111,3 +111,60 @@ def test_build_decision_messages_truncates_history():
     )
     assert "step19" in joined and "step17" in joined
     assert "step16" not in joined  # only last 3 kept
+
+
+import json
+import httpx
+
+from app.services.computer_use_service import ComputerUseDecider
+
+
+def _llm_response(action_dict):
+    content = json.dumps(action_dict)
+    return httpx.Response(
+        200,
+        json={"choices": [{"message": {"content": content}}]},
+    )
+
+
+@pytest.mark.asyncio
+async def test_decider_returns_parsed_action():
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(json.loads(request.content))
+        return _llm_response(
+            {"action": "click", "element_id": 1, "reason": "open menu"}
+        )
+
+    transport = httpx.MockTransport(handler)
+    client = httpx.AsyncClient(transport=transport, base_url="http://test")
+    decider = ComputerUseDecider(http_client=client)
+
+    action = await decider.decide(
+        messages=[{"role": "system", "content": "SYS"},
+                  {"role": "user", "content": [{"type": "text", "text": "go"}]}],
+    )
+    assert action.action == "click" and action.element_id == 1
+    # response_format json_schema was sent
+    assert calls[0]["response_format"]["type"] == "json_schema"
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_decider_retries_then_succeeds():
+    state = {"n": 0}
+
+    def handler(request):
+        state["n"] += 1
+        if state["n"] == 1:
+            return httpx.Response(500)
+        return _llm_response({"action": "wait", "reason": "loading"})
+
+    transport = httpx.MockTransport(handler)
+    client = httpx.AsyncClient(transport=transport, base_url="http://test")
+    decider = ComputerUseDecider(http_client=client, backoff_base=0.0)
+    action = await decider.decide(messages=[{"role": "user", "content": "x"}])
+    assert action.action == "wait"
+    assert state["n"] == 2
+    await client.aclose()

@@ -111,3 +111,63 @@ def build_decision_messages(
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_content},
     ]
+
+
+import asyncio
+
+import httpx
+
+
+class ComputerUseDecider:
+    """Calls llama-server for one structured next-action decision."""
+
+    _MAX_ATTEMPTS = 3
+
+    def __init__(self, http_client: Optional[httpx.AsyncClient] = None,
+                 backoff_base: float = 1.0):
+        self._client = http_client
+        self._backoff_base = backoff_base
+
+    def _get_client(self) -> httpx.AsyncClient:
+        if self._client is None:
+            self._client = httpx.AsyncClient(
+                base_url=settings.WORKER_LOCAL_LLM_URL.rstrip("/").rsplit("/v1", 1)[0],
+                timeout=settings.COMPUTER_USE_DECISION_TIMEOUT,
+            )
+        return self._client
+
+    async def decide(self, messages: list[dict]) -> ComputerUseAction:
+        client = self._get_client()
+        payload = {
+            "model": "gemma-4",
+            "messages": messages,
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "computer_use_action",
+                    "schema": ComputerUseAction.model_json_schema(),
+                },
+            },
+            "temperature": 0.1,
+            "stream": False,
+        }
+        last_error: Optional[BaseException] = None
+        for attempt in range(self._MAX_ATTEMPTS):
+            try:
+                resp = await client.post("/v1/chat/completions", json=payload)
+                resp.raise_for_status()
+                content = resp.json()["choices"][0]["message"]["content"]
+                return ComputerUseAction.model_validate_json(content)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                last_error = e
+                if attempt == self._MAX_ATTEMPTS - 1:
+                    raise
+                await asyncio.sleep(self._backoff_base * (2 ** attempt))
+        raise last_error  # type: ignore[misc]
+
+    async def close(self):
+        if self._client is not None:
+            await self._client.aclose()
+            self._client = None

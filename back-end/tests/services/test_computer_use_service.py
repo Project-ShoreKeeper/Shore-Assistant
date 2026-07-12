@@ -1,5 +1,7 @@
+import asyncio
 import pytest
 
+from app.core.config import settings
 from app.services.computer_use_service import (
     ComputerUseAction, validate_action,
 )
@@ -168,3 +170,163 @@ async def test_decider_retries_then_succeeds():
     assert action.action == "wait"
     assert state["n"] == 2
     await client.aclose()
+
+
+from app.services.computer_use_service import ComputerUseService
+
+
+class _FakeDesktop:
+    def __init__(self):
+        self.events = []
+
+    async def capture(self):
+        await asyncio.sleep(0.001)
+        from app.services.desktop_backend import CapturedScreen
+        return CapturedScreen(png_bytes=b"PNG", width=1920, height=1080)
+
+    async def click(self, x, y, button="left", double=False):
+        self.events.append(("click", x, y, button, double))
+
+    async def type_text(self, text):
+        self.events.append(("type", text))
+
+    async def hotkey(self, keys):
+        self.events.append(("hotkey", tuple(keys)))
+
+    async def scroll(self, x, y, amount):
+        self.events.append(("scroll", x, y, amount))
+
+
+class _FakeParser:
+    async def parse(self, png_bytes):
+        return _screen(2)
+
+
+class _ScriptedDecider:
+    def __init__(self, actions):
+        self._actions = list(actions)
+        self.calls = 0
+
+    async def decide(self, messages):
+        self.calls += 1
+        return self._actions.pop(0)
+
+
+def _make_service(actions, tmp_path):
+    svc = ComputerUseService(
+        parser=_FakeParser(),
+        desktop=_FakeDesktop(),
+        decider=_ScriptedDecider(actions),
+        audit_path=str(tmp_path / "audit.log"),
+    )
+    return svc
+
+
+@pytest.mark.asyncio
+async def test_session_runs_to_done(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "COMPUTER_USE_ENABLED", True)
+    monkeypatch.setattr(settings, "COMPUTER_USE_SETTLE_SECONDS", 0.0)
+    steps = []
+    svc = _make_service(
+        [ComputerUseAction(action="click", element_id=0, reason="open"),
+         ComputerUseAction(action="done", text="finished", reason="done")],
+        tmp_path,
+    )
+    await svc.run_session("goal", emit=lambda m: steps.append(m))
+
+    states = [s for s in steps if s["type"] == "computer_use_state"]
+    assert states[0]["status"] == "started"
+    assert states[-1]["status"] == "done"
+    # one click executed on the fake desktop
+    assert ("click", 48, 135, "left", False) in svc._desktop.events
+    # audit file has a line for the executed click
+    audit = (tmp_path / "audit.log").read_text().strip().splitlines()
+    assert any("click" in line for line in audit)
+
+
+@pytest.mark.asyncio
+async def test_session_stops_at_step_budget(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "COMPUTER_USE_ENABLED", True)
+    monkeypatch.setattr(settings, "COMPUTER_USE_SETTLE_SECONDS", 0.0)
+    monkeypatch.setattr(settings, "COMPUTER_USE_MAX_STEPS", 3)
+    steps = []
+    # always "wait" -> never terminates on its own
+    svc = _make_service(
+        [ComputerUseAction(action="wait", reason="loading")] * 10, tmp_path,
+    )
+    await svc.run_session("goal", emit=lambda m: steps.append(m))
+    states = [s for s in steps if s["type"] == "computer_use_state"]
+    assert states[-1]["status"] == "failed"
+    assert svc._decider.calls == 3  # budget respected
+
+
+@pytest.mark.asyncio
+async def test_invalid_action_then_selfcorrect(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "COMPUTER_USE_ENABLED", True)
+    monkeypatch.setattr(settings, "COMPUTER_USE_SETTLE_SECONDS", 0.0)
+    steps = []
+    svc = _make_service(
+        [ComputerUseAction(action="click", element_id=99, reason="bad"),   # invalid
+         ComputerUseAction(action="click", element_id=0, reason="good"),   # valid
+         ComputerUseAction(action="done", text="ok", reason="done")],
+        tmp_path,
+    )
+    await svc.run_session("goal", emit=lambda m: steps.append(m))
+    states = [s for s in steps if s["type"] == "computer_use_state"]
+    assert states[-1]["status"] == "done"
+    # only the valid click executed
+    assert len(svc._desktop.events) == 1
+
+
+@pytest.mark.asyncio
+async def test_two_consecutive_invalid_fails(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "COMPUTER_USE_ENABLED", True)
+    monkeypatch.setattr(settings, "COMPUTER_USE_SETTLE_SECONDS", 0.0)
+    steps = []
+    svc = _make_service(
+        [ComputerUseAction(action="click", element_id=99, reason="bad1"),
+         ComputerUseAction(action="click", element_id=98, reason="bad2")],
+        tmp_path,
+    )
+    await svc.run_session("goal", emit=lambda m: steps.append(m))
+    states = [s for s in steps if s["type"] == "computer_use_state"]
+    assert states[-1]["status"] == "failed"
+    assert svc._desktop.events == []  # nothing executed
+
+
+@pytest.mark.asyncio
+async def test_single_session_enforced(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "COMPUTER_USE_ENABLED", True)
+    monkeypatch.setattr(settings, "COMPUTER_USE_SETTLE_SECONDS", 0.0)
+    svc = _make_service(
+        [ComputerUseAction(action="wait", reason="x")] * 50, tmp_path,
+    )
+    monkeypatch.setattr(settings, "COMPUTER_USE_MAX_STEPS", 50)
+
+    task = asyncio.create_task(svc.run_session("goal", emit=lambda m: None))
+    await asyncio.sleep(0)  # let it start
+    assert svc.active is True
+    # second start refused
+    ok = svc.start("another goal", emit=lambda m: None, desktop_factory=lambda: _FakeDesktop())
+    assert ok is False
+    svc.stop()
+    await task
+
+
+@pytest.mark.asyncio
+async def test_stop_ends_session(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "COMPUTER_USE_ENABLED", True)
+    monkeypatch.setattr(settings, "COMPUTER_USE_SETTLE_SECONDS", 0.0)
+    monkeypatch.setattr(settings, "COMPUTER_USE_MAX_STEPS", 50)
+    steps = []
+    svc = _make_service(
+        [ComputerUseAction(action="wait", reason="x")] * 50, tmp_path,
+    )
+    task = asyncio.create_task(
+        svc.run_session("goal", emit=lambda m: steps.append(m))
+    )
+    await asyncio.sleep(0)
+    svc.stop()
+    await task
+    states = [s for s in steps if s["type"] == "computer_use_state"]
+    assert states[-1]["status"] == "stopped"

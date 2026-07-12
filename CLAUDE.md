@@ -31,12 +31,14 @@ FastAPI Backend (Python) — orchestrator, no local AI/ML deps
   ├── Notifications (proactive push via ConnectionManager → agent pipeline → TTS; sources: scheduler, n8n webhooks)
   ├── Memory       (Hybrid: Redis short-term + Postgres profile + Qdrant episodic; circuit-broken per layer; LOCOMO worker auto-extracts via a LOCAL LLM on 30s idle; nightly canonicalizer dedupes entity tags)
   ├── Vision       (mss screen capture → primary multimodal model via /v1/chat/completions)
+  ├── Computer-Use (capture-parse-decide-act loop using DesktopBackend and ScreenParse client)
   └── n8n          (two-way integration: dynamic workflow tools + inbound webhook notifications)
 
 shore-ai-service (Docker container, GPU, gRPC)
   ├── STT.Transcribe   — Whisper (unary)
   ├── TTS.Synthesize   — Kokoro → Int16 PCM (server-streaming)
   ├── Embed.Encode     — sentence-transformers all-MiniLM-L6-v2 (unary, batch)
+  ├── ScreenParse.Parse — OmniParser v2 grounding (unary)
   └── Health.Get       — readiness + per-component loaded flags
 
 shore-ai-supervisor (host process, gRPC control plane)
@@ -259,6 +261,7 @@ docker compose -f docker-compose.n8n.yml up -d
 - **LOCOMO worker**: a **local LLM** (served at `WORKER_LOCAL_LLM_URL`, default the same llama-server) with `response_format=json_schema(WorkerOutput)` runs after `WORKER_IDLE_DELAY_SECONDS` of chat idle. Debounced via `WorkerService.on_turn_completed()` (cancel-on-new-turn). Safety valve fires immediately at `WORKER_MAX_UNPROCESSED_MESSAGES`. Dual-locked via `asyncio.Lock` + Redis `SETNX shore:worker:lock`. Disabled via `WORKER_ENABLED=False`; the Dashboard toggle flips `runtime_flags.WORKER_ENABLED`. Notifications skip the trigger. NOTE: if `WORKER_ENABLED=False` at startup the worker's deps are never wired, so toggling it on at runtime is a no-op until restart.
 - **Canonicalizer**: Internal APScheduler job (registered via `scheduler_service.add_system_job`, invisible to `list_tasks`). Cron `0 4 * * *` by default. Greedy single-pass clustering on entity tags at cosine ≥0.85; rewrites Qdrant point payloads in place.
 - **Screen Co-pilot**: A toggleable, server-side, **action-first** mode. `CopilotService` runs a backend watch loop that captures the host display (`mss`), and on a meaningful change while the user is idle (`GetLastInputInfo`) + past a cooldown, feeds the screenshot to the vision model via a dedicated `run_copilot_pipeline`. The agent takes a concrete action; safe commands auto-run and risky ones confirm via the existing `WhitelistGuard` (`allow`/`confirm`/`block`). Output is buffered into one `copilot_message` (silent on the `__NOOP__` sentinel). Off by default (`COPILOT_ENABLED`); the loop runs only inside an explicit session and only while a client is connected; screenshots are ephemeral (never persisted). Capture is server-side, so it is immune to browser tab/app switching.
+- **Computer-Use (OmniParser)**: Visual agent mode driving desktop applications. The session runs as a background task driving capture-parse-decide-act iterations using `DesktopBackend` (Local/RDP) and `ScreenParse` gRPC client. Emits live step messages (with annotated SoM screen captures) and writes audit log `data/computer_use_audit.log`. Gated to admin users, disabled by default (`COMPUTER_USE_ENABLED=False`). Includes a live step viewer frontend.
 - **Service control (Dashboard buttons)**: `back-end/config/services.yaml` (gitignored; example at `services.example.yaml`) registers controllable services across four kinds. `process` → `subprocess.Popen` with PID file under `data/pids/<name>.pid` (verified by `create_time`; optional `pre_stop_cmd`; SIGTERM/CTRL_BREAK → grace → snapshot-based descendant tree SIGKILL). `docker` → `docker compose -f <file> {up -d|start|stop|ps} <service>`. `internal` → `runtime_flags` toggle for `locomo_worker` / `canonicalizer`. `remote` → `shore-ai-supervisor` Start/Stop/Status for the `shore-ai` container. ServiceManager uses a `transitioning` set as a synchronization gate (atomic without `await`) so two concurrent requests on the same name can never both pass. Endpoints: `GET /api/services` (any logged-in user), `POST /api/services/{name}/{start,stop}` returns 202 with admin + CSRF guards. `/api/dashboard` rows include a `control` field merged by `correlates_with` (services/databases) or `display_name` (workers). Frontend `useDashboardPoll` accelerates to 1 s while any service is transitioning, returning to 5 s once stable; Stop shows a Radix confirm dialog, Start does not.
 
 ## Configuration
@@ -342,6 +345,16 @@ All backend config via environment variables or `.env` file in `back-end/`:
 | COPILOT_COOLDOWN_SECONDS | 45 | Minimum gap between triggers |
 | COPILOT_MONITOR_INDEX | 1 | `mss` monitor index to capture |
 | COPILOT_MAX_IMAGE_SIZE | 1280 | Longest edge of the JPEG sent to the vision model |
+| **Computer-Use (OmniParser)** | | |
+| COMPUTER_USE_ENABLED | False | Master switch; feature unavailable unless True |
+| COMPUTER_USE_MAX_STEPS | 20 | Step budget per session |
+| COMPUTER_USE_SETTLE_SECONDS | 1.5 | Wait after an action before next capture |
+| COMPUTER_USE_MONITOR_INDEX | 1 | `mss` monitor to capture/control |
+| COMPUTER_USE_DECISION_TIMEOUT | 60.0 | Per-step decision LLM timeout (s) |
+| COMPUTER_USE_HISTORY_STEPS | 6 | History entries included per decision |
+| COMPUTER_USE_AUDIT_LOG | data/computer_use_audit.log | JSONL audit |
+| COMPUTER_USE_DEBUG_DIR | (empty) | If set, save per-step SoM image + decision JSON |
+| SHORE_AI_SCREENPARSE_TIMEOUT_SECONDS | 30.0 | ScreenParse gRPC timeout |
 | **Terminal** | | |
 | TERMINAL_DEFAULT_CWD | D:\Jupiter | Default working directory for terminal sessions |
 | TERMINAL_DEFAULT_SHELL | powershell | Default shell |
@@ -413,6 +426,7 @@ All backend config via environment variables or `.env` file in `back-end/`:
 - [x] Dashboard service control — Start/Stop buttons for processes, docker containers, internal singletons, and remote services via `back-end/config/services.yaml`
 - [x] Cloud sub-agents — escalate to Claude / Gemini / GPT via `ask_claude` / `ask_gemini` / `ask_openai`
 - [x] STT/TTS/Embed gRPC microservice — moved all GPU/ML workloads to `shore-ai-service` (+ `shore-ai-supervisor` control plane); backend is orchestrator-only
+- [x] Computer-use mode — OmniParser v2 perception + Shore control agent
 
 ### Proactive Agent (Event Loop)
 - [x] Scheduled tasks — set_reminder (one-shot) + set_scheduled_task (recurring) tools with APScheduler

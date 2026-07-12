@@ -184,6 +184,19 @@ class Settings(BaseSettings):
     COPILOT_MONITOR_INDEX: int = 1  # mss monitor index to capture
     COPILOT_MAX_IMAGE_SIZE: int = 1280  # longest edge of the JPEG sent to the vision model
 
+    # ── Computer-Use (OmniParser) ──
+    COMPUTER_USE_ENABLED: bool = False  # master switch; feature unavailable unless True
+    COMPUTER_USE_MAX_STEPS: int = 20  # step budget per session
+    COMPUTER_USE_SETTLE_SECONDS: float = 1.5  # wait after an action before next capture
+    COMPUTER_USE_MONITOR_INDEX: int = 1  # mss monitor to capture/control
+    COMPUTER_USE_DECISION_TIMEOUT: float = 60.0  # per-step decision LLM timeout (s)
+    COMPUTER_USE_HISTORY_STEPS: int = 6  # history entries included per decision
+    COMPUTER_USE_AUDIT_LOG: str = "data/computer_use_audit.log"  # JSONL audit
+    COMPUTER_USE_DEBUG_DIR: str = ""  # if set, save per-step SoM image + decision JSON
+
+    # ── ScreenParse (shore-ai-service) ──
+    SHORE_AI_SCREENPARSE_TIMEOUT_SECONDS: float = 30.0
+
     class Config:
         env_file = ".env"
         extra = "ignore"

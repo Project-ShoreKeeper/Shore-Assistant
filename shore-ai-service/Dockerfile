@@ -22,7 +22,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 
 # ── OmniParser v2 (pinned) + weights ──
 # TODO: pin to a real microsoft/OmniParser master commit at deploy time (verify weights layout icon_detect/model.pt + icon_caption_florence/)
-ARG OMNIPARSER_REF=<PIN_A_COMMIT_SHA>
+ARG OMNIPARSER_REF=master
 RUN git clone https://github.com/microsoft/OmniParser.git /opt/OmniParser \
     && cd /opt/OmniParser && git checkout ${OMNIPARSER_REF}
 

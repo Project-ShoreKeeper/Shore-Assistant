@@ -9,13 +9,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 COPY pyproject.toml Makefile ./
-COPY proto ./proto
-COPY src ./src
 
 RUN --mount=type=cache,target=/root/.cache/pip \
     python3.12 -m pip install --break-system-packages \
       torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 \
       --index-url https://download.pytorch.org/whl/cu129
+
+COPY proto ./proto
+COPY src ./src
 
 RUN --mount=type=cache,target=/root/.cache/pip \
     python3.12 -m pip install --break-system-packages -e .[dev]

@@ -24,20 +24,21 @@ FastAPI Backend (Python) — orchestrator, no local AI/ML deps
   ├── /api/services — GET list + POST {name}/{start,stop} for registered services (admin + CSRF on writes)
   ├── ai_client (gRPC) — STT.Transcribe / TTS.Synthesize (server-streaming PCM) / Embed.Encode / Health.Get → shore-ai-service; Start/Stop/Status → shore-ai-supervisor
   ├── LLM Agent   (llama.cpp llama-server, OpenAI-compatible /v1/chat/completions, native tool calling, bounded multi-round loop)
-  ├── Computer use (EvoCUA-8B sub-agent via a second llama-server on port 8081; task-driven, no proactive screen monitoring)
   ├── Tool Retriever (embedding cosine similarity via shore-ai-service Embed, all-MiniLM-L6-v2)
   ├── Cloud sub-agents (ask_claude / ask_gemini / ask_openai — escalate a task to Claude / Gemini / GPT)
   ├── Tools        (system_time, read_file, list_directory, clear_memory, search_web, web_scrape, capture_screen, analyze_screen, computer_use, set_reminder, set_scheduled_task, cancel_task, list_tasks, ask_claude/ask_gemini/ask_openai, run_command + PTY tools, start_background_service + list/stop/logs + dynamic n8n workflow tools)
   ├── Scheduler    (APScheduler — one-shot reminders + recurring tasks, persisted to JSON)
   ├── Notifications (proactive push via ConnectionManager → agent pipeline → TTS; sources: scheduler, n8n webhooks)
   ├── Memory       (Hybrid: Redis short-term + Postgres profile + Qdrant episodic; circuit-broken per layer; LOCOMO worker auto-extracts via a LOCAL LLM on 30s idle; nightly canonicalizer dedupes entity tags)
-  ├── Vision       (client screen capture → primary multimodal model via /v1/chat/completions)
+  ├── Vision       (mss screen capture → primary multimodal model via /v1/chat/completions)
+  ├── Computer-Use (capture-parse-decide-act loop using DesktopBackend and ScreenParse client)
   └── n8n          (two-way integration: dynamic workflow tools + inbound webhook notifications)
 
 shore-ai-service (Docker container, GPU, gRPC)
   ├── STT.Transcribe   — Whisper (unary)
   ├── TTS.Synthesize   — Kokoro → Int16 PCM (server-streaming)
   ├── Embed.Encode     — sentence-transformers all-MiniLM-L6-v2 (unary, batch)
+  ├── ScreenParse.Parse — OmniParser v2 grounding (unary)
   └── Health.Get       — readiness + per-component loaded flags
 
 shore-ai-supervisor (host process, gRPC control plane)
@@ -262,7 +263,8 @@ docker compose -f docker-compose.n8n.yml up -d
 - **Auth (Google OAuth + Redis sessions)**: Master switch `AUTH_ENABLED` (default False — legacy synthetic-admin mode preserves pre-auth behavior). When enabled: `/api/auth/login` → Google consent → `/api/auth/callback` checks email against `AUTH_ALLOWED_EMAILS` (comma-separated, first email = admin role), then creates a session in Redis under `shore:session:<sid>` with sliding TTL. The hosted web app receives the sid in an HttpOnly cookie and uses CSRF protection on writes. The Tauri app receives it from the one-time `/api/auth/exchange` handoff and sends it as an `Authorization: Bearer` token; browser WebSocket connections carry it in the `bearer` subprotocol. `/api/auth/logout` deletes the Redis key. Invalid WS credentials close with code 4401. **Short-term memory becomes per-user** (`shore:short_term:<user_id>:messages`); Profile and Episodic stay global. **LOCOMO worker only extracts from admin turns** — non-admin allowlisted users can chat without their words reaching Luna's shared identity profile. Public-no-login routes when auth is on: `/health`, `/api/chronicles`.
 - **LOCOMO worker**: a **local LLM** (served at `WORKER_LOCAL_LLM_URL`, default the same llama-server) with `response_format=json_schema(WorkerOutput)` runs after `WORKER_IDLE_DELAY_SECONDS` of chat idle. Debounced via `WorkerService.on_turn_completed()` (cancel-on-new-turn). Safety valve fires immediately at `WORKER_MAX_UNPROCESSED_MESSAGES`. Dual-locked via `asyncio.Lock` + Redis `SETNX shore:worker:lock`. Disabled via `WORKER_ENABLED=False`; the Dashboard toggle flips `runtime_flags.WORKER_ENABLED`. Notifications skip the trigger. NOTE: if `WORKER_ENABLED=False` at startup the worker's deps are never wired, so toggling it on at runtime is a no-op until restart.
 - **Canonicalizer**: Internal APScheduler job (registered via `scheduler_service.add_system_job`, invisible to `list_tasks`). Cron `0 4 * * *` by default. Greedy single-pass clustering on entity tags at cosine ≥0.85; rewrites Qdrant point payloads in place.
-- **Computer use (CUA model)**: Task-driven only; there is no proactive co-pilot pipeline. The `computer_use` tool delegates one concrete GUI task to the configured `CUA_MODEL_FORMAT` (`evocua` by default, `ui_tars`, or `gui_owl`) on port 8081, then loops screenshot → constrained action parse → native Tauri execution → fresh screenshot. It is admin-only, desktop-only, single-run, capped by `CUA_MAX_STEPS`, and writes one JSONL audit record per action to `CUA_AUDIT_LOG`; screenshots are never persisted. The sub-agent receives only its task, bounded screenshot/action history, and the dedicated GUI system prompt—never Shore memory or profile context. `⌘⇧Esc`, the Chat banner, and the HUD stop action send `cua_abort`.
+- **Screen Co-pilot**: A toggleable, server-side, **action-first** mode. `CopilotService` runs a backend watch loop that captures the host display (`mss`), and on a meaningful change while the user is idle (`GetLastInputInfo`) + past a cooldown, feeds the screenshot to the vision model via a dedicated `run_copilot_pipeline`. The agent takes a concrete action; safe commands auto-run and risky ones confirm via the existing `WhitelistGuard` (`allow`/`confirm`/`block`). Output is buffered into one `copilot_message` (silent on the `__NOOP__` sentinel). Off by default (`COPILOT_ENABLED`); the loop runs only inside an explicit session and only while a client is connected; screenshots are ephemeral (never persisted). Capture is server-side, so it is immune to browser tab/app switching.
+- **Computer-Use (OmniParser)**: Visual agent mode driving desktop applications. The session runs as a background task driving capture-parse-decide-act iterations using `DesktopBackend` (Local/RDP) and `ScreenParse` gRPC client. Emits live step messages (with annotated SoM screen captures) and writes audit log `data/computer_use_audit.log`. Gated to admin users, disabled by default (`COMPUTER_USE_ENABLED=False`). Includes a live step viewer frontend.
 - **HUD overlay (desktop only)**: The Settings toggle creates a transparent, always-on-top Tauri window (`hud`, route `/hud`) over the primary monitor's macOS work area. Passive mode is click-through; global `Cmd+Shift+Space` activates and focuses a quick-prompt bar, `Esc` unwinds popovers then returns passive, and a 10 s idle guard always restores click-through. The four widgets expose agent controls, safe task metadata, latest-answer copy/read/open, and connection retry/settings; `Cmd+K` opens commands/customization (drag, keyboard move, opacity, scale). The main window remains the sole auth/API/`/ws/chat` owner and exchanges bounded, versioned `hud://state` / `hud://action` / ACK events with the HUD using `emitTo`; `/hud` mounts outside `AuthProvider`. Screen access is enabled in main Settings because browser capture requires a user gesture there; HUD stop aborts an active computer-use run. Terminal approval is intentionally disabled until backend terminal role enforcement and per-user isolation are fixed. See `docs/superpowers/specs/2026-07-03-hud-overlay-design.md` and `docs/superpowers/manual/hud-interactions-macos.md`.
 - **Service control (Dashboard buttons)**: `back-end/config/services.yaml` (gitignored; example at `services.example.yaml`) registers controllable services across four kinds. `process` → `subprocess.Popen` with PID file under `data/pids/<name>.pid` (verified by `create_time`; optional `pre_stop_cmd`; SIGTERM/CTRL_BREAK → grace → snapshot-based descendant tree SIGKILL). `docker` → `docker compose -f <file> {up -d|start|stop|ps} <service>`. `internal` → `runtime_flags` toggle for `locomo_worker` / `canonicalizer`. `remote` → `shore-ai-supervisor` Start/Stop/Status for the `shore-ai` container. ServiceManager uses a `transitioning` set as a synchronization gate (atomic without `await`) so two concurrent requests on the same name can never both pass. Endpoints: `GET /api/services` (any logged-in user), `POST /api/services/{name}/{start,stop}` returns 202 with admin + CSRF guards. `/api/dashboard` rows include a `control` field merged by `correlates_with` (services/databases) or `display_name` (workers). Frontend `useDashboardPoll` accelerates to 1 s while any service is transitioning, returning to 5 s once stable; Stop shows a Radix confirm dialog, Start does not.
 
@@ -339,21 +341,24 @@ All backend config via environment variables or `.env` file in `back-end/`:
 | NODE_PTY_RECONNECT_MAX_MS | 30000 | Max reconnect backoff (milliseconds) |
 | NODE_PTY_PING_INTERVAL_SECONDS | 30 | Heartbeat ping interval |
 | NODE_PTY_PING_TIMEOUT_SECONDS | 5 | Pong deadline before treating connection as disconnected |
-| **Screen capture / computer use** | | |
-| COPILOT_MAX_IMAGE_SIZE | 1280 | Longest edge the client should target when capturing a full frame |
-| EVOCUA_BASE_URL | http://localhost:8081 | OpenAI-compatible CUA model server URL |
-| EVOCUA_TIMEOUT | 60.0 | Per-completion EvoCUA timeout (seconds) |
-| CUA_MODEL_FORMAT | evocua | Computer-use model format: `evocua`, `ui_tars`, or `gui_owl` |
-| CUA_MAX_STEPS | 15 | Hard action cap per computer-use run |
-| CUA_STEP_TIMEOUT_SECONDS | 30.0 | Execute-and-recapture round-trip deadline |
-| CUA_SETTLE_MS | 800 | Client wait after input before capturing the next frame |
-| CUA_CAPTURE_MAX_SIZE | 3000 | Longest-edge px for CUA frames (Retina needs more detail than the 1280 co-pilot default; higher = better grounding but more vision tokens/slower) |
-| CUA_HISTORY_MAX_TURNS | 4 | Screenshot/action turns retained in EvoCUA context |
-| CUA_AUDIT_LOG | data/cua_audit.log | JSONL action audit path |
-
-UI-TARS-1.5 serving note: point `EVOCUA_BASE_URL` at a llama-server running the UI-TARS GGUF, for example `llama-server -m <UI-TARS-1.5-7B GGUF> --mmproj <mmproj> --port 8081`, and set `CUA_MODEL_FORMAT=ui_tars`.
-
-GUI-Owl-1.5 serving note: for a llama.cpp/GGUF smoke test, point `EVOCUA_BASE_URL` at a llama-server running a GUI-Owl-1.5-8B-Think GGUF, for example `llama-server -hf mradermacher/GUI-Owl-1.5-8B-Think-GGUF:Q4_K_M --host 0.0.0.0 --port 8081 --ctx-size 32768`, and set `CUA_MODEL_FORMAT=gui_owl`. Do NOT pass `--jinja`: the CUA client never sends a `tools` array, and with `--jinja` llama-server JSON-parses the model's `<tool_call>` body (GUI-Owl puts a constrained Python-style call there, not JSON), fails, and strips it from `content`, leaving an unparseable reply. The official GUI-Owl card recommends vLLM for safetensors deployments; keep the OpenAI-compatible base URL on port 8081 if using vLLM instead, and pass `--served-model-name gui-owl-1.5-8b-think` — unlike llama-server, vLLM rejects requests whose `model` field (Shore sends the format's `model_label`) does not match a served model name.
+| **Screen Co-pilot** | | |
+| COPILOT_ENABLED | False | Master switch for the action-first screen co-pilot |
+| COPILOT_CAPTURE_INTERVAL_SECONDS | 4 | Watch-loop tick interval |
+| COPILOT_IDLE_THRESHOLD_SECONDS | 3 | Minimum hands-off idle before analyzing |
+| COPILOT_CHANGE_THRESHOLD | 0.06 | Normalized thumbnail diff treated as "changed" |
+| COPILOT_COOLDOWN_SECONDS | 45 | Minimum gap between triggers |
+| COPILOT_MONITOR_INDEX | 1 | `mss` monitor index to capture |
+| COPILOT_MAX_IMAGE_SIZE | 1280 | Longest edge of the JPEG sent to the vision model |
+| **Computer-Use (OmniParser)** | | |
+| COMPUTER_USE_ENABLED | False | Master switch; feature unavailable unless True |
+| COMPUTER_USE_MAX_STEPS | 20 | Step budget per session |
+| COMPUTER_USE_SETTLE_SECONDS | 1.5 | Wait after an action before next capture |
+| COMPUTER_USE_MONITOR_INDEX | 1 | `mss` monitor to capture/control |
+| COMPUTER_USE_DECISION_TIMEOUT | 60.0 | Per-step decision LLM timeout (s) |
+| COMPUTER_USE_HISTORY_STEPS | 6 | History entries included per decision |
+| COMPUTER_USE_AUDIT_LOG | data/computer_use_audit.log | JSONL audit |
+| COMPUTER_USE_DEBUG_DIR | (empty) | If set, save per-step SoM image + decision JSON |
+| SHORE_AI_SCREENPARSE_TIMEOUT_SECONDS | 30.0 | ScreenParse gRPC timeout |
 | **Terminal** | | |
 | TERMINAL_DEFAULT_CWD | D:\Jupiter | Default working directory for terminal sessions |
 | TERMINAL_DEFAULT_SHELL | powershell | Default shell |
@@ -430,6 +435,7 @@ GUI-Owl-1.5 serving note: for a llama.cpp/GGUF smoke test, point `EVOCUA_BASE_UR
 - [x] Dashboard service control — Start/Stop buttons for processes, docker containers, internal singletons, and remote services via `back-end/config/services.yaml`
 - [x] Cloud sub-agents — escalate to Claude / Gemini / GPT via `ask_claude` / `ask_gemini` / `ask_openai`
 - [x] STT/TTS/Embed gRPC microservice — moved all GPU/ML workloads to `shore-ai-service` (+ `shore-ai-supervisor` control plane); backend is orchestrator-only
+- [x] Computer-use mode — OmniParser v2 perception + Shore control agent
 
 ### Proactive Agent (Event Loop)
 - [x] Scheduled tasks — set_reminder (one-shot) + set_scheduled_task (recurring) tools with APScheduler

@@ -18,8 +18,9 @@ from app.services.memory import memory_facade, worker_service
 from app.services.image_store import image_store
 from app.services.connection_manager import connection_manager
 from app.services.notification_service import notification_service
-from app.services.cua.service import computer_use_service
-from app.services.screenshot_bridge import screenshot_bridge
+from app.services.copilot_service import copilot_service, summarize_copilot_run
+from app.services.computer_use_service import computer_use_service
+from app.tools.computer_use_tools import set_session_hooks as _cu_set_hooks, clear_session_hooks as _cu_clear_hooks
 from app.core.config import settings
 import numpy as np
 import json
@@ -87,6 +88,45 @@ def _build_live_message(user_text: str, images: list[dict]) -> dict:
         content.append({"type": "image_url",
                         "image_url": {"url": img["data_url"]}})
     return {"role": "user", "content": content}
+
+
+def _make_computer_use_emitter(send_json_threadsafe, session_id: str):
+    """Build the emit(msg) callback the computer-use loop pushes steps through.
+
+    The loop calls emit() synchronously. send_json_threadsafe may return a
+    coroutine (production `send_json_safe`) or None (a sync test fake); we
+    schedule it only when awaitable so both work. When COMPUTER_USE_DEBUG_DIR
+    is set, computer_use_step messages also persist their SoM JPEG + decision
+    JSON for post-hoc E2E debugging.
+    """
+    import asyncio
+    import inspect
+    import base64 as _b
+    from pathlib import Path
+
+    def emit(msg: dict):
+        result = send_json_threadsafe(msg)
+        if inspect.isawaitable(result):
+            asyncio.get_event_loop().create_task(result)
+
+        debug_dir = settings.COMPUTER_USE_DEBUG_DIR
+        if debug_dir and msg.get("type") == "computer_use_step":
+            try:
+                sdir = Path(debug_dir) / session_id
+                sdir.mkdir(parents=True, exist_ok=True)
+                step = msg.get("step", 0)
+                som = msg.get("som_image", "")
+                if som.startswith("data:image"):
+                    b64 = som.split(",", 1)[1]
+                    (sdir / f"step_{step}.jpg").write_bytes(_b.b64decode(b64))
+                (sdir / f"step_{step}.json").write_text(
+                    json.dumps({k: v for k, v in msg.items() if k != "som_image"}),
+                    encoding="utf-8",
+                )
+            except Exception:
+                pass
+
+    return emit
 
 
 router = APIRouter()
@@ -185,8 +225,6 @@ async def websocket_chat(websocket: WebSocket):
 
     from app.services.terminal_service import terminal_service
     terminal_service.broadcast = send_json_safe
-    screenshot_bridge.broadcast = send_json_safe
-    computer_use_service.attach(send_json_safe)
 
     # Load persisted history. The frontend rehydration code expects
     # assistant metadata (thinking_text, agent_actions, ...) at the top
@@ -469,6 +507,73 @@ async def websocket_chat(websocket: WebSocket):
 
     notification_service.set_agent_callback(run_notification)
 
+    async def run_copilot_pipeline(framing: str, screenshot: dict):
+        """Run one co-pilot turn: feed the screenshot to the agent with tools,
+        buffer the output, and emit a single copilot_message (or stay silent on
+        __NOOP__). Ephemeral: the framing/screenshot never touch history/memory.
+        Confirm dialogs for risky commands are broadcast live by terminal_service.
+        """
+        # Transient history: prior turns + the framing as the current user turn.
+        # agent_service.run builds its own message list, so the real
+        # conversation_history is never mutated.
+        temp_history = list(conversation_history) + [
+            {"role": "user", "content": framing}
+        ]
+        live_msg = _build_live_message(framing, [screenshot])
+
+        events: list[dict] = []
+        try:
+            async for event in agent_service.run(
+                framing, temp_history,
+                memory_bundle=None,
+                thinking=False,
+                no_tools=False,
+                live_user_message=live_msg,
+            ):
+                events.append(event)
+        except Exception as e:
+            print(f"[Copilot] pipeline error: {e!r}")
+            return
+
+        result = summarize_copilot_run(events)
+        if result is None:
+            return  # __NOOP__ / nothing useful — stay silent
+
+        await send_json_safe({
+            "type": "copilot_message",
+            "text": result["text"],
+            "agent_actions": result["agent_actions"],
+            "timestamp": time.time(),
+        })
+
+        if result["text"].strip():
+            conversation_history.append(
+                {"role": "assistant", "content": result["text"]}
+            )
+            await memory_facade.append_assistant(
+                content=result["text"],
+                user_id=ws_user_id,
+                extras={
+                    "is_copilot": True,
+                    "agent_actions": result["agent_actions"] or None,
+                },
+            )
+
+    async def _start_copilot(framing: str, screenshot: dict):
+        nonlocal agent_task
+        if agent_task and not agent_task.done():
+            return  # busy — a user/copilot turn is already running; skip
+        agent_task = asyncio.create_task(
+            run_copilot_pipeline(framing, screenshot)
+        )
+
+    copilot_service.attach(
+        trigger_cb=_start_copilot,
+        is_busy_cb=lambda: bool(agent_task and not agent_task.done()),
+    )
+
+    _cu_emit = _make_computer_use_emitter(send_json_safe, session_id)
+    _cu_set_hooks(_cu_emit, is_admin=(ws_user_role == "admin"))
     # Drain any notifications that fired while disconnected
     await notification_service.drain_pending()
 
@@ -509,54 +614,27 @@ async def websocket_chat(websocket: WebSocket):
                             agent_task.cancel()
 
                     elif msg_type == "copilot_start":
-                        screen_access_active = True
+                        started = await copilot_service.start_session()
                         await send_json_safe({
                             "type": "copilot_state",
-                            "active": screen_access_active,
+                            "active": started,
                         })
 
                     elif msg_type == "copilot_stop":
-                        screen_access_active = False
-                        computer_use_service.abort(owner=send_json_safe)
-                        computer_use_service.set_ready(
-                            None,
-                            owner=send_json_safe,
-                        )
+                        await copilot_service.stop_session()
                         await send_json_safe({
                             "type": "copilot_state",
-                            "active": screen_access_active,
+                            "active": False,
                         })
 
-                    elif msg_type == "cua_ready":
-                        computer_use_service.set_ready(
-                            data.get("screen"),
-                            owner=send_json_safe,
-                        )
-
-                    elif msg_type == "cua_step_result":
-                        screenshot, error = _validate_screenshot_data_url(
-                            data.get("screenshot"),
-                            data.get("error"),
-                        )
-                        computer_use_service.resolve_step(
-                            data.get("request_id", ""),
-                            screenshot=screenshot,
-                            screen=data.get("screen"),
-                            error=error,
-                            owner=send_json_safe,
-                        )
-
-                    elif msg_type == "cua_abort":
-                        computer_use_service.abort(owner=send_json_safe)
-
-                    elif msg_type == "screenshot_response":
-                        data_url, error = _validate_screenshot_data_url(
-                            data.get("data_url"),
-                            data.get("error"),
-                        )
-                        screenshot_bridge.resolve(
-                            data.get("request_id", ""), data_url, error
-                        )
+                    elif msg_type == "computer_use_stop":
+                        computer_use_service.stop()
+                        await send_json_safe({
+                            "type": "computer_use_state",
+                            "status": "stopped",
+                            "goal": "",
+                            "steps_taken": 0,
+                        })
 
                     elif msg_type == "clear_memory":
                         conversation_history.clear()
@@ -715,10 +793,11 @@ async def websocket_chat(websocket: WebSocket):
                 await agent_task
             except (asyncio.CancelledError, Exception):
                 pass
-        computer_use_service.detach(owner=my_send_json)
+        copilot_service.detach()
+        computer_use_service.stop()
+        _cu_clear_hooks()
         # Only unregister if we're still the active connection
         if connection_manager._send_json is my_send_json:
             notification_service.clear_agent_callback()
             connection_manager.unregister()
             terminal_service.broadcast = None
-            screenshot_bridge.broadcast = None

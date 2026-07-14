@@ -189,22 +189,27 @@ class Settings(BaseSettings):
     NODE_PTY_PING_INTERVAL_SECONDS: int = 30
     NODE_PTY_PING_TIMEOUT_SECONDS: int = 5
 
-    # ── Client screen capture ──
-    # Screen capture is client-side (browser getDisplayMedia, relayed over
-    # /ws/chat) -- the backend host has no guaranteed display of its own.
-    COPILOT_MAX_IMAGE_SIZE: int = 1280  # longest edge the client should target when capturing a full frame
+    # ── Screen Co-pilot ──
+    COPILOT_ENABLED: bool = False  # master switch; feature unavailable unless True
+    COPILOT_CAPTURE_INTERVAL_SECONDS: float = 4.0  # watch-loop tick interval
+    COPILOT_IDLE_THRESHOLD_SECONDS: float = 3.0  # min hands-off idle before analyzing
+    COPILOT_CHANGE_THRESHOLD: float = 0.06  # normalized thumbnail diff treated as "changed"
+    COPILOT_COOLDOWN_SECONDS: float = 45.0  # min gap between triggers
+    COPILOT_MONITOR_INDEX: int = 1  # mss monitor index to capture
+    COPILOT_MAX_IMAGE_SIZE: int = 1280  # longest edge of the JPEG sent to the vision model
 
-    # --- Computer use (CUA sub-agent) ---
-    EVOCUA_BASE_URL: str = "http://localhost:8081"  # second OpenAI-compatible CUA model server
-    EVOCUA_API_KEY: str = ""  # sent as `Authorization: Bearer` when set (llama-server --api-key)
-    EVOCUA_TIMEOUT: float = 60.0  # per-completion timeout (seconds)
-    CUA_MAX_STEPS: int = 15  # hard cap on actions per run
-    CUA_STEP_TIMEOUT_SECONDS: float = 30.0  # one execute+capture round-trip deadline
-    CUA_SETTLE_MS: int = 800  # client wait after an action before recapture
-    CUA_CAPTURE_MAX_SIZE: int = 3000  # longest-edge px for CUA frames (Retina needs more detail than the 1280 co-pilot default)
-    CUA_HISTORY_MAX_TURNS: int = 4  # screenshot/action turns kept in CUA context
-    CUA_AUDIT_LOG: str = "data/cua_audit.log"
-    CUA_MODEL_FORMAT: str = "evocua"  # computer-use model format: evocua | ui_tars | gui_owl
+    # ── Computer-Use (OmniParser) ──
+    COMPUTER_USE_ENABLED: bool = False  # master switch; feature unavailable unless True
+    COMPUTER_USE_MAX_STEPS: int = 20  # step budget per session
+    COMPUTER_USE_SETTLE_SECONDS: float = 1.5  # wait after an action before next capture
+    COMPUTER_USE_MONITOR_INDEX: int = 1  # mss monitor to capture/control
+    COMPUTER_USE_DECISION_TIMEOUT: float = 60.0  # per-step decision LLM timeout (s)
+    COMPUTER_USE_HISTORY_STEPS: int = 6  # history entries included per decision
+    COMPUTER_USE_AUDIT_LOG: str = "data/computer_use_audit.log"  # JSONL audit
+    COMPUTER_USE_DEBUG_DIR: str = ""  # if set, save per-step SoM image + decision JSON
+
+    # ── ScreenParse (shore-ai-service) ──
+    SHORE_AI_SCREENPARSE_TIMEOUT_SECONDS: float = 30.0
 
     class Config:
         env_file = ".env"

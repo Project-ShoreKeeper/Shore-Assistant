@@ -1,19 +1,34 @@
-"""Screen capture and vision tools for the AI agent.
+"""Screen capture and vision tools for the AI agent."""
 
-Screen capture happens client-side (browser getDisplayMedia) and is relayed
-over /ws/chat via screenshot_bridge -- the backend host has no guaranteed
-display of its own.
-"""
+import base64
+import io
 
 from langchain_core.tools import tool
 
-from app.services.screenshot_bridge import ScreenshotUnavailable, screenshot_bridge
 
+def _capture_screen_b64(max_size: int = 1280) -> str:
+    """Capture primary monitor and return as base64 JPEG string."""
+    import mss
+    from PIL import Image
 
-async def _capture_screen_b64() -> str:
-    """Request a screenshot from the connected client; return raw base64 (no data: prefix)."""
-    data_url = await screenshot_bridge.request()
-    return data_url.split(",", 1)[1] if "," in data_url else data_url
+    with mss.mss() as sct:
+        monitor = sct.monitors[1]
+        screenshot = sct.grab(monitor)
+
+        img = Image.frombytes(
+            "RGB", screenshot.size, screenshot.bgra, "raw", "BGRX"
+        )
+
+        w, h = img.size
+        if max(w, h) > max_size:
+            scale = max_size / max(w, h)
+            img = img.resize(
+                (int(w * scale), int(h * scale)), Image.LANCZOS
+            )
+
+        buffer = io.BytesIO()
+        img.save(buffer, format="JPEG", quality=85)
+        return base64.b64encode(buffer.getvalue()).decode("utf-8")
 
 
 async def _analyze(prompt: str, image_b64: str) -> str:
@@ -30,11 +45,9 @@ async def capture_screen(prompt: str = "Describe what you see on the screen") ->
         prompt: What to look for or analyze in the screenshot.
     """
     try:
-        image_b64 = await _capture_screen_b64()
+        image_b64 = _capture_screen_b64()
         result = await _analyze(prompt, image_b64)
         return result if result else "Could not analyze the screen."
-    except ScreenshotUnavailable as e:
-        return f"Error: Unable to capture the screen. {e}"
     except Exception as e:
         return f"Error capturing/analyzing screen: {e}"
 
@@ -59,10 +72,8 @@ async def analyze_screen(query: str) -> str:
                "Describe the screen") for more useful answers.
     """
     try:
-        image_b64 = await _capture_screen_b64()
+        image_b64 = _capture_screen_b64()
         result = await _analyze(query, image_b64)
         return result if result else "Vision model returned an empty response."
-    except ScreenshotUnavailable as e:
-        return f"Error: Unable to capture the screen. {e}"
     except Exception as e:
         return f"Error: Unable to capture or analyze the screen. Details: {e}"

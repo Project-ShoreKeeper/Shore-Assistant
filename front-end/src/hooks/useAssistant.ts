@@ -7,6 +7,8 @@ import {
   type ChatServerMessage,
   type ImageAttachment,
   type PersistedImage,
+  type ComputerUseStateMessage,
+  type ComputerUseStepMessage,
 } from "../services/chat-websocket.service";
 import { float32ToWav } from "../utils/audio.util";
 import {
@@ -115,6 +117,11 @@ export interface UseAssistantReturn {
   cuaStep: number;
   abortComputerUse: () => void;
 
+  // Computer use
+  computerUseState: ComputerUseStateMessage | null;
+  computerUseStep: ComputerUseStepMessage | null;
+  stopComputerUse: () => void;
+
   // Controls
   startRecording: (deviceId?: string) => void;
   stopRecording: () => void;
@@ -146,9 +153,10 @@ export function useAssistant(): UseAssistantReturn {
   const [copilotActive, setCopilotActive] = useState(false);
   const copilotActiveRef = useRef(false);
   const [copilotError, setCopilotError] = useState<string | null>(null);
-  const [cuaRunning, setCuaRunning] = useState(false);
-  const [cuaTask, setCuaTask] = useState<string | null>(null);
-  const [cuaStep, setCuaStep] = useState(0);
+  const [computerUseState, setComputerUseState] =
+    useState<ComputerUseStateMessage | null>(null);
+  const [computerUseStep, setComputerUseStep] =
+    useState<ComputerUseStepMessage | null>(null);
 
   // Conversation state
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -680,29 +688,19 @@ export function useAssistant(): UseAssistantReturn {
           break;
         }
 
-        case "cua_state": {
-          setCuaRunning(Boolean(msg.running));
-          setCuaTask(msg.running ? String(msg.task ?? "") : null);
-          setCuaStep(Number(msg.step ?? 0));
+        case "computer_use_state": {
+          setComputerUseState(msg);
+          if (msg.status === "done" || msg.status === "failed" || msg.status === "stopped") {
+            // clear the live step image once the session ends
+            setComputerUseStep(null);
+          }
           break;
         }
 
-        case "request_screenshot": {
-          (async () => {
-            try {
-              const dataUrl = await captureFrameDataUrl(msg.max_size || 1280);
-              ws.sendScreenshotResponse(msg.request_id, dataUrl);
-            } catch (err) {
-              ws.sendScreenshotResponse(
-                msg.request_id,
-                undefined,
-                err instanceof Error ? err.message : "Screen capture failed.",
-              );
-            }
-          })();
+        case "computer_use_step": {
+          setComputerUseStep(msg);
           break;
         }
-
       }
     };
 
@@ -1086,6 +1084,10 @@ export function useAssistant(): UseAssistantReturn {
     cuaTask,
     cuaStep,
     abortComputerUse,
+
+    computerUseState,
+    computerUseStep,
+    stopComputerUse: () => chatWebsocketService.sendComputerUseStop(),
 
     startRecording,
     stopRecording,

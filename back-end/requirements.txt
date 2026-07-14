@@ -21,6 +21,7 @@ lxml>=5.0.0
 # Vision / Screen capture (capture is client-side; Pillow decodes client-sent thumbnails)
 Pillow>=10.0.0
 psutil>=5.9.0
+pyautogui>=0.9.54
 
 # Cloud AI sub-agents
 anthropic>=0.40.0

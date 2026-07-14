@@ -35,6 +35,9 @@ _SECTION_TRIGGERS: dict[str, frozenset[str]] = {
         "start_background_service", "list_background_services",
         "get_background_service_logs", "stop_background_service",
     }),
+    "tools_computer_use.txt": frozenset({
+        "computer_use", "stop_computer_use",
+    }),
 }
 # n8n workflow tools have dynamic names (n8n_<workflow>), so they're matched by prefix.
 _N8N_SECTION = "tools_n8n.txt"

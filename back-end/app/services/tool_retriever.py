@@ -18,9 +18,6 @@ ALWAYS_AVAILABLE = {
     "ask_gemini",
     "ask_openai",
     "run_command",
-    # Always selectable so GUI/desktop requests never fall back to a shell
-    # command; the tool self-refuses when the user is non-admin or the
-    # desktop client has no active screen-share session.
     "computer_use",
 }
 
@@ -93,6 +90,8 @@ class ToolRetriever:
             "read_terminal": TERMINAL_GROUP,
             "list_terminals": TERMINAL_GROUP,
             "close_terminal": TERMINAL_GROUP,
+            "computer_use": ["stop_computer_use"],
+            "stop_computer_use": ["computer_use"],
         }
         for tool, companions in COMPANION_TOOLS.items():
             if tool in retrieved:

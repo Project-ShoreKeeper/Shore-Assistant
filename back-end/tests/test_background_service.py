@@ -109,8 +109,14 @@ def test_stop_kills_child_processes(mgr: BackgroundServiceManager, tmp_path: Pat
     # Avoid quoting (cmd /c mangles nested quotes); rely on tmp_path having no spaces.
     if " " in str(script) or " " in sys.executable:
         pytest.skip("test command does not handle spaces in paths")
-    command = f"{sys.executable} {script}"
-    started = mgr.start(name="tree", command=command, shell="cmd", cwd=str(tmp_path))
+    shell_name = "cmd" if sys.platform == "win32" else "bash"
+    if sys.platform == "win32":
+        command = f"{sys.executable} {script}"
+    else:
+        # Trailing command prevents bash from optimizing with exec,
+        # ensuring Python runs as a separate child process.
+        command = f"{sys.executable} {script} && echo done"
+    started = mgr.start(name="tree", command=command, shell=shell_name, cwd=str(tmp_path))
     parent_pid = started["pid"]
 
     assert _wait_until(

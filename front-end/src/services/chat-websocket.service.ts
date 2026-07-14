@@ -4,7 +4,6 @@
  */
 import { CHAT_WS_URL } from "../constants/stt.constant";
 import { getAccessToken } from "./http.service";
-import type { CuaStepMessage } from "./cua-executor.service";
 
 export type WebSocketStatus =
   | "CONNECTING"
@@ -109,21 +108,7 @@ export interface CopilotStateMessage {
   active: boolean;
 }
 
-export interface RequestScreenshotMessage {
-  type: "request_screenshot";
-  request_id: string;
-  max_size?: number;
-}
 
-export type CuaStepServerMessage = CuaStepMessage & { type: "cua_step" };
-
-export interface CuaStateMessage {
-  type: "cua_state";
-  running: boolean;
-  step: number;
-  max_steps: number;
-  task: string;
-}
 
 export interface MemoryWorkerMessage {
   type: "memory_worker";
@@ -163,6 +148,35 @@ export interface PersistedMessage {
   images?: PersistedImage[];
 }
 
+export interface ComputerUseStateMessage {
+  type: "computer_use_state";
+  status: "started" | "running" | "done" | "failed" | "stopped";
+  goal: string;
+  steps_taken: number;
+  summary?: string;
+  error?: string;
+}
+
+export interface ComputerUseStepElement {
+  id: number;
+  type: string;
+  content: string;
+  interactable: boolean;
+}
+
+export interface ComputerUseStepMessage {
+  type: "computer_use_step";
+  step: number;
+  action: string;
+  element_id?: number | null;
+  element_content: string;
+  reason: string;
+  status: string;
+  error?: string | null;
+  som_image: string; // data URL (may be "")
+  elements: ComputerUseStepElement[];
+}
+
 export interface HistoryMessage {
   type: "history";
   messages: PersistedMessage[];
@@ -183,9 +197,9 @@ export type ChatServerMessage =
   | NotificationMessage
   | MemoryWorkerMessage
   | CopilotStateMessage
-  | CuaStepServerMessage
-  | CuaStateMessage
-  | RequestScreenshotMessage
+  | CopilotMessage
+  | ComputerUseStateMessage
+  | ComputerUseStepMessage
   | HistoryMessage;
 
 // ─── Event system ───
@@ -367,35 +381,11 @@ export class ChatWebSocketService {
     }
   }
 
-  public sendCuaReady(screen: { width: number; height: number }): void {
-    if (!this.isReady()) return;
-    this.socket!.send(JSON.stringify({ type: "cua_ready", screen }));
-  }
 
-  public sendCuaStepResult(payload: object): void {
-    if (!this.isReady()) return;
-    this.socket!.send(JSON.stringify({ type: "cua_step_result", ...payload }));
-  }
 
-  public sendCuaAbort(): void {
+  public sendComputerUseStop(): void {
     if (!this.isReady()) return;
-    this.socket!.send(JSON.stringify({ type: "cua_abort" }));
-  }
-
-  public sendScreenshotResponse(
-    requestId: string,
-    dataUrl?: string,
-    error?: string,
-  ): void {
-    if (!this.isReady()) return;
-    this.socket!.send(
-      JSON.stringify({
-        type: "screenshot_response",
-        request_id: requestId,
-        ...(dataUrl ? { data_url: dataUrl } : {}),
-        ...(error ? { error } : {}),
-      }),
-    );
+    this.socket!.send(JSON.stringify({ type: "computer_use_stop" }));
   }
 
   // ─── Event system ───

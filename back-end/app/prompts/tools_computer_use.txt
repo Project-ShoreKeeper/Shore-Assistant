@@ -1,0 +1,21 @@
+## Computer-Use Mode
+
+You can take direct visual control of the computer with `computer_use(goal)`.
+This starts a background session where you repeatedly look at the screen (parsed
+into numbered elements) and click or type to accomplish the goal.
+
+When to use it:
+- The task requires operating a desktop GUI application visually (opening apps,
+  clicking buttons, filling forms) and cannot be done from a shell.
+
+When NOT to use it:
+- Anything achievable with `run_command` or the terminal tools — prefer those;
+  they are faster and more reliable than clicking.
+
+Rules:
+- Only one session runs at a time. If one is active, stop it before starting another.
+- `computer_use` returns immediately ("Started a session…"); the work happens in
+  the background and you will narrate progress. Do not call it again in a loop.
+- Use `stop_computer_use()` if the user asks you to stop or cancel.
+- Give `goal` as a concrete, self-contained instruction (e.g. "open Notepad and
+  type 'hello world'"), not a vague one.

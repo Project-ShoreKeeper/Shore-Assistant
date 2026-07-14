@@ -108,6 +108,13 @@ export interface CopilotStateMessage {
   active: boolean;
 }
 
+export interface CopilotMessage {
+  type: "copilot_message";
+  text: string;
+  agent_actions?: PersistedAgentAction[];
+  timestamp: number;
+}
+
 
 
 export interface MemoryWorkerMessage {

@@ -9,24 +9,16 @@ import {
   type PersistedImage,
   type ComputerUseStateMessage,
   type ComputerUseStepMessage,
+  type PersistedMessage,
+  type PersistedAgentAction,
 } from "../services/chat-websocket.service";
 import { float32ToWav } from "../utils/audio.util";
 import {
   fetchBlobUrl,
   notifyUnauthorized,
 } from "../services/http.service";
-import {
-  captureFrameDataUrl,
-  isScreenSharing,
-  onScreenShareEnded,
-  requestScreenShare,
-  stopScreenStream,
-} from "../services/screen-capture.service";
-import {
-  announceCuaReady,
-  executeCuaStep,
-} from "../services/cua-executor.service";
-import { isTauri } from "../utils/tauri.util";
+
+
 
 // Matches the text placeholder chat_ws.py's _build_memory_message appends
 // when images are attached, e.g. "[Attached 2 image(s): 935x702, 800x600]".
@@ -111,11 +103,7 @@ export interface UseAssistantReturn {
   toggleCopilot: () => void | Promise<void>;
   stopCopilot: () => AssistantControlResult;
 
-  // Computer use
-  cuaRunning: boolean;
-  cuaTask: string | null;
-  cuaStep: number;
-  abortComputerUse: () => void;
+
 
   // Computer use
   computerUseState: ComputerUseStateMessage | null;
@@ -184,9 +172,7 @@ export function useAssistant(): UseAssistantReturn {
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
 
-  const abortComputerUse = useCallback(() => {
-    chatWebsocketService.sendCuaAbort();
-  }, []);
+
 
   useEffect(() => {
     languageRef.current = language;
@@ -272,18 +258,13 @@ export function useAssistant(): UseAssistantReturn {
         thinking: thinkingEnabledRef.current,
       });
       if (copilotActiveRef.current) {
-        if (isScreenSharing()) {
-          ws.sendCopilotStart();
-        } else {
-          setCopilotActive(false);
-        }
+        ws.sendCopilotStart();
       }
     };
     const handleClose = ({ code }: { code: number }) => {
       setLastCloseCode(code);
-      setCuaRunning(false);
-      setCuaTask(null);
-      setCuaStep(0);
+      setComputerUseState(null);
+      setComputerUseStep(null);
       if (code === 4401) notifyUnauthorized();
     };
 
@@ -298,8 +279,8 @@ export function useAssistant(): UseAssistantReturn {
           // once authenticated fetches resolve to blob URLs.
           const pendingImages: { msgId: string; images: PersistedImage[] }[] =
             [];
-          const hydrated: ChatMessage[] = msg.messages.map((m) => {
-            const actions: AgentAction[] = (m.agent_actions || []).map((a) => ({
+          const hydrated: ChatMessage[] = (msg.messages as PersistedMessage[]).map((m: PersistedMessage) => {
+            const actions: AgentAction[] = (m.agent_actions || []).map((a: PersistedAgentAction) => ({
               id: `hist-act-${a.timestamp}-${rand()}`,
               action: a.action,
               detail: "",
@@ -673,18 +654,6 @@ export function useAssistant(): UseAssistantReturn {
 
         case "copilot_state": {
           setCopilotActive(msg.active);
-          if (msg.active) {
-            setCopilotError(null);
-            void announceCuaReady((screen) => ws.sendCuaReady(screen));
-          }
-          break;
-        }
-
-        case "cua_step": {
-          void executeCuaStep(
-            msg,
-            (payload) => ws.sendCuaStepResult(payload),
-          );
           break;
         }
 
@@ -711,12 +680,6 @@ export function useAssistant(): UseAssistantReturn {
       }
     };
 
-    const unsubScreenShareEnded = onScreenShareEnded(() => {
-      ws.sendCuaAbort();
-      ws.sendCopilotStop();
-      setCopilotActive(false);
-    });
-
     ws.on("statusChange", handleStatusChange);
     ws.on("open", handleOpen);
     ws.on("close", handleClose);
@@ -731,37 +694,10 @@ export function useAssistant(): UseAssistantReturn {
       ws.off("close", handleClose);
       ws.off("message", handleMessage);
       ws.off("binaryMessage", handleBinaryMessage);
-      unsubScreenShareEnded();
       // Do not disconnect the singleton — it's shared with useTerminal
       wsRef.current = null;
     };
   }, []);
-
-  useEffect(() => {
-    if (!isTauri() || !cuaRunning) return;
-    const shortcutName = "CommandOrControl+Shift+Escape";
-    let disposed = false;
-    let unregister: (() => void) | null = null;
-    void (async () => {
-      try {
-        const shortcut = await import("@tauri-apps/plugin-global-shortcut");
-        await shortcut.register(shortcutName, () => abortComputerUse());
-        unregister = () => {
-          void shortcut.unregister(shortcutName).catch(() => {});
-        };
-        if (disposed) {
-          unregister();
-          unregister = null;
-        }
-      } catch (error) {
-        console.warn("[CUA] shortcut registration failed:", error);
-      }
-    })();
-    return () => {
-      disposed = true;
-      unregister?.();
-    };
-  }, [cuaRunning, abortComputerUse]);
 
   // Send config updates
   useEffect(() => {
@@ -1008,7 +944,6 @@ export function useAssistant(): UseAssistantReturn {
         message: "Co-pilot is not active.",
       };
     }
-    wsRef.current?.sendCuaAbort();
     if (!wsRef.current?.sendCopilotStop()) {
       return {
         ok: false,
@@ -1016,32 +951,19 @@ export function useAssistant(): UseAssistantReturn {
         message: "Chat is not connected.",
       };
     }
-    stopScreenStream();
     setCopilotActive(false); // optimistic; copilot_state will confirm
     setCopilotError(null);
     return { ok: true, message: "Co-pilot paused." };
   }, [copilotActive]);
 
-  const toggleCopilot = useCallback(async () => {
+  const toggleCopilot = useCallback(() => {
     if (!wsRef.current) return;
     if (copilotActive) {
       stopCopilot();
       return;
     }
     setCopilotError(null);
-    // Screen capture is client-side: the browser's share picker must be
-    // granted before the backend starts expecting frames.
-    try {
-      await requestScreenShare();
-    } catch (err) {
-      console.error("[Copilot] Screen share permission denied:", err);
-      setCopilotError(
-        err instanceof Error ? err.message : "Screen sharing failed.",
-      );
-      return;
-    }
     wsRef.current.sendCopilotStart();
-    // copilotActive flips to true when copilot_state echoes back.
   }, [copilotActive, stopCopilot]);
 
   // Cleanup on unmount
@@ -1079,11 +1001,6 @@ export function useAssistant(): UseAssistantReturn {
     copilotError,
     toggleCopilot,
     stopCopilot,
-
-    cuaRunning,
-    cuaTask,
-    cuaStep,
-    abortComputerUse,
 
     computerUseState,
     computerUseStep,

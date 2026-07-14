@@ -20,14 +20,15 @@ export function HudProvider({ children }: { children: React.ReactNode }) {
   const {
     wsStatus,
     lastCloseCode,
-    cuaRunning,
+    computerUseState,
     isAssistantThinking,
     messages,
     sendTextMessage,
     cancelGeneration,
-    abortComputerUse,
+    stopComputerUse,
     reconnectChat,
   } = useAssistantContext();
+  const cuaRunning = !!computerUseState && (computerUseState.status === "running" || computerUseState.status === "started");
   const [enabled, setEnabledState] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [navigationTarget, setNavigationTarget] =
@@ -42,7 +43,7 @@ export function HudProvider({ children }: { children: React.ReactNode }) {
       case "cancel_generation":
         return cancelGeneration();
       case "stop_copilot":
-        abortComputerUse();
+        stopComputerUse();
         return {
           ok: true,
           message: "Aborting the computer-use run.",
@@ -66,7 +67,7 @@ export function HudProvider({ children }: { children: React.ReactNode }) {
         navigate("/chat");
         const { getAllWindows } = await import("@tauri-apps/api/window");
         const mainWindow = (await getAllWindows()).find(
-          (window) => window.label === "main",
+          (window: any) => window.label === "main",
         );
         if (!mainWindow) {
           return {
@@ -94,7 +95,7 @@ export function HudProvider({ children }: { children: React.ReactNode }) {
     navigate,
     reconnectChat,
     sendTextMessage,
-    abortComputerUse,
+    stopComputerUse,
   ]);
 
   useHudBridge(

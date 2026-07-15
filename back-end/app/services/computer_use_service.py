@@ -250,6 +250,11 @@ class ComputerUseService:
                           "goal": goal, "steps_taken": step,
                           "error": f"no display available: {e}"})
                     return
+                except Exception as e:
+                    emit({"type": "computer_use_state", "status": "failed",
+                          "goal": goal, "steps_taken": step,
+                          "error": f"capture or parse failed: {e}"})
+                    return
 
                 messages = build_decision_messages(
                     goal=goal, screen=screen, history=history,
@@ -292,7 +297,13 @@ class ComputerUseService:
                 consecutive_invalid = 0
 
                 px, py = self._resolve_coords(action, screen)
-                await self._execute(action, px, py)
+                try:
+                    await self._execute(action, px, py)
+                except Exception as e:
+                    emit({"type": "computer_use_state", "status": "failed",
+                          "goal": goal, "steps_taken": step,
+                          "error": f"action execution failed: {e}"})
+                    return
                 self._audit(step, action, px, py)
                 history.append({"action": action.action,
                                 "reason": action.reason, "result": "executed"})

@@ -12,12 +12,25 @@ from app.core.config import settings
 log = logging.getLogger(__name__)
 
 
-class BearerMetadataPlugin(grpc.AuthMetadataPlugin):
+class BearerClientInterceptor(grpc.aio.UnaryUnaryClientInterceptor):
     def __init__(self, token: str):
         self._token = token
 
-    def __call__(self, context, callback):
-        callback((("authorization", f"Bearer {self._token}"),), None)
+    async def intercept_unary_unary(
+        self, continuation, client_call_details, request
+    ):
+        metadata = list(client_call_details.metadata or [])
+        # Only inject if not already present
+        if not any(k.lower() == "authorization" for k, _ in metadata):
+            metadata.append(("authorization", f"Bearer {self._token}"))
+        new_details = grpc.aio.ClientCallDetails(
+            method=client_call_details.method,
+            timeout=client_call_details.timeout,
+            metadata=metadata,
+            credentials=client_call_details.credentials,
+            wait_for_ready=client_call_details.wait_for_ready,
+        )
+        return await continuation(new_details, request)
 
 
 _ai_channel: Optional[grpc.aio.Channel] = None
@@ -25,19 +38,24 @@ _supervisor_channel: Optional[grpc.aio.Channel] = None
 
 
 def _build_channel(target: str, token: str, use_tls: bool) -> grpc.aio.Channel:
-    creds = grpc.metadata_call_credentials(BearerMetadataPlugin(token))
+    interceptors = [BearerClientInterceptor(token)] if token else []
     options = [
         ("grpc.keepalive_time_ms", 20000),
         ("grpc.keepalive_timeout_ms", 10000),
         ("grpc.keepalive_permit_without_calls", 1),
     ]
     if use_tls:
-        composite = grpc.composite_channel_credentials(
+        return grpc.aio.secure_channel(
+            target,
             grpc.ssl_channel_credentials(),
-            creds,
+            options=options,
+            interceptors=interceptors,
         )
-        return grpc.aio.secure_channel(target, composite, options=options)
-    return grpc.aio.insecure_channel(target, options=options)
+    return grpc.aio.insecure_channel(
+        target,
+        options=options,
+        interceptors=interceptors,
+    )
 
 
 def init() -> None:

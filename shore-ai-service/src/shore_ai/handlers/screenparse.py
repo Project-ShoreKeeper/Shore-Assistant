@@ -66,10 +66,19 @@ class ScreenParseHandler(screenparse_pb2_grpc.ScreenParseServicer):
                     x2=float(bbox[2]), y2=float(bbox[3]),
                 )
             )
+        from PIL import Image
+        import io
+        try:
+            img = Image.open(io.BytesIO(image))
+            w, h = img.size
+        except Exception as e:
+            log.warning("Failed to parse image size: %s", e)
+            w, h = 0, 0
+
         return screenparse_pb2.ParseResponse(
             elements=proto_elems,
             som_image_jpeg=som_jpeg or b"",
-            width=int(getattr(request, "width", 0) or 0),
-            height=int(getattr(request, "height", 0) or 0),
+            width=w,
+            height=h,
             latency_ms=latency_ms,
         )

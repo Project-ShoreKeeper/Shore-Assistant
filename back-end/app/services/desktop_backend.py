@@ -150,3 +150,66 @@ class LocalDesktopBackend(DesktopBackend):
         def _do():
             gui.scroll(amount, x=x, y=y)
         await asyncio.get_event_loop().run_in_executor(None, _do)
+
+
+class ClientDesktopBackend(DesktopBackend):
+    """Drives the client's desktop via the WebSocket screen_relay."""
+
+    def __init__(self, *args, **kwargs):
+        # Allow passing args from desktop_factory calls
+        self._last_width = 1280
+        self._last_height = 720
+
+    async def capture(self) -> CapturedScreen:
+        from app.services.screen_relay import screen_relay
+        if not screen_relay.attached:
+            raise RuntimeError("Client is not connected. Cannot capture screen.")
+        
+        b64 = await screen_relay.request_capture()
+        import base64
+        from PIL import Image
+        import io
+        png_bytes = base64.b64decode(b64)
+        
+        # Load the image to determine actual width and height
+        img = Image.open(io.BytesIO(png_bytes))
+        self._last_width, self._last_height = img.size
+        
+        return CapturedScreen(
+            png_bytes=png_bytes,
+            width=self._last_width,
+            height=self._last_height
+        )
+
+    async def click(self, x: int, y: int, button: str = "left", double: bool = False) -> None:
+        from app.services.screen_relay import screen_relay
+        func = "rightClick" if button == "right" else ("doubleClick" if double else "click")
+        await screen_relay.request_input({
+            "func": func,
+            "x": x,
+            "y": y
+        })
+
+    async def type_text(self, text: str) -> None:
+        from app.services.screen_relay import screen_relay
+        await screen_relay.request_input({
+            "func": "write",
+            "text": text
+        })
+
+    async def hotkey(self, keys: list[str]) -> None:
+        from app.services.screen_relay import screen_relay
+        keys_mapped = [k.lower() for k in keys]
+        await screen_relay.request_input({
+            "func": "hotkey",
+            "keys": keys_mapped
+        })
+
+    async def scroll(self, x: int, y: int, amount: int) -> None:
+        from app.services.screen_relay import screen_relay
+        await screen_relay.request_input({
+            "func": "scroll",
+            "x": x,
+            "y": y,
+            "dy": amount
+        })

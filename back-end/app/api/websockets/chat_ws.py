@@ -645,6 +645,13 @@ async def websocket_chat(websocket: WebSocket):
                             data.get("error"),
                         )
 
+                    elif msg_type == "input_response":
+                        screen_relay.resolve_input(
+                            data.get("request_id", ""),
+                            data.get("success", False),
+                            data.get("error"),
+                        )
+
                     elif msg_type == "clear_memory":
                         conversation_history.clear()
                         await memory_facade.clear(user_id=ws_user_id)

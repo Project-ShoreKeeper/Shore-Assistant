@@ -190,6 +190,20 @@ export interface CaptureRequestMessage {
   max_size: number;
 }
 
+export interface InputRequestMessage {
+  type: "input_request";
+  request_id: string;
+  action: {
+    func: string;
+    x?: number;
+    y?: number;
+    text?: string;
+    keys?: string[];
+    dx?: number;
+    dy?: number;
+  };
+}
+
 export interface HistoryMessage {
   type: "history";
   messages: PersistedMessage[];
@@ -214,6 +228,7 @@ export type ChatServerMessage =
   | ComputerUseStateMessage
   | ComputerUseStepMessage
   | CaptureRequestMessage
+  | InputRequestMessage
   | HistoryMessage;
 
 // ─── Event system ───
@@ -495,6 +510,8 @@ export class ChatWebSocketService {
           // Auto-respond to capture_request from the backend
           if (parsed.type === "capture_request") {
             this.handleCaptureRequest(parsed as CaptureRequestMessage);
+          } else if (parsed.type === "input_request") {
+            this.handleInputRequest(parsed as InputRequestMessage);
           }
           this.emit("message", parsed as ChatServerMessage);
         }
@@ -540,6 +557,32 @@ export class ChatWebSocketService {
       request_id: requestId,
       data_url: dataUrl,
       error: error,
+    }));
+  }
+
+  private async handleInputRequest(msg: InputRequestMessage): Promise<void> {
+    try {
+      const isTauri = "__TAURI_INTERNALS__" in window;
+      if (!isTauri) {
+        this.sendInputResponse(msg.request_id, false, "Input automation is only supported in the desktop app.");
+        return;
+      }
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("input_execute", { action: msg.action });
+      this.sendInputResponse(msg.request_id, true, null);
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      this.sendInputResponse(msg.request_id, false, errorMsg);
+    }
+  }
+
+  private sendInputResponse(requestId: string, success: boolean, error: string | null): void {
+    if (!this.isReady()) return;
+    this.socket!.send(JSON.stringify({
+      type: "input_response",
+      request_id: requestId,
+      success,
+      error,
     }));
   }
 

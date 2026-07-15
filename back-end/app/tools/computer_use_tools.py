@@ -54,12 +54,17 @@ async def computer_use(goal: str) -> str:
     if computer_use_service.active:
         return "A computer-use session is already running. Stop it first."
 
+    from app.services.screen_relay import screen_relay
+    from app.services.desktop_backend import ClientDesktopBackend, LocalDesktopBackend
+
+    desktop_factory = ClientDesktopBackend if screen_relay.attached else LocalDesktopBackend
+
     decider = ComputerUseDecider()
     started = computer_use_service.start(
         goal, _session_emit,
         parser=screenparse_client,
         decider=decider,
-        desktop_factory=LocalDesktopBackend,
+        desktop_factory=desktop_factory,
     )
     if not started:
         return "A computer-use session is already running."

@@ -34,9 +34,10 @@ from huggingface_hub import snapshot_download
 snapshot_download(
     "microsoft/OmniParser-v2.0",
     local_dir="/opt/OmniParser/weights",
-    allow_patterns=["icon_detect/*", "icon_caption_florence/*"],
+    allow_patterns=["icon_detect/*", "icon_caption/*"],
 )
 PY
+RUN mv /opt/OmniParser/weights/icon_caption /opt/OmniParser/weights/icon_caption_florence
 
 ENV OMNIPARSER_ROOT=/opt/OmniParser
 ENV PYTHONPATH=/opt/OmniParser:${PYTHONPATH}

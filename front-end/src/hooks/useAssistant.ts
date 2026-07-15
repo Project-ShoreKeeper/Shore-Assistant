@@ -951,19 +951,31 @@ export function useAssistant(): UseAssistantReturn {
         message: "Chat is not connected.",
       };
     }
+    try {
+      import("../services/screen-capture.service").then((mod) => mod.stopScreenStream());
+    } catch (e) {
+      console.warn("Failed to stop screen stream", e);
+    }
     setCopilotActive(false); // optimistic; copilot_state will confirm
     setCopilotError(null);
     return { ok: true, message: "Co-pilot paused." };
   }, [copilotActive]);
 
-  const toggleCopilot = useCallback(() => {
+  const toggleCopilot = useCallback(async () => {
     if (!wsRef.current) return;
     if (copilotActive) {
       stopCopilot();
       return;
     }
     setCopilotError(null);
-    wsRef.current.sendCopilotStart();
+    try {
+      const { requestScreenShare } = await import("../services/screen-capture.service");
+      await requestScreenShare();
+      wsRef.current.sendCopilotStart();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setCopilotError(msg);
+    }
   }, [copilotActive, stopCopilot]);
 
   // Cleanup on unmount

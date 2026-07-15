@@ -537,8 +537,9 @@ export class ChatWebSocketService {
 
   private async handleCaptureRequest(msg: CaptureRequestMessage): Promise<void> {
     try {
+      const isTauri = "__TAURI_INTERNALS__" in window;
       const { captureFrameDataUrl, isScreenSharing } = await import("./screen-capture.service");
-      if (!isScreenSharing()) {
+      if (!isTauri && !isScreenSharing()) {
         this.sendCaptureResponse(msg.request_id, null, "Screen sharing is not active.");
         return;
       }

@@ -593,6 +593,33 @@ export function useAssistant(): UseAssistantReturn {
           break;
         }
 
+        case "generation_cancelled": {
+          // Server confirms the generation was cancelled — make sure the
+          // frontend is no longer stuck in "thinking" state and finalize
+          // any in-flight streaming bubble.
+          setIsAssistantThinking(false);
+          streamingMsgIdRef.current = null;
+          setMessages((prev) => {
+            const lastIdx = prev.length - 1;
+            const last = prev[lastIdx];
+            if (!last || last.role !== "assistant" || !last.isStreaming)
+              return prev;
+            const hasContent =
+              (last.text && last.text.trim()) ||
+              (last.thinkingText && last.thinkingText.trim()) ||
+              (last.agentActions && last.agentActions.length > 0);
+            if (!hasContent) return prev.slice(0, -1);
+            const updated = [...prev];
+            updated[lastIdx] = {
+              ...last,
+              isStreaming: false,
+              isThinkingPhase: false,
+            };
+            return updated;
+          });
+          break;
+        }
+
         case "status": {
           console.log("[Chat] Status:", msg.message);
           break;

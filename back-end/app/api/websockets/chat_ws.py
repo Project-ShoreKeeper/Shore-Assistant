@@ -391,7 +391,7 @@ async def websocket_chat(websocket: WebSocket):
                 if is_cancelled:
                     is_cancelled = False
                     await send_json_safe({
-                        "type": "status",
+                        "type": "generation_cancelled",
                         "message": "Generation cancelled",
                     })
                     return
@@ -468,6 +468,11 @@ async def websocket_chat(websocket: WebSocket):
                     if len(conversation_history) > max_messages:
                         conversation_history[:] = conversation_history[-max_messages:]
 
+        except asyncio.CancelledError:
+            # Hard cancellation (e.g. agent_task.cancel()) — clean up the
+            # stale flag so the *next* pipeline doesn't immediately abort.
+            is_cancelled = False
+            raise
         except Exception as e:
             await send_json_safe({
                 "type": "error",
@@ -491,13 +496,15 @@ async def websocket_chat(websocket: WebSocket):
         task_id: str | None = None,
         images: list[dict] | None = None,
     ):
-        nonlocal agent_task
+        nonlocal agent_task, is_cancelled
         if agent_task and not agent_task.done():
             agent_task.cancel()
             try:
                 await agent_task
             except (asyncio.CancelledError, Exception):
                 pass
+        # Clear any stale cancel flag so the new pipeline starts cleanly.
+        is_cancelled = False
         agent_task = asyncio.create_task(
             run_agent_pipeline(user_text, source, task_id=task_id, images=images)
         )

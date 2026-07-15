@@ -7,6 +7,7 @@ into the /ws/chat handler the same way NotificationService is.
 """
 
 import asyncio
+import io
 import time
 from pathlib import Path
 
@@ -103,8 +104,17 @@ def build_copilot_prompt(window_title: str) -> str:
     return _prompt_template.replace("{window_title}", window_title or "unknown")
 
 
-def _default_grab_thumbnail(monitor_index: int, size: int = 64) -> np.ndarray:
-    """Small grayscale thumbnail of the monitor — cheap input for diffing."""
+async def _default_grab_thumbnail(monitor_index: int, size: int = 64) -> np.ndarray:
+    """Small grayscale thumbnail — prefers relay capture, falls back to mss."""
+    from app.services.screen_relay import screen_relay
+    if screen_relay.attached:
+        import base64 as _b64
+        from PIL import Image
+        b64 = await screen_relay.request_capture(max_size=size * 4)
+        raw = _b64.b64decode(b64)
+        img = Image.open(io.BytesIO(raw)).convert("L").resize((size, size))
+        return np.asarray(img, dtype=np.uint8)
+    # Fallback: local mss
     import mss
     from PIL import Image
     with mss.mss() as sct:
@@ -117,9 +127,9 @@ def _default_grab_thumbnail(monitor_index: int, size: int = 64) -> np.ndarray:
         return np.asarray(img, dtype=np.uint8)
 
 
-def _default_capture_full_b64() -> str:
+async def _default_capture_full_b64() -> str:
     from app.tools.screen_tools import _capture_screen_b64
-    return _capture_screen_b64(max_size=settings.COPILOT_MAX_IMAGE_SIZE)
+    return await _capture_screen_b64(max_size=settings.COPILOT_MAX_IMAGE_SIZE)
 
 
 def _default_os_idle_seconds() -> float | None:
@@ -215,7 +225,7 @@ class CopilotService:
     async def _tick(self) -> bool:
         if self._is_busy_cb and self._is_busy_cb():
             return False
-        thumb = self._grab_thumbnail(settings.COPILOT_MONITOR_INDEX)
+        thumb = await self._grab_thumbnail(settings.COPILOT_MONITOR_INDEX)
         diff = norm_abs_diff(thumb, self._last_thumb)
         idle = self._os_idle()
         since_last = time.monotonic() - self._last_action_ts
@@ -226,7 +236,7 @@ class CopilotService:
             cooldown=settings.COPILOT_COOLDOWN_SECONDS,
         ):
             return False
-        image_b64 = self._capture_full_b64()
+        image_b64 = await self._capture_full_b64()
         title = self._active_window()
         prompt = build_copilot_prompt(title)
         screenshot = {"data_url": f"data:image/jpeg;base64,{image_b64}"}
@@ -237,12 +247,17 @@ class CopilotService:
         return True
 
     async def _run_loop(self) -> None:
+        from app.services.desktop_backend import DisplayUnavailableError
         try:
             while self._active:
                 try:
                     await self._tick()
                 except asyncio.CancelledError:
                     raise
+                except DisplayUnavailableError as e:
+                    print(f"[Copilot] no display available, stopping watch loop: {e}")
+                    self._active = False
+                    return
                 except Exception as e:
                     print(f"[Copilot] tick error: {e!r}")
                 await asyncio.sleep(settings.COPILOT_CAPTURE_INTERVAL_SECONDS)

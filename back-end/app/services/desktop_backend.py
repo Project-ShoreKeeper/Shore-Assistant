@@ -10,12 +10,20 @@ can drop in behind this interface with zero loop changes.
 from __future__ import annotations
 
 import asyncio
+import logging
 from abc import ABC, abstractmethod
 from typing import Callable, Optional
 
 from pydantic import BaseModel
 
 from app.core.config import settings
+
+log = logging.getLogger(__name__)
+
+
+class DisplayUnavailableError(RuntimeError):
+    """Raised when no graphical display is available (headless server)."""
+    pass
 
 
 class CapturedScreen(BaseModel):
@@ -81,7 +89,15 @@ class LocalDesktopBackend(DesktopBackend):
 
     def _get_gui(self):
         if self._gui is None:
-            import pyautogui
+            try:
+                import pyautogui
+            except (KeyError, Exception) as exc:
+                # pyautogui / mouseinfo crash with KeyError('DISPLAY') or
+                # Xlib.error.XError on headless servers without a display.
+                raise DisplayUnavailableError(
+                    f"Cannot initialise pyautogui — no graphical display "
+                    f"available (set $DISPLAY or run on a desktop session): {exc}"
+                ) from exc
             pyautogui.FAILSAFE = False  # bbox clamping is our safety, not corner-abort
             self._gui = pyautogui
         if not self._dpi_aware:

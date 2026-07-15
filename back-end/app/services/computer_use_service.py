@@ -176,7 +176,7 @@ class ComputerUseDecider:
 import json
 import time
 
-from app.services.desktop_backend import DesktopBackend, norm_to_pixels
+from app.services.desktop_backend import DesktopBackend, DisplayUnavailableError, norm_to_pixels
 from app.services.ai_client.screenparse import ScreenParseUnavailable
 
 
@@ -244,6 +244,11 @@ class ComputerUseService:
                     emit({"type": "computer_use_state", "status": "failed",
                           "goal": goal, "steps_taken": step,
                           "error": f"screen parsing unavailable: {e}"})
+                    return
+                except DisplayUnavailableError as e:
+                    emit({"type": "computer_use_state", "status": "failed",
+                          "goal": goal, "steps_taken": step,
+                          "error": f"no display available: {e}"})
                     return
 
                 messages = build_decision_messages(

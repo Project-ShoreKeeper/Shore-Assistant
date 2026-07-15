@@ -6,8 +6,17 @@ import io
 from langchain_core.tools import tool
 
 
-def _capture_screen_b64(max_size: int = 1280) -> str:
-    """Capture primary monitor and return as base64 JPEG string."""
+async def _capture_screen_b64(max_size: int = 1280) -> str:
+    """Capture screen as base64 JPEG — prefers client relay, falls back to local mss."""
+    from app.services.screen_relay import screen_relay
+    if screen_relay.attached:
+        return await screen_relay.request_capture(max_size=max_size)
+    # Fallback: local display (dev machine with a monitor)
+    return _capture_screen_local(max_size)
+
+
+def _capture_screen_local(max_size: int = 1280) -> str:
+    """Capture primary monitor locally via mss — requires a display."""
     import mss
     from PIL import Image
 
@@ -45,7 +54,7 @@ async def capture_screen(prompt: str = "Describe what you see on the screen") ->
         prompt: What to look for or analyze in the screenshot.
     """
     try:
-        image_b64 = _capture_screen_b64()
+        image_b64 = await _capture_screen_b64()
         result = await _analyze(prompt, image_b64)
         return result if result else "Could not analyze the screen."
     except Exception as e:
@@ -72,7 +81,7 @@ async def analyze_screen(query: str) -> str:
                "Describe the screen") for more useful answers.
     """
     try:
-        image_b64 = _capture_screen_b64()
+        image_b64 = await _capture_screen_b64()
         result = await _analyze(query, image_b64)
         return result if result else "Vision model returned an empty response."
     except Exception as e:

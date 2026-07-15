@@ -184,6 +184,12 @@ export interface ComputerUseStepMessage {
   elements: ComputerUseStepElement[];
 }
 
+export interface CaptureRequestMessage {
+  type: "capture_request";
+  request_id: string;
+  max_size: number;
+}
+
 export interface HistoryMessage {
   type: "history";
   messages: PersistedMessage[];
@@ -207,6 +213,7 @@ export type ChatServerMessage =
   | CopilotMessage
   | ComputerUseStateMessage
   | ComputerUseStepMessage
+  | CaptureRequestMessage
   | HistoryMessage;
 
 // ─── Event system ───
@@ -485,6 +492,10 @@ export class ChatWebSocketService {
         if (typeof parsed?.type === "string" && parsed.type.startsWith("terminal_")) {
           this.terminalListeners.forEach((cb) => cb(parsed));
         } else {
+          // Auto-respond to capture_request from the backend
+          if (parsed.type === "capture_request") {
+            this.handleCaptureRequest(parsed as CaptureRequestMessage);
+          }
           this.emit("message", parsed as ChatServerMessage);
         }
       } catch {
@@ -505,6 +516,31 @@ export class ChatWebSocketService {
 
   private isReady(): boolean {
     return !!this.socket && this.socket.readyState === WebSocket.OPEN;
+  }
+
+  private async handleCaptureRequest(msg: CaptureRequestMessage): Promise<void> {
+    try {
+      const { captureFrameDataUrl, isScreenSharing } = await import("./screen-capture.service");
+      if (!isScreenSharing()) {
+        this.sendCaptureResponse(msg.request_id, null, "Screen sharing is not active.");
+        return;
+      }
+      const dataUrl = await captureFrameDataUrl(msg.max_size);
+      this.sendCaptureResponse(msg.request_id, dataUrl, null);
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : "Capture failed";
+      this.sendCaptureResponse(msg.request_id, null, errorMsg);
+    }
+  }
+
+  private sendCaptureResponse(requestId: string, dataUrl: string | null, error: string | null): void {
+    if (!this.isReady()) return;
+    this.socket!.send(JSON.stringify({
+      type: "capture_response",
+      request_id: requestId,
+      data_url: dataUrl,
+      error: error,
+    }));
   }
 
   private clearReconnectTimer(): void {

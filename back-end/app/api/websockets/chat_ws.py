@@ -19,6 +19,7 @@ from app.services.image_store import image_store
 from app.services.connection_manager import connection_manager
 from app.services.notification_service import notification_service
 from app.services.copilot_service import copilot_service, summarize_copilot_run
+from app.services.screen_relay import screen_relay
 from app.services.computer_use_service import computer_use_service
 from app.tools.computer_use_tools import set_session_hooks as _cu_set_hooks, clear_session_hooks as _cu_clear_hooks
 from app.core.config import settings
@@ -221,6 +222,7 @@ async def websocket_chat(websocket: WebSocket):
             pass
 
     connection_manager.register(send_json_safe, send_binary_safe)
+    screen_relay.attach(send_json_safe)
     my_send_json = send_json_safe  # Track our own ref for cleanup guard
 
     from app.services.terminal_service import terminal_service
@@ -636,6 +638,13 @@ async def websocket_chat(websocket: WebSocket):
                             "steps_taken": 0,
                         })
 
+                    elif msg_type == "capture_response":
+                        screen_relay.resolve(
+                            data.get("request_id", ""),
+                            data.get("data_url"),
+                            data.get("error"),
+                        )
+
                     elif msg_type == "clear_memory":
                         conversation_history.clear()
                         await memory_facade.clear(user_id=ws_user_id)
@@ -793,6 +802,7 @@ async def websocket_chat(websocket: WebSocket):
                 await agent_task
             except (asyncio.CancelledError, Exception):
                 pass
+        screen_relay.detach()
         copilot_service.detach()
         computer_use_service.stop()
         _cu_clear_hooks()

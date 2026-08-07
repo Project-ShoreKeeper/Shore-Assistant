@@ -209,6 +209,12 @@ export interface HistoryMessage {
   messages: PersistedMessage[];
 }
 
+export interface GenerationCancelledMessage {
+  type: "generation_cancelled";
+  task_id?: string;
+  timestamp?: number;
+}
+
 export type ChatServerMessage =
   | TranscriptMessage
   | AgentActionMessage
@@ -217,6 +223,7 @@ export type ChatServerMessage =
   | LLMThinkingDoneMessage
   | LLMSentenceMessage
   | LLMCompleteMessage
+  | GenerationCancelledMessage
   | TTSStartMessage
   | TTSEndMessage
   | StatusMessage

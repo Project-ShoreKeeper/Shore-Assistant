@@ -528,6 +528,13 @@ export class ChatWebSocketService {
     } else if (event.data instanceof ArrayBuffer) {
       // Binary data (TTS audio chunks)
       this.emit("binaryMessage", event.data);
+    } else if (typeof Blob !== "undefined" && event.data instanceof Blob) {
+      // Handle Blob binary messages (common in WebKit/Tauri)
+      event.data.arrayBuffer().then((buf) => {
+        this.emit("binaryMessage", buf);
+      }).catch((err) => {
+        console.error("[Chat WS] Failed to read Blob arrayBuffer:", err);
+      });
     }
   }
 

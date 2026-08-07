@@ -49,7 +49,7 @@ export class TTSPlayer {
 
     // Resume if suspended (browser autoplay policy)
     if (audioContext.state === "suspended") {
-      audioContext.resume();
+      audioContext.resume().catch(() => {});
     }
 
     this.nextStartTime = audioContext.currentTime;
@@ -62,6 +62,11 @@ export class TTSPlayer {
    */
   enqueueChunk(pcmData: ArrayBuffer): void {
     if (!this.audioContext || !this.gainNode) return;
+
+    // Attempt to resume if suspended when receiving chunks
+    if (this.audioContext.state === "suspended") {
+      this.audioContext.resume().catch(() => {});
+    }
 
     // Convert Int16 PCM to Float32
     const int16View = new Int16Array(pcmData);

@@ -2,9 +2,81 @@
  * Browser-side PCM audio queue player for TTS streaming.
  * Receives PCM chunks over WebSocket and plays them with minimal gaps
  * using AudioBufferSourceNode scheduling.
+ *
+ * On macOS Tauri (WKWebView), AudioContext must be unlocked during a user
+ * gesture (click / keydown) before any audio can play.  Call the static
+ * `TTSPlayer.unlock()` from a user-interaction handler to pre-warm the
+ * shared context.
  */
 
 export class TTSPlayer {
+  // ── Static shared AudioContext (unlocked by user gesture) ──
+  private static _sharedCtx: AudioContext | null = null;
+  private static _sharedRate: number = 0;
+  private static _unlocked = false;
+
+  /**
+   * Pre-unlock the Web Audio pipeline.  Must be called inside a user-gesture
+   * event handler (click, keydown, touchstart, etc.) so that WebKit (WKWebView
+   * on macOS / Safari) allows audio output.
+   *
+   * Safe to call multiple times — only the first effective call matters.
+   */
+  static unlock(sampleRate: number = 24000): void {
+    // Already unlocked with matching rate → nothing to do
+    if (
+      TTSPlayer._unlocked &&
+      TTSPlayer._sharedCtx &&
+      TTSPlayer._sharedCtx.state !== "closed" &&
+      TTSPlayer._sharedRate === sampleRate
+    ) {
+      return;
+    }
+
+    // Close stale context if rate changed
+    if (TTSPlayer._sharedCtx && TTSPlayer._sharedCtx.state !== "closed") {
+      TTSPlayer._sharedCtx.close().catch(() => {});
+    }
+
+    try {
+      const ctx = new AudioContext({ sampleRate });
+      // Play a single silent sample to fully activate the audio hardware.
+      // WebKit marks the context as "allowed" only after a source has played
+      // inside a user-gesture call-stack.
+      const buf = ctx.createBuffer(1, 1, sampleRate);
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.connect(ctx.destination);
+      src.start(0);
+
+      TTSPlayer._sharedCtx = ctx;
+      TTSPlayer._sharedRate = sampleRate;
+      TTSPlayer._unlocked = true;
+
+      // Auto-resume when the app regains focus (macOS can suspend the
+      // context when the window is hidden or the lid is closed).
+      ctx.onstatechange = () => {
+        console.log("[TTS] AudioContext state →", ctx.state);
+      };
+      document.addEventListener("visibilitychange", () => {
+        if (
+          document.visibilityState === "visible" &&
+          ctx.state === "suspended"
+        ) {
+          ctx.resume().catch(() => {});
+        }
+      });
+
+      console.log(
+        "[TTS] AudioContext unlocked",
+        `(rate=${sampleRate}, state=${ctx.state})`,
+      );
+    } catch (err) {
+      console.error("[TTS] Failed to unlock AudioContext:", err);
+    }
+  }
+
+  // ── Instance fields ──
   private audioContext: AudioContext | null = null;
   private sampleRate: number = 22050;
   private nextStartTime: number = 0;
@@ -20,28 +92,50 @@ export class TTSPlayer {
    * Initialize or reconfigure for a new TTS stream.
    */
   start(sampleRate: number = 22050): void {
-    // Recreate AudioContext if sample rate changed (e.g. switching Kokoro↔Fish Speech)
+    this.sampleRate = sampleRate;
+
+    // Try to reuse the pre-unlocked shared context when the rate matches.
+    // This is critical on WKWebView: a context created outside a user
+    // gesture will start suspended and resume() will be silently rejected.
+    const canReuseShared =
+      TTSPlayer._sharedCtx &&
+      TTSPlayer._sharedCtx.state !== "closed" &&
+      TTSPlayer._sharedRate === sampleRate;
+
     const needsNewContext =
       !this.audioContext ||
       this.audioContext.state === "closed" ||
-      this.sampleRate !== sampleRate;
-
-    this.sampleRate = sampleRate;
+      this.audioContext.sampleRate !== sampleRate;
 
     if (needsNewContext) {
-      if (this.audioContext && this.audioContext.state !== "closed") {
-        this.audioContext.close();
+      // Detach from the old context (but don't close the shared one)
+      if (
+        this.audioContext &&
+        this.audioContext.state !== "closed" &&
+        this.audioContext !== TTSPlayer._sharedCtx
+      ) {
+        this.audioContext.close().catch(() => {});
       }
-      this.audioContext = new AudioContext({ sampleRate });
+
+      if (canReuseShared) {
+        this.audioContext = TTSPlayer._sharedCtx;
+        console.log("[TTS] Reusing pre-unlocked AudioContext");
+      } else {
+        this.audioContext = new AudioContext({ sampleRate });
+        console.log(
+          "[TTS] Created new AudioContext",
+          `(rate=${sampleRate}, state=${this.audioContext.state})`,
+        );
+      }
 
       // Create analyser for volume/frequency data (for avatar lip-sync)
-      this.analyser = this.audioContext.createAnalyser();
+      this.analyser = this.audioContext!.createAnalyser();
       this.analyser.fftSize = 256;
 
-      this.gainNode = this.audioContext.createGain();
+      this.gainNode = this.audioContext!.createGain();
       this.gainNode.gain.value = 1.0;
       this.gainNode.connect(this.analyser);
-      this.analyser.connect(this.audioContext.destination);
+      this.analyser.connect(this.audioContext!.destination);
     }
 
     const audioContext = this.audioContext;
@@ -49,7 +143,11 @@ export class TTSPlayer {
 
     // Resume if suspended (browser autoplay policy)
     if (audioContext.state === "suspended") {
-      audioContext.resume().catch(() => {});
+      audioContext.resume().then(() => {
+        console.log("[TTS] AudioContext resumed →", audioContext.state);
+      }).catch((err) => {
+        console.warn("[TTS] AudioContext.resume() rejected:", err);
+      });
     }
 
     this.nextStartTime = audioContext.currentTime;
@@ -65,7 +163,9 @@ export class TTSPlayer {
 
     // Attempt to resume if suspended when receiving chunks
     if (this.audioContext.state === "suspended") {
-      this.audioContext.resume().catch(() => {});
+      this.audioContext.resume().catch((err) => {
+        console.warn("[TTS] AudioContext.resume() rejected in enqueue:", err);
+      });
     }
 
     // Convert Int16 PCM to Float32
@@ -120,12 +220,18 @@ export class TTSPlayer {
 
   /**
    * Stop playback immediately and discard queued audio.
+   *
+   * Note: does NOT close the shared AudioContext — only detaches this
+   * instance's nodes so a new stream can reuse the unlocked context.
    */
   stop(): void {
     this.isPlaying = false;
     this.pendingChunks = 0;
     if (this.audioContext && this.audioContext.state !== "closed") {
-      this.audioContext.close();
+      // Don't close the shared context — we'll reuse it for the next stream
+      if (this.audioContext !== TTSPlayer._sharedCtx) {
+        this.audioContext.close().catch(() => {});
+      }
       this.audioContext = null;
       this.analyser = null;
       this.gainNode = null;

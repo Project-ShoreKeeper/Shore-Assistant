@@ -740,6 +740,10 @@ export function useAssistant(): UseAssistantReturn {
 
   const startRecording = useCallback(
     async (deviceId?: string) => {
+      // Pre-unlock Web Audio for TTS playback — must happen inside a
+      // user-gesture call-stack (click on mic button) so WebKit allows it.
+      TTSPlayer.unlock();
+
       if (!vadRef.current || !vadRef.current.isReady) return;
       if (!navigator.mediaDevices?.getUserMedia) {
         console.error("Microphone not available (requires HTTPS or localhost)");
@@ -839,6 +843,10 @@ export function useAssistant(): UseAssistantReturn {
       text: string,
       images?: ImageAttachment[],
     ): AssistantControlResult => {
+      // Pre-unlock Web Audio for TTS playback — must happen inside a
+      // user-gesture call-stack (click send / press Enter) so WebKit allows it.
+      TTSPlayer.unlock();
+
       const trimmed = text.trim();
       if (!trimmed && !(images && images.length > 0)) {
         return {

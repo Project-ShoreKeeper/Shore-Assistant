@@ -111,6 +111,8 @@ export interface UseAssistantReturn {
   stopComputerUse: () => void;
 
   // Controls
+  micError: string | null;
+  clearMicError: () => void;
   startRecording: (deviceId?: string) => void;
   stopRecording: () => void;
   sendTextMessage: (
@@ -146,10 +148,12 @@ export function useAssistant(): UseAssistantReturn {
   const [computerUseStep, setComputerUseStep] =
     useState<ComputerUseStepMessage | null>(null);
 
-  // Conversation state
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isAssistantThinking, setIsAssistantThinking] = useState(false);
   const [isAssistantSpeaking, setIsAssistantSpeaking] = useState(false);
+  const [micError, setMicError] = useState<string | null>(null);
+
+  const clearMicError = useCallback(() => setMicError(null), []);
 
   // Memory worker state
   const [memoryWorkerStatus, setMemoryWorkerStatus] =
@@ -744,9 +748,12 @@ export function useAssistant(): UseAssistantReturn {
       // user-gesture call-stack (click on mic button) so WebKit allows it.
       TTSPlayer.unlock();
 
+      setMicError(null);
       if (!vadRef.current || !vadRef.current.isReady) return;
       if (!navigator.mediaDevices?.getUserMedia) {
-        console.error("Microphone not available (requires HTTPS or localhost)");
+        const errorMsg = "Microphone unavailable: Web Audio requires an HTTPS or localhost context (or run inside the Shore Assistant Desktop App).";
+        console.error(errorMsg);
+        setMicError(errorMsg);
         return;
       }
 
@@ -812,7 +819,9 @@ export function useAssistant(): UseAssistantReturn {
           wsRef.current.connect();
         }
       } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : "Microphone access error";
         console.error("Microphone access error:", err);
+        setMicError(`Microphone access error: ${errorMsg}`);
       }
     },
     [wsStatus],
@@ -1053,6 +1062,8 @@ export function useAssistant(): UseAssistantReturn {
     computerUseStep,
     stopComputerUse: () => chatWebsocketService.sendComputerUseStop(),
 
+    micError,
+    clearMicError,
     startRecording,
     stopRecording,
     sendTextMessage,

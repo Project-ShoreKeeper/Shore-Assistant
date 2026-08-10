@@ -99,6 +99,7 @@ function PageChat() {
     isConnected,
     messages,
     isAssistantThinking,
+    isAssistantSpeaking,
     memoryWorkerStatus,
     memoryWorkerLog,
     language,
@@ -111,6 +112,8 @@ function PageChat() {
     computerUseState,
     computerUseStep,
     stopComputerUse,
+    micError,
+    clearMicError,
     startRecording,
     stopRecording,
     sendTextMessage,
@@ -760,7 +763,10 @@ function PageChat() {
             onToggleMic={() =>
               isRecording ? stopRecording() : startRecording(selectedDeviceId)
             }
+            micError={micError}
+            onClearMicError={clearMicError}
             isAssistantThinking={!!isAssistantThinking}
+            isAssistantSpeaking={isAssistantSpeaking}
             onCancel={cancelGeneration}
           />
         </Box>

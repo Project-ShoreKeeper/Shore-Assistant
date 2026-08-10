@@ -19,9 +19,12 @@ export interface ChatComposerProps {
   isRecording: boolean;
   isVADLoaded: boolean;
   onToggleMic: () => void;
+  micError?: string | null;
+  onClearMicError?: () => void;
 
   // Stream control
   isAssistantThinking: boolean;
+  isAssistantSpeaking?: boolean;
   onCancel: () => void;
 }
 
@@ -29,6 +32,56 @@ const MIN_HEIGHT_PX = 24;
 const MAX_HEIGHT_PX = 200;
 
 // ── Icons ─────────────────────────────────────────────────────────────
+
+function SoundWaveIcon() {
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "2.5px",
+        height: "12px",
+      }}
+    >
+      <span
+        style={{
+          width: "2.5px",
+          height: "100%",
+          backgroundColor: "var(--teal-9)",
+          borderRadius: "2px",
+          animation: "shore-sound-bar 0.7s ease-in-out infinite alternate",
+        }}
+      />
+      <span
+        style={{
+          width: "2.5px",
+          height: "60%",
+          backgroundColor: "var(--teal-9)",
+          borderRadius: "2px",
+          animation: "shore-sound-bar 0.7s ease-in-out 0.2s infinite alternate",
+        }}
+      />
+      <span
+        style={{
+          width: "2.5px",
+          height: "85%",
+          backgroundColor: "var(--teal-9)",
+          borderRadius: "2px",
+          animation: "shore-sound-bar 0.7s ease-in-out 0.4s infinite alternate",
+        }}
+      />
+      <span
+        style={{
+          width: "2.5px",
+          height: "40%",
+          backgroundColor: "var(--teal-9)",
+          borderRadius: "2px",
+          animation: "shore-sound-bar 0.7s ease-in-out 0.1s infinite alternate",
+        }}
+      />
+    </span>
+  );
+}
 
 function PaperclipIcon() {
   return (
@@ -97,7 +150,10 @@ export default function ChatComposer({
   isRecording,
   isVADLoaded,
   onToggleMic,
+  micError,
+  onClearMicError,
   isAssistantThinking,
+  isAssistantSpeaking,
   onCancel,
 }: ChatComposerProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -147,6 +203,42 @@ export default function ChatComposer({
           transition: "border-color 150ms ease, opacity 150ms ease",
         }}
       >
+        {/* Microphone Error Alert */}
+        {micError && (
+          <Flex
+            align="center"
+            justify="space-between"
+            px="3"
+            py="2"
+            style={{
+              backgroundColor: "var(--red-3)",
+              borderBottom: "1px solid var(--red-5)",
+              color: "var(--red-11)",
+              fontSize: 12,
+            }}
+          >
+            <Text size="1" weight="medium" style={{ color: "var(--red-11)" }}>
+              ⚠️ {micError}
+            </Text>
+            {onClearMicError && (
+              <button
+                type="button"
+                onClick={onClearMicError}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  color: "var(--red-11)",
+                  cursor: "pointer",
+                  padding: 2,
+                  display: "flex",
+                }}
+              >
+                <CloseIcon />
+              </button>
+            )}
+          </Flex>
+        )}
+
         {/* Attachment thumbnails (inside the box, above textarea) */}
         {attachments.length > 0 && (
           <Flex gap="2" px="3" pt="2" wrap="wrap">
@@ -282,6 +374,26 @@ export default function ChatComposer({
             </Text>
           )}
 
+          {isAssistantSpeaking && (
+            <Flex
+              align="center"
+              gap="2"
+              px="2"
+              py="1"
+              style={{
+                backgroundColor: "var(--teal-3)",
+                border: "1px solid var(--teal-6)",
+                borderRadius: "12px",
+                color: "var(--teal-11)",
+              }}
+            >
+              <SoundWaveIcon />
+              <Text size="1" weight="medium" style={{ color: "var(--teal-11)" }}>
+                Playing Audio…
+              </Text>
+            </Flex>
+          )}
+
           <Box style={{ flex: 1 }} />
 
           {isAssistantThinking ? (
@@ -321,6 +433,10 @@ export default function ChatComposer({
         @keyframes shore-stop-pulse {
           0%, 100% { box-shadow: 0 0 0 3px var(--cyan-a5); }
           50%      { box-shadow: 0 0 0 6px var(--cyan-a3); }
+        }
+        @keyframes shore-sound-bar {
+          0% { height: 25%; }
+          100% { height: 100%; }
         }
       `}</style>
     </Box>

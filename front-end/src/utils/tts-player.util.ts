@@ -1,12 +1,10 @@
 /**
- * Browser-side PCM audio queue player for TTS streaming.
- * Receives PCM chunks over WebSocket and plays them with minimal gaps
- * using AudioBufferSourceNode scheduling.
+ * Browser-side & Native PCM audio queue player for TTS streaming.
+ * Receives PCM chunks over WebSocket and plays them seamlessly.
  *
- * On macOS Tauri (WKWebView), AudioContext must be unlocked during a user
- * gesture (click / keydown) before any audio can play.  Call the static
- * `TTSPlayer.unlock()` from a user-interaction handler to pre-warm the
- * shared context.
+ * In web browsers: uses Web Audio API (AudioBufferSourceNode scheduling).
+ * In Tauri desktop app: routes PCM directly to Rust rodio native player while
+ * maintaining AnalyserNode for avatar lip-sync.
  */
 
 function isTauriApp(): boolean {
@@ -29,16 +27,12 @@ export class TTSPlayer {
   private static _unlocked = false;
 
   /**
-   * Pre-unlock the Web Audio pipeline.  Must be called inside a user-gesture
-   * event handler (click, keydown, touchstart, etc.) so that WebKit (WKWebView
-   * on macOS / Safari) allows audio output.
-   *
-   * Safe to call multiple times — only the first effective call matters.
+   * Pre-unlock the Web Audio pipeline. Must be called inside a user-gesture
+   * event handler (click, keydown, touchstart) so WebKit allows audio output.
    */
   static unlock(sampleRate: number = 24000): void {
-    if (isTauriApp()) return; // Native rodio handles audio directly
+    if (isTauriApp()) return; // Native rodio handles audio directly in Tauri
 
-    // Already unlocked with matching rate → nothing to do
     if (
       TTSPlayer._unlocked &&
       TTSPlayer._sharedCtx &&
@@ -48,16 +42,12 @@ export class TTSPlayer {
       return;
     }
 
-    // Close stale context if rate changed
     if (TTSPlayer._sharedCtx && TTSPlayer._sharedCtx.state !== "closed") {
       TTSPlayer._sharedCtx.close().catch(() => {});
     }
 
     try {
       const ctx = new AudioContext({ sampleRate });
-      // Play a single silent sample to fully activate the audio hardware.
-      // WebKit marks the context as "allowed" only after a source has played
-      // inside a user-gesture call-stack.
       const buf = ctx.createBuffer(1, 1, sampleRate);
       const src = ctx.createBufferSource();
       src.buffer = buf;
@@ -68,8 +58,6 @@ export class TTSPlayer {
       TTSPlayer._sharedRate = sampleRate;
       TTSPlayer._unlocked = true;
 
-      // Auto-resume when the app regains focus (macOS can suspend the
-      // context when the window is hidden or the lid is closed).
       ctx.onstatechange = () => {
         console.log("[TTS] AudioContext state →", ctx.state);
       };
@@ -108,6 +96,8 @@ export class TTSPlayer {
    */
   start(sampleRate: number = 22050): void {
     this.sampleRate = sampleRate;
+    this.isPlaying = true;
+    this.pendingChunks = 0;
 
     if (isTauriApp()) {
       void import("@tauri-apps/api/core").then(({ invoke }) => {
@@ -117,9 +107,6 @@ export class TTSPlayer {
       });
     }
 
-    // Try to reuse the pre-unlocked shared context when the rate matches.
-    // This is critical on WKWebView: a context created outside a user
-    // gesture will start suspended and resume() will be silently rejected.
     const canReuseShared =
       TTSPlayer._sharedCtx &&
       TTSPlayer._sharedCtx.state !== "closed" &&
@@ -131,7 +118,6 @@ export class TTSPlayer {
       this.audioContext.sampleRate !== sampleRate;
 
     if (needsNewContext) {
-      // Detach from the old context (but don't close the shared one)
       if (
         this.audioContext &&
         this.audioContext.state !== "closed" &&
@@ -142,50 +128,45 @@ export class TTSPlayer {
 
       if (canReuseShared) {
         this.audioContext = TTSPlayer._sharedCtx;
-        console.log("[TTS] Reusing pre-unlocked AudioContext");
       } else {
         try {
           this.audioContext = new AudioContext({ sampleRate });
-          console.log(
-            "[TTS] Created new AudioContext",
-            `(rate=${sampleRate}, state=${this.audioContext.state})`,
-          );
         } catch (e) {
           console.warn("[TTS] Could not create AudioContext:", e);
         }
       }
 
       if (this.audioContext) {
-        // Create analyser for volume/frequency data (for avatar lip-sync)
         this.analyser = this.audioContext.createAnalyser();
         this.analyser.fftSize = 256;
 
         this.gainNode = this.audioContext.createGain();
-        // Mute Web Audio destination when in Tauri app since native rodio plays the audio
+        // Mute Web Audio output in Tauri since native rodio plays the audio
         this.gainNode.gain.value = isTauriApp() ? 0.0 : 1.0;
         this.gainNode.connect(this.analyser);
         this.analyser.connect(this.audioContext.destination);
       }
     }
 
-    const audioContext = this.audioContext;
-    if (audioContext && audioContext.state === "suspended") {
-      audioContext.resume().catch((err) => {
-        console.warn("[TTS] AudioContext.resume() rejected:", err);
-      });
+    if (this.audioContext && this.audioContext.state === "suspended") {
+      this.audioContext.resume().catch(() => {});
     }
 
-    if (audioContext) {
-      this.nextStartTime = audioContext.currentTime;
+    if (this.audioContext) {
+      this.nextStartTime = this.audioContext.currentTime;
     }
-    this.isPlaying = true;
-    this.pendingChunks = 0;
   }
 
   /**
    * Enqueue a PCM chunk (signed 16-bit little-endian) for playback.
    */
   enqueueChunk(pcmData: ArrayBuffer): void {
+    this.pendingChunks++;
+
+    // Calculate duration in ms
+    const numSamples = pcmData.byteLength / 2;
+    const durationMs = (numSamples / this.sampleRate) * 1000;
+
     if (isTauriApp()) {
       const pcmBase64 = arrayBufferToBase64(pcmData);
       void import("@tauri-apps/api/core").then(({ invoke }) => {
@@ -193,15 +174,24 @@ export class TTSPlayer {
           console.error("[TTS Native] Failed to enqueue chunk:", err);
         });
       });
+
+      // Track chunk duration for Tauri native player
+      setTimeout(() => {
+        this.pendingChunks = Math.max(0, this.pendingChunks - 1);
+        this.checkEnded();
+      }, durationMs);
     }
 
-    if (!this.audioContext || !this.gainNode) return;
+    if (!this.audioContext || !this.gainNode) {
+      if (!isTauriApp()) {
+        this.pendingChunks = Math.max(0, this.pendingChunks - 1);
+        this.checkEnded();
+      }
+      return;
+    }
 
-    // Attempt to resume if suspended when receiving chunks
     if (this.audioContext.state === "suspended") {
-      this.audioContext.resume().catch((err) => {
-        console.warn("[TTS] AudioContext.resume() rejected in enqueue:", err);
-      });
+      this.audioContext.resume().catch(() => {});
     }
 
     // Convert Int16 PCM to Float32
@@ -211,7 +201,6 @@ export class TTSPlayer {
       float32[i] = int16View[i] / 32768.0;
     }
 
-    // Create audio buffer
     const buffer = this.audioContext.createBuffer(
       1,
       float32.length,
@@ -219,27 +208,23 @@ export class TTSPlayer {
     );
     buffer.getChannelData(0).set(float32);
 
-    // Schedule playback
     const source = this.audioContext.createBufferSource();
     source.buffer = buffer;
     source.connect(this.gainNode);
 
-    // Schedule at the end of the current queue
     const startTime = Math.max(
       this.nextStartTime,
       this.audioContext.currentTime,
     );
     source.start(startTime);
 
-    this.pendingChunks++;
-    source.onended = () => {
-      this.pendingChunks--;
-      if (this.pendingChunks <= 0 && !this.isPlaying) {
-        this.onPlaybackEnd?.();
-      }
-    };
+    if (!isTauriApp()) {
+      source.onended = () => {
+        this.pendingChunks = Math.max(0, this.pendingChunks - 1);
+        this.checkEnded();
+      };
+    }
 
-    // Advance next start time by the duration of this chunk
     this.nextStartTime = startTime + buffer.duration;
   }
 
@@ -248,17 +233,17 @@ export class TTSPlayer {
    */
   end(): void {
     this.isPlaying = false;
-    // If no pending chunks, fire callback immediately
-    if (this.pendingChunks <= 0) {
+    this.checkEnded();
+  }
+
+  private checkEnded(): void {
+    if (!this.isPlaying && this.pendingChunks <= 0) {
       this.onPlaybackEnd?.();
     }
   }
 
   /**
    * Stop playback immediately and discard queued audio.
-   *
-   * Note: does NOT close the shared AudioContext — only detaches this
-   * instance's nodes so a new stream can reuse the unlocked context.
    */
   stop(): void {
     if (isTauriApp()) {
@@ -272,7 +257,6 @@ export class TTSPlayer {
     this.isPlaying = false;
     this.pendingChunks = 0;
     if (this.audioContext && this.audioContext.state !== "closed") {
-      // Don't close the shared context — we'll reuse it for the next stream
       if (this.audioContext !== TTSPlayer._sharedCtx) {
         this.audioContext.close().catch(() => {});
       }

@@ -91,6 +91,11 @@ export class TTSPlayer {
   public onPlaybackEnd: (() => void) | null = null;
   private pendingChunks: number = 0;
 
+  // Promise that resolves once the native rodio player is ready.
+  // enqueueChunk() awaits this before sending data to avoid dropping
+  // chunks that arrive before OutputStream::try_default() completes.
+  private nativeReady: Promise<void> = Promise.resolve();
+
   /**
    * Initialize or reconfigure for a new TTS stream.
    */
@@ -100,11 +105,17 @@ export class TTSPlayer {
     this.pendingChunks = 0;
 
     if (isTauriApp()) {
-      void import("@tauri-apps/api/core").then(({ invoke }) => {
-        invoke("tts_audio_start", { sampleRate }).catch((err) => {
+      // Store a promise that resolves once the Rust rodio player is
+      // initialised.  enqueueChunk() awaits this so PCM data is never
+      // sent before the OutputStream is open.
+      this.nativeReady = import("@tauri-apps/api/core")
+        .then(({ invoke }) => invoke("tts_audio_start", { sampleRate }))
+        .then(() => {
+          console.log("[TTS Native] rodio stream ready");
+        })
+        .catch((err) => {
           console.error("[TTS Native] Failed to start native stream:", err);
         });
-      });
     }
 
     const canReuseShared =
@@ -169,11 +180,16 @@ export class TTSPlayer {
 
     if (isTauriApp()) {
       const pcmBase64 = arrayBufferToBase64(pcmData);
-      void import("@tauri-apps/api/core").then(({ invoke }) => {
-        invoke("tts_audio_enqueue", { pcmBase64 }).catch((err) => {
-          console.error("[TTS Native] Failed to enqueue chunk:", err);
+      // Wait for the native player to be ready before enqueuing.
+      // This prevents chunks from being silently dropped when they
+      // arrive before OutputStream::try_default() finishes.
+      this.nativeReady
+        .then(() => import("@tauri-apps/api/core"))
+        .then(({ invoke }) => {
+          invoke("tts_audio_enqueue", { pcmBase64 }).catch((err) => {
+            console.error("[TTS Native] Failed to enqueue chunk:", err);
+          });
         });
-      });
 
       // Track chunk duration for Tauri native player
       setTimeout(() => {
@@ -301,3 +317,4 @@ export class TTSPlayer {
     }
   }
 }
+

@@ -66,6 +66,8 @@ pub fn tts_audio_enqueue(state: State<AudioState>, pcm_base64: String) -> Result
     if let Some(ref player) = *guard {
         let buffer = SamplesBuffer::new(1, player.sample_rate, samples);
         player.sink.append(buffer);
+    } else {
+        eprintln!("[Native Audio] ⚠ enqueue called but no player active — chunk dropped ({} samples)", bytes.len() / 2);
     }
 
     Ok(())

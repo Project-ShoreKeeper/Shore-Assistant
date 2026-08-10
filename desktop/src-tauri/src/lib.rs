@@ -28,6 +28,7 @@
 
 use base64::Engine as _;
 
+mod audio;
 mod hud;
 mod input;
 
@@ -77,12 +78,16 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(hud::HudState::default())
+        .manage(audio::AudioState::default())
         .invoke_handler(tauri::generate_handler![
             capture_screen_png,
             input::input_execute,
             hud::hud_show,
             hud::hud_hide,
-            hud::hud_set_mode
+            hud::hud_set_mode,
+            audio::tts_audio_start,
+            audio::tts_audio_enqueue,
+            audio::tts_audio_stop
         ])
         .setup(|app| {
             #[cfg(desktop)]

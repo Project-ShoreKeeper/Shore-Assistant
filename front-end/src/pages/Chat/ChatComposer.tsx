@@ -207,7 +207,7 @@ export default function ChatComposer({
         {micError && (
           <Flex
             align="center"
-            justify="space-between"
+            justify="between"
             px="3"
             py="2"
             style={{
